@@ -74,7 +74,7 @@ The effect shows up under **Effects > Video Effects > PRO PLUGS > LookMatch**.
 |---|---|
 | Engine (match, film, texture) | Built and tested here: `engine_tests` passes. With everything off the output is pixel-identical. |
 | Command-line renderer | Built and tested here |
-| Premiere effect wrapper | Written against the AE SDK API. It type-checks against stub headers, but it has **not been compiled with the real SDK or run inside Premiere**, because the SDK needs an Adobe login. Expect a round of fixes on first build. |
+| Premiere effect wrapper | Builds on macOS (Xcode 27, AE SDK 27.0) as a universal arm64 + x86_64 bundle. Not yet run inside Premiere. |
 | Speed | CPU only for now. 1080p with every effect on takes ≈ 0.17 s/frame on 4 cores. Colour-only takes a few ms. Real-time playback needs the GPU path (next). |
 
 ## Next steps
