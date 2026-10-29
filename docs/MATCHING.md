@@ -152,6 +152,19 @@ default stays method 0, and methods 1–3 stay internal for the harness. The con
 LookMatch | color-matcher) was checked by eye: LookMatch keeps skin, skies and the sun clean;
 color-matcher does not.
 
+## Camera curves and gamuts against ground truth
+
+`tests/check_transfers.py` compares every log decode and gamut matrix with colour-science (BSD-3;
+test-only, `pip install colour-science`). It reads them through `lookmatch-render --dump-transfers`
+and samples 65 code values per curve. All 11 log curves match to within 0.001% relative:
+
+- S-Log3, LogC3, LogC4 and Canon Log 3
+- V-Log, F-Log, F-Log2 and Apple Log
+- BMD Film Gen5, Log3G10 and D-Log
+
+The gamut matrices to linear Rec.709 (Bradford where the white point differs) match to within 2e-4.
+The largest differences are Blackmagic Wide Gamut and DJI D-Gamut, both from rounded primaries.
+
 ## Consistency test
 
 `tests/consistency_tests.cpp` (ctest `consistency_tests`) takes real frames from the clips in projects *g* and *d*:

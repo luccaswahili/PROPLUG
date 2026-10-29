@@ -81,11 +81,23 @@ int main(int argc, char** argv) {
         std::string k = argv[i];
         if (k.rfind("--", 0) != 0) { usage(); return 1; }
         k = k.substr(2);
-        if (k == "list-stocks" || k == "help") { a[k] = "1"; continue; }
+        if (k == "list-stocks" || k == "help" || k == "dump-transfers") { a[k] = "1"; continue; }
         if (i + 1 >= argc) { std::fprintf(stderr, "missing value for --%s\n", k.c_str()); return 1; }
         a[k] = argv[++i];
     }
     if (a.count("help")) { usage(); return 0; }
+    if (a.count("dump-transfers")) {  // for tests/check_transfers.py: code -> linear, and gamut -> Rec.709
+        std::printf("{");
+        for (int t = 0; t < kTransferCount; ++t) {
+            std::printf("%s\"%s\": {\"decode\": [", t ? ", " : "", transferShortName(Transfer(t)));
+            for (int i = 0; i <= 64; ++i) std::printf("%s%.9g", i ? ", " : "", transferDecode(Transfer(t), i / 64.0f));
+            const Mat3 m = gamutToRec709(Transfer(t));
+            std::printf("], \"toRec709\": [[%.7g, %.7g, %.7g], [%.7g, %.7g, %.7g], [%.7g, %.7g, %.7g]]}", m.m[0][0], m.m[0][1], m.m[0][2],
+                        m.m[1][0], m.m[1][1], m.m[1][2], m.m[2][0], m.m[2][1], m.m[2][2]);
+        }
+        std::printf("}\n");
+        return 0;
+    }
     if (a.count("list-stocks")) {
         std::printf("Negatives:\n");
         for (int i = 0; i < negativeStockCount(); ++i) std::printf("  %d  %s\n", i, negativeStock(i).name);
