@@ -122,6 +122,26 @@ inline Vec3 rgbToOklab(Vec3 rgb) {
             1.9779984951f * l - 2.4285922050f * m + 0.4505937099f * s,
             0.0259040371f * l + 0.7827717662f * m - 0.8086757660f * s};
 }
+// ACES Reference Gamut Compression (Academy RGC specification, S-2021-001): out-of-gamut colours are
+// pulled toward the achromatic axis smoothly instead of being clipped channel by channel, which shifts
+// hue and leaves flat blotches. Per channel, the distance d = (A - c) / |A| from the achromatic A =
+// max(R, G, B) is compressed beyond a threshold t so that the limit l maps to 1 (the gamut boundary).
+inline Vec3 gamutCompress(Vec3 c) {
+    const float A = std::max({c.r, c.g, c.b});
+    if (A <= 0) return c;
+    constexpr float t[3] = {0.815f, 0.803f, 0.880f}, lim[3] = {1.147f, 1.264f, 1.312f}, p = 1.2f;
+    Vec3 o = c;
+    for (int i = 0; i < 3; ++i) {
+        const float d = (A - c[i]) / A;
+        if (d < t[i]) continue;
+        const float s = (lim[i] - t[i]) / std::pow(std::pow((1 - t[i]) / (lim[i] - t[i]), -p) - 1, 1 / p);
+        const float x = (d - t[i]) / s;
+        const float dc = t[i] + s * x / std::pow(1 + std::pow(x, p), 1 / p);
+        o[i] = A - dc * A;
+    }
+    return o;
+}
+
 inline Vec3 oklabToRgb(Vec3 lab) {
     float l = lab.r + 0.3963377774f * lab.g + 0.2158037573f * lab.b;
     float m = lab.r - 0.1055613458f * lab.g - 0.0638541728f * lab.b;
@@ -130,6 +150,17 @@ inline Vec3 oklabToRgb(Vec3 lab) {
     return {linearToSrgb(4.0767416621f * l - 3.3077115913f * m + 0.2309699292f * s),
             linearToSrgb(-1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s),
             linearToSrgb(-0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s)};
+}
+// The same, with out-of-gamut colours gamut-compressed rather than clipped.
+inline Vec3 oklabToRgbCompressed(Vec3 lab) {
+    float l = lab.r + 0.3963377774f * lab.g + 0.2158037573f * lab.b;
+    float m = lab.r - 0.1055613458f * lab.g - 0.0638541728f * lab.b;
+    float s = lab.r - 0.0894841775f * lab.g - 1.2914855480f * lab.b;
+    l = l * l * l; m = m * m * m; s = s * s * s;
+    const Vec3 c = gamutCompress({4.0767416621f * l - 3.3077115913f * m + 0.2309699292f * s,
+                                  -1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s,
+                                  -0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s});
+    return {linearToSrgb(c.r), linearToSrgb(c.g), linearToSrgb(c.b)};
 }
 
 inline float luma709(Vec3 c) { return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b; }

@@ -963,7 +963,7 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
         const float k = satScale > 1 ? 1 + (satScale - 1) * (1 - 0.7f * skinWeight(lab)) : satScale;
         lab.g *= k;
         lab.b *= k;
-        return rgbToOklab(oklabToRgb(lab));  // in gamut
+        return rgbToOklab(oklabToRgbCompressed(lab));  // in gamut
     };
     std::vector<Vec3> canonRgb(n);
     for (size_t i = 0; i < n; ++i) canonRgb[i] = oklabToRgb(canonical(src.px[i]));
@@ -990,7 +990,7 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
                   : method == 1 ? stat->apply(lab)
                   : method == 2 ? lerp(grade->apply(lab), stat->apply(lab), 0.5f)
                                 : grade->apply(rgbToOklab(oklabToRgb(tc->apply(lab))));
-        return oklabToRgb(lerp(lab, look, ls));
+        return oklabToRgbCompressed(lerp(lab, look, ls));
     };
     res.lut = Lut3D(o.look.lutSize);
     res.lut.setShaper(frameShaper(src));

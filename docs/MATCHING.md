@@ -165,6 +165,22 @@ and samples 65 code values per curve. All 11 log curves match to within 0.001% r
 The gamut matrices to linear Rec.709 (Bradford where the white point differs) match to within 2e-4.
 The largest differences are Blackmagic Wide Gamut and DJI D-Gamut, both from rounded primaries.
 
+## Gamut compression
+
+The matcher's two conversions back from OKLab (the normalised frame, and the final look) used to clip
+out-of-gamut colours channel by channel. Clipping shifts hue and leaves flat patches where
+white-balance or saturation moves push colours out of gamut. They now use the ACES Reference Gamut
+Compression (`gamutCompress` in color.h), implemented from the published specification:
+
+- A = max(R, G, B), and per channel d = (A − c)/A.
+- Above the threshold t = (0.815, 0.803, 0.880), d is compressed so that the limit l = (1.147, 1.264,
+  1.312) lands on the gamut boundary, with power 1.2.
+
+It is applied in linear Rec.709, before the display encode.
+
+Measured on 8 frames: consistency is unchanged, at mean 1.48 / p95 2.86 against 2.91 before.
+Grey-axis jump failures fall from 16 to 13. Content preservation is unchanged.
+
 ## Consistency test
 
 `tests/consistency_tests.cpp` (ctest `consistency_tests`) takes real frames from the clips in projects *g* and *d*:
