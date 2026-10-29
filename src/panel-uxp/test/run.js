@@ -126,9 +126,29 @@ test("bridge: exportCube writes the request, sets the slot and waits for the eff
   await assert.rejects(b.exportCube("/out/y.cube", { sleep: async () => {}, pollMs: 1, timeoutMs: 5 }), /playhead/);
 });
 
+test("bridge: captureFrame sets the capture slot and returns the PNG the effect wrote", async () => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "lm-"));
+  const v1 = makeItem("Hero clip", true, true);
+  const b = new Bridge(makePremiere({ selected: [v1] }), fsp, dir);
+  const sleep = async () => {
+    const { component } = await b.findLookMatch(v1);
+    const slot = (await b.readParams(component))[P.captureSlot];
+    await fsp.writeFile(path.join(dir, "refs", `capture-${slot}.done`), "ok");
+  };
+  const res = await b.captureFrame({ sleep, pollMs: 1, timeoutMs: 50 });
+  assert.strictEqual(res.clip, "Hero clip");
+  assert.strictEqual(res.path, path.join(dir, "refs", `capture-${res.slot}.png`));
+  const failing = async () => {
+    const { component } = await b.findLookMatch(v1);
+    const slot = (await b.readParams(component))[P.captureSlot];
+    await fsp.writeFile(path.join(dir, "refs", `capture-${slot}.done`), "could not read the frame");
+  };
+  await assert.rejects(b.captureFrame({ sleep: failing, pollMs: 1, timeoutMs: 50 }), /could not read/);
+});
+
 test("agent: whitelist only, values sanitised", async () => {
   assert.deepStrictEqual(Object.keys(COMMANDS).sort(),
-    ["applyParams", "applyReference", "clipNames", "exportCube", "ping", "readSelected", "saveProject"]);
+    ["applyParams", "applyReference", "captureFrame", "clipNames", "exportCube", "ping", "readSelected", "saveProject"]);
   const v1 = makeItem("V1", true, true);
   const ppro = makePremiere({ selected: [v1] });
   const b = new Bridge(ppro, fsp, os.tmpdir());

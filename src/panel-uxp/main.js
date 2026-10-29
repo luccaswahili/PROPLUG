@@ -9,7 +9,7 @@ const { P, NEGATIVES, PRINTS, FILM_DEFAULTS, FILM_LOOKS, lookParams, stockCombos
 const { Library, joinPath, baseName } = require("./lib/library.js");
 const { Bridge } = require("./lib/bridge.js");
 
-const VERSION = "0.2.1";  // kept equal to manifest.json by build_panel.sh
+const VERSION = "0.2.2";  // kept equal to manifest.json by build_panel.sh
 const DATA_DIR = os.platform() === "win32"
   ? joinPath(process.env.APPDATA || "", "PRO PLUGS\\LookMatch")
   : joinPath(os.homedir(), "Library/Application Support/PRO PLUGS/LookMatch");
@@ -170,6 +170,27 @@ async function matchClips(scope) {
   log("tip: to keep this match inside the project (for other Macs), click LookMatch > Panel Link > Save into Project in Effect Controls");
   return `Matched ${res.clips} clip(s) to ${selectedRef.name}`;
 }
+
+// Shot matching: grab the selected (hero) clip's frame through the effect, add it to the library.
+async function captureHero() {
+  const res = await bridge.captureFrame();
+  selectedRef = library.addReference(res.path);
+  selectedRef.name = `Hero: ${res.clip}`;
+  await library.save();
+  await renderRefs();
+  log(`captured hero frame of ${res.clip} -> ${res.path}`);
+  return res;
+}
+
+$("heroRef").addEventListener("click", () => run("Capture hero", async () => {
+  const res = await captureHero();
+  return `${res.clip} is now the reference: select other clips and click Match`;
+}));
+$("heroMatchSeq").addEventListener("click", () => run("Match sequence to hero", async () => {
+  const res = await captureHero();
+  const msg = await matchClips("sequence");
+  return `${msg} (hero: ${res.clip})`;
+}));
 
 $("matchSel").addEventListener("click", () => run("Match", () => matchClips("selection")));
 $("matchSeq").addEventListener("click", () => run("Match sequence", () => matchClips("sequence")));

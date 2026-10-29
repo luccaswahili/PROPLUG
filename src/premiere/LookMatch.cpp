@@ -506,6 +506,9 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     PF_ADD_FLOAT_SLIDERX("LUT Export Slot", 0, 999999, 0, 999999, 0, PF_Precision_INTEGER, 0,
                          PF_ParamFlag_CANNOT_TIME_VARY, D_EXPORT_SLOT);
     AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Capture Slot", 0, 999999, 0, 999999, 0, PF_Precision_INTEGER, 0,
+                         PF_ParamFlag_CANNOT_TIME_VARY, D_CAPTURE_SLOT);
+    AEFX_CLR_STRUCT(def);
     PF_END_TOPIC(D_PANEL_TOPIC_END);
 
     out_data->num_params = P_NUM_PARAMS;
@@ -519,6 +522,18 @@ PF_Err SequenceSetdown(PF_InData* in_data, PF_OutData* out_data) {
     return PF_Err_NONE;
 }
 
+// Premiere shows a "Media pending" card (yellow gradient with text) while footage is still loading,
+// e.g. for the first renders after a project opens. Matching that card gives a wild look, so
+// recognise it: nearly every pixel is a yellow with little blue.
+bool isMediaPending(const std::vector<float>& buf, int width, int height) {
+    size_t n = size_t(width) * height, step = std::max<size_t>(1, n / 20000), yellow = 0, total = 0;
+    for (size_t i = 0; i < n; i += step, ++total) {
+        float r = buf[i * 4], g = buf[i * 4 + 1], b = buf[i * 4 + 2];
+        if (r > 0.25f && g > 0.25f && std::abs(r - g) < 0.12f && b < 0.6f * std::min(r, g)) ++yellow;
+    }
+    return total && yellow > total * 3 / 4;
+}
+
 // Builds a match LUT from a reference still and a frame (RGBA float, as read by worldToFloat).
 // Returns false with a user-facing message if the reference can't be read or the frame is unusable.
 bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, int height, PF_ParamDef* params[],
@@ -527,6 +542,12 @@ bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, i
     unsigned char* ref8 = stbi_load(refPath, &rw, &rh, &rn, 3);
     if (!ref8) {
         error = "LookMatch: could not read the reference image (PNG, JPEG, TGA or BMP).";
+        return false;
+    }
+    if (isMediaPending(buf, width, height)) {
+        stbi_image_free(ref8);
+        error = "LookMatch: Premiere is still loading this clip (Media pending). Try again in a moment.";
+        lmLog("buildMatch: frame is Premiere's Media pending card, not matching");
         return false;
     }
     std::vector<lm::Vec3> refPx;
@@ -647,11 +668,15 @@ PF_Err storeMatch(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[
 // The LookMatch panel can't pass a string to an effect, so it writes the reference path to
 // <app support>/PRO PLUGS/LookMatch/refs/<slot>.txt and sets Reference Slot = <slot>.
 // Debug aid (only with LOOKMATCH_LOG=1): save the frame a match was built from.
-void dumpFrame(const std::string& file, const std::vector<float>& buf, int width, int height) {
+std::vector<unsigned char> to8bitRGB(const std::vector<float>& buf, int width, int height) {
     std::vector<unsigned char> px(size_t(width) * height * 3);
     for (size_t i = 0; i < size_t(width) * height; ++i)
         for (int c = 0; c < 3; ++c) px[i * 3 + c] = uint8_t(lm::clamp01(buf[i * 4 + c]) * 255.0f + 0.5f);
-    stbi_write_png(file.c_str(), width, height, 3, px.data(), width * 3);
+    return px;
+}
+
+void dumpFrame(const std::string& file, const std::vector<float>& buf, int width, int height) {
+    stbi_write_png(file.c_str(), width, height, 3, to8bitRGB(buf, width, height).data(), width * 3);
 }
 
 // Checks out the effect's input layer at the current time and reads it (the same path
@@ -760,6 +785,10 @@ std::shared_ptr<const lm::Lut3D> slotLut(long slot, const FrameSource& getFrame,
         std::vector<float> frame;
         int width = 0, height = 0;
         if (!ref.empty() && !getFrame(frame, width, height)) error = "could not read the frame";
+        if (error.empty() && !ref.empty() && isMediaPending(frame, width, height)) {
+            lmLog("Render: slot %ld waits: the frame is Premiere's Media pending card", slot);
+            return nullptr;  // not cached: try again on the next render
+        }
         else if (logEnabled() && !ref.empty()) dumpFrame(refsDir() + std::to_string(slot) + "-source.png", frame, width, height);
         if (!ref.empty() && error.empty() && buildMatch(ref.c_str(), frame, width, height, params, *built, error)) {
             writeSlotLut(file, *built);
@@ -886,6 +915,25 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
             else if (!pe->engine.bakeExportLut(65).writeCube(target, "LookMatch")) result = "could not write " + target;
             if (FILE* f = std::fopen((base + ".done").c_str(), "wb")) { std::fputs(result.c_str(), f); std::fclose(f); }
             lmLog("Render: export slot %ld -> %s (%s)", exportSlot, target.c_str(), result.c_str());
+        }
+    }
+    // Panel "hero clip": a new Capture Slot means save this clip's (ungraded) frame as a PNG the
+    // panel then uses as the reference for other clips. Once per slot.
+    const long captureSlot = long(F(params, P_CAPTURE_SLOT));
+    if (captureSlot > 0) {
+        static std::mutex cm;
+        static std::set<long> captured;
+        std::lock_guard<std::mutex> lock(cm);
+        if (captured.insert(captureSlot).second) {
+            const std::string base = refsDir() + "capture-" + std::to_string(captureSlot);
+            std::vector<float> f;
+            int fw = 0, fh = 0;
+            std::string result = "ok";
+            if (!checkoutFrame(in_data, f, fw, fh)) result = "could not read the frame";
+            else if (!stbi_write_png((base + ".png").c_str(), fw, fh, 3, to8bitRGB(f, fw, fh).data(), fw * 3))
+                result = "could not write " + base + ".png";
+            if (FILE* df = std::fopen((base + ".done").c_str(), "wb")) { std::fputs(result.c_str(), df); std::fclose(df); }
+            lmLog("Render: capture slot %ld -> %s.png (%s)", captureSlot, base.c_str(), result.c_str());
         }
     }
     long frame = in_data->time_step ? long(in_data->current_time / in_data->time_step) : 0;

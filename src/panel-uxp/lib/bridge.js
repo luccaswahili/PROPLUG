@@ -142,32 +142,43 @@ class Bridge {
     return Object.assign({ slot }, res);
   }
 
-  // Asks the effect on the first selected clip to write its current look as a .cube. The effect
-  // does it on its next render of that clip and reports in refs/export-<slot>.done.
-  async exportCube(target, { timeoutMs = 15000, pollMs = 250, sleep } = {}) {
-    if (!/\.cube$/i.test(target)) throw new Error("The LUT path must end in .cube");
+  // Sets a "request slot" param on the first selected clip's LookMatch after writing the request
+  // file, then waits for the effect's answer in refs/<kind>-<slot>.done (written on its next render).
+  async effectRequest(kind, paramName, requestText, { timeoutMs = 15000, pollMs = 250, sleep } = {}) {
     const { project, items } = await this.selectedVideoItems();
-    if (!items.length) throw new Error("Select the clip whose look you want to export.");
+    if (!items.length) throw new Error("Select a video clip on the timeline.");
     try { await this.fs.mkdir(this.refsDir, { recursive: true }); } catch (e) { /* exists */ }
     const slot = 1 + Math.floor(Math.random() * 999998);
-    const base = joinPath(this.refsDir, `export-${slot}`);
-    await this.fs.writeFile(`${base}.txt`, target, { encoding: "utf-8" });
+    const base = joinPath(this.refsDir, `${kind}-${slot}`);
+    if (requestText !== null) await this.fs.writeFile(`${base}.txt`, requestText, { encoding: "utf-8" });
     const { component } = await this.ensureLookMatch(project, items[0]);
-    const p = (await this.paramMap(component)).get(P.exportSlot);
-    if (!p) throw new Error("This LookMatch build can't export from the panel (update the effect).");
-    this.transaction(project, "LookMatch: export LUT", (ca) => ca.addAction(p.createSetValueAction(p.createKeyframe(slot), true)));
+    const p = (await this.paramMap(component)).get(paramName);
+    if (!p) throw new Error(`This LookMatch build has no "${paramName}" (update the effect).`);
+    this.transaction(project, `LookMatch: ${kind}`, (ca) => ca.addAction(p.createSetValueAction(p.createKeyframe(slot), true)));
     const wait = sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
     for (let t = 0; t < timeoutMs; t += pollMs) {
-      try {
-        const result = String(await this.fs.readFile(`${base}.done`, { encoding: "utf-8" })).trim();
+      let result = null;
+      try { result = String(await this.fs.readFile(`${base}.done`, { encoding: "utf-8" })).trim(); } catch (e) { /* not yet */ }
+      if (result !== null) {
         if (result !== "ok") throw new Error(result);
-        return { slot, path: target };
-      } catch (e) {
-        if (e.code !== "ENOENT" && !/no such file|not found|ENOENT|cannot find/i.test(e.message)) throw e;
+        return { slot, base, clip: await items[0].getName() };
       }
       await wait(pollMs);
     }
     throw new Error("No answer from the effect. Put the playhead over the clip so Premiere renders it, then try again.");
+  }
+
+  // Asks the effect on the first selected clip to write its current look as a .cube.
+  async exportCube(target, opts) {
+    if (!/\.cube$/i.test(target)) throw new Error("The LUT path must end in .cube");
+    const res = await this.effectRequest("export", P.exportSlot, target, opts);
+    return { slot: res.slot, path: target };
+  }
+
+  // Saves the first selected clip's ungraded frame (at the playhead) as a PNG to use as a reference.
+  async captureFrame(opts) {
+    const res = await this.effectRequest("capture", P.captureSlot, null, opts);
+    return { slot: res.slot, path: `${res.base}.png`, clip: res.clip };
   }
 
   async selectedLookMatchParams() {
