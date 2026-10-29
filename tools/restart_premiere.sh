@@ -6,7 +6,7 @@
 set -e
 PROJ="${1:?usage: restart_premiere.sh project.prproj}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-B="$ROOT/build-installer/cmake/src/premiere/LookMatch.plugin"
+B="${PLUGIN:-$ROOT/build-installer/cmake/src/premiere/LookMatch.plugin}"  # PLUGIN=... to install another build
 I="/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/LookMatch.plugin"
 APP="Adobe Premiere Pro 2026"
 
