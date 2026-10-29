@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -29,6 +30,9 @@
 #define STBI_ONLY_TGA
 #define STBI_ONLY_BMP
 #include "stb_image.h"
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#define STBIW_WINDOWS_UTF8
+#include "stb_image_write.h"
 
 namespace {
 
@@ -623,6 +627,34 @@ PF_Err ComputeMatch(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* param
 
 // The LookMatch panel can't pass a string to an effect, so it writes the reference path to
 // <app support>/PRO PLUGS/LookMatch/refs/<slot>.txt and sets Reference Slot = <slot>.
+// Debug aid (only with LOOKMATCH_LOG=1): save the frame a match was built from.
+void dumpFrame(const std::string& file, const std::vector<float>& buf, int width, int height) {
+    std::vector<unsigned char> px(size_t(width) * height * 3);
+    for (size_t i = 0; i < size_t(width) * height; ++i)
+        for (int c = 0; c < 3; ++c) px[i * 3 + c] = uint8_t(lm::clamp01(buf[i * 4 + c]) * 255.0f + 0.5f);
+    stbi_write_png(file.c_str(), width, height, 3, px.data(), width * 3);
+}
+
+// Checks out the effect's input layer at the current time and reads it (the same path
+// Load Reference uses). Render's own input world is not used for matching: Premiere hands
+// Render several buffer formats (8u and 32f), while the checked-out layer is consistent.
+bool checkoutFrame(PF_InData* in_data, std::vector<float>& buf, int& width, int& height) {
+    PF_ParamDef layer;
+    AEFX_CLR_STRUCT(layer);
+    if (PF_CHECKOUT_PARAM(in_data, P_INPUT_LAYER, in_data->current_time, in_data->time_step, in_data->time_scale, &layer))
+        return false;
+    PF_EffectWorld* world = &layer.u.ld;
+    uint32_t rawFmt = 0;
+    Fmt fmt = world->data ? worldFormat(in_data, world, &rawFmt) : Fmt::Unsupported;
+    width = world->width;
+    height = world->height;
+    lmLog("checkoutFrame: t=%d/%u %dx%d format=%s", int(in_data->current_time), unsigned(in_data->time_scale), width,
+          height, fourcc(rawFmt).c_str());
+    if (fmt != Fmt::Unsupported) worldToFloat(world, fmt, width, height, buf);
+    PF_CHECKIN_PARAM(in_data, &layer);
+    return !buf.empty();
+}
+
 std::string refsDir() {
 #ifdef AE_OS_WIN
     const char* base = std::getenv("APPDATA");
@@ -686,8 +718,10 @@ void writeSlotLut(const std::string& file, const lm::Lut3D& lut) {
     std::rename(tmp.c_str(), file.c_str());  // atomic: readers see the old file or the whole new one
 }
 
-std::shared_ptr<const lm::Lut3D> slotLut(long slot, const std::vector<float>& frame, int width, int height,
-                                         PF_ParamDef* params[]) {
+// Reads the frame to match into buf (RGBA float); returns false if there is none.
+using FrameSource = std::function<bool(std::vector<float>& buf, int& width, int& height)>;
+
+std::shared_ptr<const lm::Lut3D> slotLut(long slot, const FrameSource& getFrame, PF_ParamDef* params[]) {
     static std::mutex m;
     static std::map<long, std::shared_ptr<const lm::Lut3D>> cache;  // null entry = failed, don't retry every frame
     std::lock_guard<std::mutex> lock(m);
@@ -700,7 +734,11 @@ std::shared_ptr<const lm::Lut3D> slotLut(long slot, const std::vector<float>& fr
     } else {
         std::string ref = panelReferencePath(slot), error;
         auto built = std::make_shared<lm::Lut3D>(kMatchLutSize);
-        if (!ref.empty() && buildMatch(ref.c_str(), frame, width, height, params, *built, error)) {
+        std::vector<float> frame;
+        int width = 0, height = 0;
+        if (!ref.empty() && !getFrame(frame, width, height)) error = "could not read the frame";
+        else if (logEnabled() && !ref.empty()) dumpFrame(refsDir() + std::to_string(slot) + "-source.png", frame, width, height);
+        if (!ref.empty() && error.empty() && buildMatch(ref.c_str(), frame, width, height, params, *built, error)) {
             writeSlotLut(file, *built);
             lut = built;
             lmLog("Render: slot %ld matched to %s", slot, ref.c_str());
@@ -789,7 +827,8 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
     if (md) PF_UNLOCK_HANDLE(mh);
     if (slotWins) {
         constexpr uint64_t kSlotIdBase = 0x534C4F5400000000ull;  // 'SLOT'
-        lut = slotLut(slot, buf, w, h, params);
+        lut = slotLut(slot, [&](std::vector<float>& f, int& fw, int& fh) { return checkoutFrame(in_data, f, fw, fh); },
+                      params);
         id = lut ? kSlotIdBase | uint64_t(slot) : 0;
     }
     if (id != pe->matchId) {

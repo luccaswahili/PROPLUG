@@ -236,9 +236,8 @@ public:
         }
     }
 
-    // Re-integrates the tone curve with its slope clamped, then shifts it so the source's darkest
-    // tones (1st percentile) still land where the unclamped curve put them. The minimum slope only
-    // applies inside the source's tonal range; outside it the curve may stay flat.
+    // Re-integrates the tone curve with its slope clamped. The minimum slope only applies inside
+    // the source's tonal range (1st-99th percentile); outside it the curve may stay flat.
     std::vector<float> limitSlope(const std::vector<float>& c, const std::vector<float>& srcQuantiles) const {
         const int n = int(c.size());
         const float lo = srcQuantiles[srcQuantiles.size() / 100], hi = srcQuantiles[srcQuantiles.size() * 99 / 100];
@@ -249,8 +248,13 @@ public:
             float minSlope = knots_[i] >= lo && knots_[i] <= hi ? kMinToneSlope : 0.0f;
             out[i] = out[i - 1] + std::clamp(step, minSlope, kMaxToneSlope) / (n - 1);
         }
-        float shift = interp(lo, knots_, c) - interp(lo, knots_, out);
-        for (float& v : out) v = clamp01(v + shift);
+        // Pin both ends of the source's range to where the unclamped curve put them, so clamping a
+        // steep stretch near one end doesn't drag the other end (e.g. dull, grey highlights).
+        // The correction is spread evenly over the range, and is itself capped.
+        const float cLo = interp(lo, knots_, c), cHi = interp(hi, knots_, c);
+        const float oLo = interp(lo, knots_, out), oHi = interp(hi, knots_, out);
+        const float k = oHi - oLo > 1e-4f ? std::clamp((cHi - cLo) / (oHi - oLo), 0.5f, 2.0f) : 1.0f;
+        for (float& v : out) v = clamp01(cLo + (v - oLo) * k);
         return out;
     }
 
