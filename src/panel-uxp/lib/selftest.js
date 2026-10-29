@@ -1,7 +1,7 @@
 // In-Premiere self-test: exercises the panel's whole flow on the selected clip, then restores the
 // clip's settings. Used by the Tools tab button and (dev builds) the test agent.
 
-const { P, FILM_LOOKS, lookParams } = require("./looks.js");
+const { P, TEXTURE_DEFAULTS } = require("./params.js");
 const { Library } = require("./library.js");
 
 async function runSelfTest(bridge, { log, referencePath } = {}) {
@@ -25,26 +25,25 @@ async function runSelfTest(bridge, { log, referencePath } = {}) {
     let now = await bridge.selectedLookMatchParams();
     check("setting a value works", Math.abs(now.params[P.mix] - 37) < 0.01, `Mix = ${now.params[P.mix]}`);
 
-    const look = FILM_LOOKS.find((l) => l.id === "golden-hour");
-    await bridge.applyParams("selection", lookParams(look));
+    const texture = Object.assign({}, TEXTURE_DEFAULTS, { [P.grain]: 25, [P.halation]: 40 });
+    await bridge.applyParams("selection", Object.assign({}, texture, { [P.sourceFormat]: 4 }));
     now = await bridge.selectedLookMatchParams();
-    check("film look applies (popups too)", now.params[P.negative] === look.params[P.negative] &&
-          now.params[P.print] === look.params[P.print] && now.params[P.grain] === look.params[P.grain],
-          `negative ${now.params[P.negative]}, print ${now.params[P.print]}`);
-
-    const half = lookParams(look, 0.5);
-    check("look intensity scales", Math.abs(half[P.grain] - look.params[P.grain] / 2) < 0.01, `grain ${half[P.grain]}`);
+    check("texture and source format apply (popups too)", now.params[P.grain] === 25 && now.params[P.sourceFormat] === 4,
+          `grain ${now.params[P.grain]}, source format ${now.params[P.sourceFormat]}`);
 
     await bridge.applyParams("selection", { [P.split]: true, [P.splitPos]: 30 });
     now = await bridge.selectedLookMatchParams();
     check("split view toggles", now.params[P.split] === true && Math.abs(now.params[P.splitPos] - 30) < 0.01);
 
-    const round = Library.lookFromFile(Library.lookToFile({ name: "t", params: lookParams(look) }));
-    check(".lmlook round trip", round.params[P.grain] === look.params[P.grain]);
+    const round = Library.lookFromFile(Library.lookToFile({ name: "t", params: texture }));
+    check(".lmlook round trip", round.params[P.grain] === 25);
 
     if (referencePath) {
+      await bridge.applyParams("selection", { [P.filmStrength]: 60 });
       const res = await bridge.applyReference("selection", referencePath, {});
+      now = await bridge.selectedLookMatchParams();
       check("reference slot set", res.slot > 0, `slot ${res.slot}`);
+      check("matching turns film print off", now.params[P.filmStrength] === 0, `Film Strength ${now.params[P.filmStrength]}`);
     } else {
       say("SKIP reference match (no reference selected)");
     }

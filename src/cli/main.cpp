@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <string>
 #include "../core/engine.h"
@@ -16,13 +17,13 @@
 
 using namespace lm;
 
-struct Image {
+struct Frame {
     int w = 0, h = 0;
     std::vector<float> px;  // RGBA
     ImageView view() { return {px.data(), w, h, w * 4}; }
 };
 
-static bool load(const std::string& path, Image& img) {
+static bool load(const std::string& path, Frame& img) {
     int n;
     stbi_us* d = stbi_load_16(path.c_str(), &img.w, &img.h, &n, 4);
     if (!d) { std::fprintf(stderr, "cannot read %s: %s\n", path.c_str(), stbi_failure_reason()); return false; }
@@ -32,7 +33,7 @@ static bool load(const std::string& path, Image& img) {
     return true;
 }
 
-static bool save(const std::string& path, const Image& img) {
+static bool save(const std::string& path, const Frame& img) {
     std::vector<unsigned char> b(img.px.size());
     for (size_t i = 0; i < b.size(); ++i) b[i] = (unsigned char)(clamp01(img.px[i]) * 255.0f + 0.5f);
     bool jpg = path.size() > 4 && (path.substr(path.size() - 4) == ".jpg" || path.substr(path.size() - 5) == ".jpeg");
@@ -42,15 +43,6 @@ static bool save(const std::string& path, const Image& img) {
     return ok != 0;
 }
 
-// every ~nth pixel, as display RGB
-static std::vector<Vec3> subsample(const Image& img, size_t target, const std::function<Vec3(Vec3)>& f) {
-    size_t total = size_t(img.w) * img.h, step = std::max<size_t>(1, total / target);
-    std::vector<Vec3> v;
-    v.reserve(total / step + 1);
-    for (size_t i = 0; i < total; i += step) v.push_back(f({img.px[i * 4], img.px[i * 4 + 1], img.px[i * 4 + 2]}));
-    return v;
-}
-
 static void usage() {
     std::printf(
         "lookmatch-render --in FRAME --out OUT.png [options]\n\n"
@@ -58,6 +50,8 @@ static void usage() {
         "  --ref IMAGE            reference still to match (the footage frame is --in)\n"
         "  --match-strength F     0..1 (1)\n"
         "  --region-strength F    0..1 (1)    --skin-protect F  0..1 (auto)\n"
+        "  --source NAME          footage encoding for the match (S-Log3, LogC3, V-Log, ...; default: detect)\n"
+        "  --norm-exposure F --norm-white F --norm-contrast F --look-strength F   0..1 (1)\n"
         "Input\n"
         "  --input NAME           rec709 | logc3 | slog3 | vlog (rec709)\n"
         "  --exposure F --temperature F --tint F\n"
@@ -117,23 +111,32 @@ int main(int argc, char** argv) {
     p.softness = F("softness", 0); p.vignette = F("vignette", 0); p.weave = F("weave", 0); p.flicker = F("flicker", 0);
     p.mix = F("mix", 1);
 
-    Image src;
+    Frame src;
     if (!load(a["in"], src)) return 1;
     Engine engine;
     engine.setParams(p);
 
     if (a.count("ref")) {
-        Image ref;
+        Frame ref;
         if (!load(a["ref"], ref)) return 1;
         auto t0 = std::chrono::steady_clock::now();
-        MatchOptions mo;
-        mo.regionStrength = F("region-strength", 1);
-        mo.skinProtect = F("skin-protect", -1);
-        auto refPx = subsample(ref, 250000, [](Vec3 c) { return c; });
-        auto srcPx = subsample(src, 250000, [&](Vec3 c) { return engine.neutralDisplay(c); });
-        MatchResult m = matchLook(refPx, srcPx, mo);
+        SceneMatchOptions mo;
+        mo.look.regionStrength = F("region-strength", 1);
+        mo.look.skinProtect = F("skin-protect", -1);
+        mo.transfer = a.count("source") ? transferFromName(a["source"]) : -1;
+        mo.exposure = F("norm-exposure", 1); mo.whiteBalance = F("norm-white", 1);
+        mo.contrast = F("norm-contrast", 1); mo.lookStrength = F("look-strength", 1);
+        auto image = [](const Frame& f, const std::function<Vec3(Vec3)>& g) {
+            lm::Image im;
+            im.width = f.w; im.height = f.h;
+            im.px.resize(size_t(f.w) * f.h);
+            for (size_t i = 0; i < im.px.size(); ++i) im.px[i] = g({f.px[i * 4], f.px[i * 4 + 1], f.px[i * 4 + 2]});
+            return im;
+        };
+        SceneMatch m = matchScene(image(ref, [](Vec3 c) { return c; }), image(src, [&](Vec3 c) { return engine.neutralDisplay(c); }), mo);
         auto t1 = std::chrono::steady_clock::now();
-        std::printf("%smatch built in %.0f ms\n", m.report.c_str(), std::chrono::duration<double, std::milli>(t1 - t0).count());
+        std::printf("%smatch built in %.0f ms\nsource %s\nresult %s\n", m.report.c_str(),
+                    std::chrono::duration<double, std::milli>(t1 - t0).count(), m.source.json().c_str(), m.result.json().c_str());
         engine.setMatchLut(std::make_shared<Lut3D>(std::move(m.lut)));
     }
 
@@ -145,7 +148,7 @@ int main(int argc, char** argv) {
 
     int frames = I("sequence", 1);
     long frame0 = I("frame", 0);
-    Image dst = src;
+    Frame dst = src;
     for (int f = 0; f < frames; ++f) {
         auto t0 = std::chrono::steady_clock::now();
         engine.render(src.view(), dst.view(), frame0 + f);

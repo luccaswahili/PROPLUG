@@ -16,6 +16,7 @@ struct LookMatchGPUParams {
     int frame;
     int split;
     float splitX, splitNx, splitNy, splitCy, splitLine;
+    int shaperSize;  // input shaper entries stored after the LUT in the same buffer (0 = none)
 };
 
 // Kernel parameters for one frame from the engine's fast-path constants and the split settings
@@ -43,6 +44,7 @@ inline LookMatchGPUParams makeGPUParams(const lm::FinishParams& f, int pitch, in
     p.splitNy = std::sin(a);
     p.splitCy = 0.5f * h;
     p.splitLine = std::fmax(1.0f, h / 540.0f);
+    p.shaperSize = 0;
     return p;
 }
 
@@ -60,6 +62,7 @@ struct Params {
     int frame;
     int split;
     float splitX, splitNx, splitNy, splitCy, splitLine;
+    int shaperSize;
 };
 
 // --- same hash and noise as the CPU engine ---
@@ -106,9 +109,21 @@ static float3 applyLut(device const float* lut, int size, float3 c) {
     }
 }
 
+// 1D input shaper (as lm::Lut3D::shape), stored after the LUT entries
+static float shape(device const float* s, int n, float v) {
+    float t = clamp(v, 0.0f, 1.0f) * float(n - 1);
+    int i = min(int(t), n - 2);
+    return s[i] + (t - float(i)) * (s[i + 1] - s[i]);
+}
+
 // src: input pixel as RGB (BGRA in memory is swizzled by the caller); returns the graded RGB.
 static float3 shade(float3 src, uint2 xy, constant Params& p, device const float* lut) {
-    float3 c = applyLut(lut, p.lutSize, src);
+    float3 sc = src;
+    if (p.shaperSize > 1) {
+        device const float* s = lut + p.lutSize * p.lutSize * p.lutSize * 3;
+        sc = float3(shape(s, p.shaperSize, src.x), shape(s, p.shaperSize, src.y), shape(s, p.shaperSize, src.z));
+    }
+    float3 c = applyLut(lut, p.lutSize, sc);
     int x = int(xy.x), y = int(xy.y);
     if (p.grainAmp > 0) {
         float gx = float(x) / p.cell, gy = float(y) / p.cell;

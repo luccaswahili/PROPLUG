@@ -179,8 +179,12 @@ Vec3 Engine::neutralDisplay(Vec3 code) const {
     return clamp01(displayNeutral(p_.input, {std::max(lin.r, 0.0f), std::max(lin.g, 0.0f), std::max(lin.b, 0.0f)}));
 }
 
-Lut3D Engine::bakeExportLut(int size) const {
+Lut3D Engine::bakeExportLut(int size) const { return bakeLut(size, false); }
+
+Lut3D Engine::bakeLut(int size, bool shaped) const {
     Lut3D l(size);
+    // the direct (GPU / fast path) LUT samples the match where its own grid is dense: same shaper
+    if (shaped && match_ && !match_->shaper().empty()) l.setShaper(match_->shaper());
     const Mat3& M = gamutToRec709(p_.input);
     Vec3 g = inputGain();
     // Same range limit as render's shaped LUT: scene linear is clamped to the shaper's range
@@ -200,7 +204,7 @@ void Engine::render(const ImageView& in, const ImageView& out, long frame) {
     if (p_.halation <= 0 && p_.bloom <= 0 && p_.softness <= 0 && p_.weave <= 0 && p_.flicker <= 0) {
         if (p_.input == InputSpace::Rec709) {
             if (directDirty_) {
-                direct_ = bakeExportLut(p_.lutSize);
+                direct_ = bakeLut(p_.lutSize, true);
                 directDirty_ = false;
             }
             finish(in, out, frame, [&](int x, int y) {
@@ -304,7 +308,7 @@ bool Engine::prepareDirect(int w, int h, long frame, FinishParams& fp) {
         p_.input != InputSpace::Rec709)
         return false;
     if (directDirty_) {
-        direct_ = bakeExportLut(p_.lutSize);
+        direct_ = bakeLut(p_.lutSize, true);
         directDirty_ = false;
     }
     const float scale = h / 1080.0f;

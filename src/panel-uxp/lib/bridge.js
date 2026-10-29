@@ -1,7 +1,7 @@
 // Everything that talks to Premiere's `premierepro` UXP module. The module, fs and the data
 // folder are injected so the logic can be tested in node with a mock (test/mock-premiere.js).
 
-const { P, POPUPS } = require("./looks.js");
+const { P, POPUPS } = require("./params.js");
 const { joinPath } = require("./library.js");
 
 const LOOKMATCH = "PROPLUGS LookMatch";
@@ -171,13 +171,54 @@ class Bridge {
 
   // Each clip gets its own slot, so its match is built from its own frame (a shared slot would be
   // built once, from whichever clip Premiere renders first, and reused for all of them).
+  // `extraParams` is an object, or a function (itemIndex) -> object for per-clip values.
+  // A match never applies film print emulation: Film Strength goes to 0 (older projects may have it on).
   async applyReference(scope, path, extraParams) {
     const { items } = await this.items(scope);
     if (!items.length) throw new Error(scope === "sequence" ? "The sequence has no video clips." : "Select a video clip on the timeline.");
     const slots = [];
     for (let i = 0; i < items.length; i++) slots.push(await this.writeReferenceSlot(path));
-    const res = await this.applyParams(scope, (i) => Object.assign({ [P.referenceSlot]: slots[i] }, extraParams || {}));
-    return Object.assign({ slot: slots[0], slots }, res);
+    const extra = typeof extraParams === "function" ? extraParams : () => extraParams || {};
+    const res = await this.applyParams(scope, (i) => Object.assign({ [P.referenceSlot]: slots[i], [P.filmStrength]: 0 }, extra(i)));
+    const names = await Promise.all(items.map((it) => it.getName()));
+    return Object.assign({ slot: slots[0], slots, names }, res);
+  }
+
+  // The effect's analysis of a slot's match (refs/<slot>.json: source, reference and result), written
+  // when Premiere first draws the clip. Waits up to timeoutMs; null if it hasn't appeared.
+  async readAnalysis(slot, { timeoutMs = 0, pollMs = 300, sleep } = {}) {
+    const file = joinPath(this.refsDir, `${slot}.json`);
+    const wait = sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
+    for (let t = 0; ; t += pollMs) {
+      try { return JSON.parse(String(await this.fs.readFile(file, { encoding: "utf-8" }))); } catch (e) { /* not yet */ }
+      if (t >= timeoutMs) return null;
+      await wait(pollMs);
+    }
+  }
+
+  // What Premiere knows about each clip's colour (colour space, input LUT, media path, names), for
+  // picking the Source Format from metadata. Every call is optional: builds differ in what they offer.
+  async clipColourHints(scope) {
+    const { items } = await this.items(scope);
+    const out = [];
+    for (const item of items) {
+      const texts = [];
+      try { texts.push(await item.getName()); } catch (e) { /* none */ }
+      try {
+        let pi = typeof item.getProjectItem === "function" ? await item.getProjectItem() : null;
+        const C = this.ppro.ClipProjectItem;
+        if (pi && C && typeof C.cast === "function") { try { pi = C.cast(pi); } catch (e) { /* keep */ } }
+        for (const m of ["getColorSpace", "getOriginalColorSpace", "getInputLUTID", "getEmbeddedLUTID", "getMediaFilePath", "getName"]) {
+          if (!pi || typeof pi[m] !== "function") continue;
+          try {
+            const v = await pi[m]();
+            if (v) texts.push(typeof v === "string" ? v : JSON.stringify(v));
+          } catch (e) { /* not offered */ }
+        }
+      } catch (e) { /* no project item */ }
+      out.push(texts);
+    }
+    return out;
   }
 
   // Sets a "request slot" param on the first selected clip's LookMatch after writing the request
@@ -218,16 +259,6 @@ class Bridge {
   async captureFrame(opts) {
     const res = await this.effectRequest("capture", P.captureSlot, null, opts);
     return { slot: res.slot, path: `${res.base}.png`, clip: res.clip };
-  }
-
-  // Asks the effect to render small previews of `looks` ([{id, params}]) from the selected clip's
-  // current frame (with its match). Returns { id: pngPath }.
-  async lookThumbnails(looks, opts) {
-    const lines = looks.map((l) => `${l.id}\t${Object.entries(l.params).map(([k, v]) => `${k}=${Number(v)}`).join(";")}`);
-    const res = await this.effectRequest("thumbs", P.thumbsSlot, lines.join("\n") + "\n", opts);
-    const out = {};
-    for (const l of looks) out[l.id] = `${res.base}-${l.id}.png`;
-    return out;
   }
 
   async selectedLookMatchParams() {

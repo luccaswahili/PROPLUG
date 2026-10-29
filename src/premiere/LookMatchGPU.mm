@@ -185,13 +185,9 @@ public:
         PrParam mp = {};
         bool haveData = PrSuiteErrorSucceeded(s.segment->GetParam(nodeID, P_MATCH_DATA - 1, t, &mp)) &&
                         mp.mType == kPrParamType_PrMemoryPtr && mp.mMemoryPtr;
-        const MatchData* md = nullptr;
-        if (haveData) {
-            md = reinterpret_cast<const MatchData*>(mp.mMemoryPtr);
-            if (s.memory->GetPtrSize(mp.mMemoryPtr) < sizeof(MatchData) || md->magic != kMatchMagic ||
-                md->version != kMatchVersion)
-                md = nullptr;
-        }
+        const MatchDataV1* md = nullptr;
+        if (haveData && lmpanel::matchDataUsable(mp.mMemoryPtr, s.memory->GetPtrSize(mp.mMemoryPtr)))
+            md = reinterpret_cast<const MatchDataV1*>(mp.mMemoryPtr);
         const bool slotWins = slot > 0 && !(md && md->hasMatch && md->panelSlot == slot);
         gpuLog("node %d match: Match Data %s (type %d, %s), slot %ld, %s", int(nodeID), haveData ? "read" : "unreadable",
                int(mp.mType), md ? (md->hasMatch ? "has match" : "empty") : "invalid", slot, slotWins ? "slot wins" : "Match Data wins");
@@ -208,10 +204,10 @@ public:
         return why.empty();
     }
 
-    // Panel requests (capture, previews, export) are answered by the CPU render; leave those to it.
+    // Panel requests (capture, export) are answered by the CPU render; leave those to it.
     bool panelRequestPending(PrTime t, std::string& why) const {
         struct { int param; const char* kind; } reqs[] = {
-            {P_CAPTURE_SLOT, "capture"}, {P_THUMBS_SLOT, "thumbs"}, {P_EXPORT_SLOT, "export"}};
+            {P_CAPTURE_SLOT, "capture"}, {P_EXPORT_SLOT, "export"}};
         for (auto& r : reqs) {
             long slot = long(param(r.param, t));
             if (slot > 0 && !lmpanel::fileExists(lmpanel::refsDir() + r.kind + "-" + std::to_string(slot) + ".done")) {
@@ -301,7 +297,8 @@ prSuiteError Render(PrGPUFilterInstance* io, const PrGPUFilterRenderParams* rp, 
             return suiteError_Fail;
         }
         const lm::Lut3D& lut = inst->engine.directLut();
-        const size_t lutBytes = size_t(lut.size()) * lut.size() * lut.size() * sizeof(lm::Vec3);
+        const size_t entriesBytes = size_t(lut.size()) * lut.size() * lut.size() * sizeof(lm::Vec3);
+        const size_t lutBytes = entriesBytes + lut.shaper().size() * sizeof(float);
         id<MTLDevice> device = (id<MTLDevice>)inst->device.outDeviceHandle;
         // The engine rebuilds its LUT in place when settings change; uploading it each frame (~3 MB,
         // shared memory) is cheap next to the frame itself and never shows a stale look.
@@ -309,7 +306,9 @@ prSuiteError Render(PrGPUFilterInstance* io, const PrGPUFilterRenderParams* rp, 
             if (inst->lutBuffer) [inst->lutBuffer release];
             inst->lutBuffer = [device newBufferWithLength:lutBytes options:MTLResourceStorageModeShared];
         }
-        std::memcpy(inst->lutBuffer.contents, lut.data(), lutBytes);
+        std::memcpy(inst->lutBuffer.contents, lut.data(), entriesBytes);
+        if (!lut.shaper().empty())
+            std::memcpy(static_cast<char*>(inst->lutBuffer.contents) + entriesBytes, lut.shaper().data(), lut.shaper().size() * sizeof(float));
 
         void* data = nullptr;
         inst->s.gpu->GetGPUPPixData(*outFrame, &data);
@@ -325,6 +324,7 @@ prSuiteError Render(PrGPUFilterInstance* io, const PrGPUFilterRenderParams* rp, 
         LookMatchGPUParams gp = makeGPUParams(fp, pitch, w, h, lut.size(), split,
                                               float(inst->param(P_SPLIT_POS, rp->inClipTime)) / 100.0f,
                                               float(inst->param(P_SPLIT_ANGLE, rp->inClipTime)));
+        gp.shaperSize = int(lut.shaper().size());
 
         id<MTLCommandQueue> queue = (id<MTLCommandQueue>)inst->device.outCommandQueueHandle;
         id<MTLCommandBuffer> cb = [queue commandBuffer];

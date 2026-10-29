@@ -1,4 +1,5 @@
 #include "lut3d.h"
+#include <algorithm>
 #include <cstdio>
 #include <fstream>
 #include <sstream>
@@ -8,13 +9,34 @@ namespace lm {
 
 void Lut3D::fill(const std::function<Vec3(Vec3)>& f) {
     const float s = 1.0f / float(size_ - 1);
+    std::vector<float> node(size_);
+    for (int i = 0; i < size_; ++i) node[i] = shaper_.empty() ? i * s : unshape(i * s);
     parallelFor(0, size_, [&](int b) {
         for (int g = 0; g < size_; ++g)
-            for (int r = 0; r < size_; ++r) at(r, g, b) = f({r * s, g * s, b * s});
+            for (int r = 0; r < size_; ++r) at(r, g, b) = f({node[r], node[g], node[b]});
     });
 }
 
+float Lut3D::shape(float v) const {
+    if (shaper_.empty()) return v;
+    const int n = int(shaper_.size());
+    float t = clamp01(v) * float(n - 1);
+    int i = std::min(int(t), n - 2);
+    return shaper_[i] + (t - i) * (shaper_[i + 1] - shaper_[i]);
+}
+
+float Lut3D::unshape(float u) const {  // inverse of shape (shaper is increasing)
+    const int n = int(shaper_.size());
+    if (u <= shaper_.front()) return 0.0f;
+    if (u >= shaper_.back()) return 1.0f;
+    int i = int(std::upper_bound(shaper_.begin(), shaper_.end(), u) - shaper_.begin()) - 1;
+    i = std::clamp(i, 0, n - 2);
+    float d = shaper_[i + 1] - shaper_[i];
+    return (i + (d > 0 ? (u - shaper_[i]) / d : 0.0f)) / float(n - 1);
+}
+
 Vec3 Lut3D::apply(Vec3 c) const {
+    if (!shaper_.empty()) c = {shape(c.r), shape(c.g), shape(c.b)};
     const float n = float(size_ - 1);
     float fr = clamp01(c.r) * n, fg = clamp01(c.g) * n, fb = clamp01(c.b) * n;
     int r0 = std::min(int(fr), size_ - 2), g0 = std::min(int(fg), size_ - 2), b0 = std::min(int(fb), size_ - 2);

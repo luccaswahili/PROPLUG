@@ -4,7 +4,6 @@
 // from the fixed whitelist below, then writes <data>/agent/result.json. No eval, no scripts.
 
 const { joinPath } = require("./library.js");
-const { FILM_LOOKS, lookParams } = require("./looks.js");
 const { runSelfTest } = require("./selftest.js");
 
 const COMMANDS = {
@@ -12,6 +11,7 @@ const COMMANDS = {
   clipNames: async (b, a) => b.clipNames(a.scope),
   readSelected: async (b) => b.selectedLookMatchParams(),
   applyReference: async (b, a) => b.applyReference(a.scope, String(a.path)),
+  readAnalysis: async (b, a) => b.readAnalysis(Number(a.slot) || 0, { timeoutMs: Math.min(60000, Number(a.timeoutMs) || 0) }),
   applyParams: async (b, a) => {
     const params = {};
     for (const [k, v] of Object.entries(a.params || {}))
@@ -26,7 +26,6 @@ const COMMANDS = {
   timeline: async (b) => b.timeline(),
   setPlayhead: async (b, a) => b.setPlayhead(Number(a.seconds) || 0),
   selfTest: async (b, a) => runSelfTest(b, { referencePath: a.referencePath ? String(a.referencePath) : null }),
-  previewLooks: async (b) => b.lookThumbnails(FILM_LOOKS.map((l) => ({ id: l.id, params: lookParams(l) })), { timeoutMs: 30000 }),
 };
 
 function startAgent(fs, dataDir, bridge, log, ui) {
@@ -38,10 +37,16 @@ function startAgent(fs, dataDir, bridge, log, ui) {
       return { id: a.id, value: ui.element(a.id).value };
     };
     COMMANDS.uiTab = async (b, a) => {
-      if (!["match", "looks", "film", "saved", "tools"].includes(a.tab)) throw new Error(`tab ${a.tab} not allowed`);
+      if (!["match", "texture", "saved", "tools"].includes(a.tab)) throw new Error(`tab ${a.tab} not allowed`);
       ui.element("tabs").querySelector(`[data-tab="${a.tab}"]`).click();
       return { tab: a.tab };
     };
+    COMMANDS.uiSourceFormat = async (b, a) => {
+      const v = Math.round(Number(a.value) || 1);
+      ui.element("sourceFormat").selectedIndex = Math.max(0, v - 1);
+      return { sourceFormat: ui.element("sourceFormat").selectedIndex + 1 };
+    };
+    COMMANDS.uiAnalysis = async () => ({ text: ui.analysis ? ui.analysis() : "" });
     COMMANDS.uiMetrics = async () => {
       const c = ui.element("content");
       return { scrollHeight: c.scrollHeight, clientHeight: c.clientHeight, scrolls: c.scrollHeight > c.clientHeight,

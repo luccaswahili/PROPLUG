@@ -3,3 +3,4 @@ build-*/
 *.aex
 *.plugin/
 .DS_Store
+tests/frames/

@@ -69,7 +69,7 @@ public:
 
     // Neutral display version of an input pixel: what the matcher sees as "the footage".
     Vec3 neutralDisplay(Vec3 inputCode) const;
-    // Colour-only transform from input code values to display, for .cube export.
+    // Colour-only transform from input code values to display, for .cube export (no shaper).
     Lut3D bakeExportLut(int size) const;
 
     // GPU support: if this frame can use the single-LUT fast path (Rec.709 input, no weave, flicker,
@@ -79,6 +79,7 @@ public:
 
 private:
     Vec3 inputGain() const;
+    Lut3D bakeLut(int size, bool shaped) const;
     Vec3 colorFromLinear(Vec3 lin) const;  // scene linear Rec.709 -> display
     void rebuildLut();
     template <class ColourAt>
