@@ -5,53 +5,19 @@
     <conclusion file="conclusion.html" mime-type="text/html"/>
     <options customize="never" require-scripts="false" hostArchitectures="x86_64,arm64"/>
     <domains enable_localSystem="true"/>
-    <installation-check script="checkHosts()"/>
+    <installation-check script="checkOS()"/>
     <script><![CDATA[
-    // Tell the user which Premiere Pro / After Effects versions are on this Mac.
-    // The plug-in works with all of them (CC 2015+), so this only informs; it never blocks.
-    function checkHosts() {
+    // Scripted / MDM installs: no informational alerts. Host detection is reported by the
+    // postinstall script (in /Library/Logs/LookMatch-install.log) and shown inline by the
+    // Install LookMatch app. Only a macOS that is too old stops the install.
+    function checkOS() {
         if (system.compareVersions(system.version.ProductVersion, '10.9') < 0) {
             my.result.type = 'Fatal';
             my.result.title = 'macOS 10.9 or later is required';
             my.result.message = 'LookMatch needs OS X 10.9 Mavericks or later.';
             return false;
         }
-        // Installer JavaScript can't list a folder, so probe the folder names Adobe uses:
-        // "Adobe Premiere Pro CC 2015" ... "CC 2019", then "Adobe Premiere Pro 2020" onwards.
-        var names = [];
-        var products = ['Adobe Premiere Pro', 'Adobe After Effects'];
-        for (var p = 0; p < products.length; p++) {
-            for (var y = 2015; y <= 2032; y++) {
-                var candidates = [products[p] + ' CC ' + y, products[p] + ' ' + y];
-                for (var c = 0; c < candidates.length; c++) {
-                    var app = '/Applications/' + candidates[c] + '/' + candidates[c] + '.app';
-                    try {
-                        if (!system.files.fileExistsAtPath(app)) continue;
-                    } catch (e) {
-                        continue;
-                    }
-                    var label = candidates[c];
-                    try {
-                        // the version is a nice-to-have: list the app even if it can't be read
-                        var b = system.files.bundleAtPath(app);
-                        if (b && b.CFBundleShortVersionString) label += ' (' + b.CFBundleShortVersionString + ')';
-                    } catch (e) {
-                        system.log('LookMatch: could not read the version of ' + app + ': ' + e);
-                    }
-                    names.push(label);
-                }
-            }
-        }
-        if (names.length == 0) {
-            my.result.type = 'Warning';
-            my.result.title = 'No Premiere Pro or After Effects found';
-            my.result.message = 'LookMatch works with Premiere Pro and After Effects CC 2015 to 2026. It will install now and load once one of them is installed.';
-            return false;
-        }
-        my.result.type = 'Warning';
-        my.result.title = 'LookMatch will work with:';
-        my.result.message = names.join('\n') + '\n\nOne plug-in covers all of these versions.';
-        return false;
+        return true;
     }
     ]]></script>
     <choices-outline><line choice="lookmatch"/></choices-outline>
