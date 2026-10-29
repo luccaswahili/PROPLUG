@@ -48,6 +48,15 @@ struct ImageView {  // interleaved float RGBA, rows may be padded
     float* px(int x, int y) const { return data + size_t(y) * stride + size_t(x) * 4; }
 };
 
+// Constants of the final per-pixel pass (grain, vignette, mix), so a GPU kernel can reproduce the
+// CPU fast path exactly.
+struct FinishParams {
+    float grainAmp = 0, cell = 1, grainColor = 0;
+    float vignette = 0, mix = 1;
+    float cx = 0, cy = 0, invDiag = 0;
+    int frame = 0;
+};
+
 class Engine {
 public:
     Engine();
@@ -62,6 +71,11 @@ public:
     Vec3 neutralDisplay(Vec3 inputCode) const;
     // Colour-only transform from input code values to display, for .cube export.
     Lut3D bakeExportLut(int size) const;
+
+    // GPU support: if this frame can use the single-LUT fast path (Rec.709 input, no weave, flicker,
+    // halation, bloom or softness), builds that LUT, fills `fp` and returns true.
+    bool prepareDirect(int w, int h, long frame, FinishParams& fp);
+    const Lut3D& directLut() const { return direct_; }
 
 private:
     Vec3 inputGain() const;

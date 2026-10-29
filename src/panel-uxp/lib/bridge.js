@@ -255,9 +255,11 @@ class Bridge {
       }]);
     }
     if (typeof sequence.getSelection === "function") {
-      tries.push(["sequence.getSelection().clearSelection/addItem", async () => {
+      tries.push(["sequence.getSelection(): remove others, addItem", async () => {
         const sel = await sequence.getSelection();
-        if (sel.clearSelection) await sel.clearSelection();
+        if (typeof sel.clearSelection === "function") await sel.clearSelection();
+        else if (typeof sel.removeItem === "function")
+          for (const other of await sel.getTrackItems()) await sel.removeItem(other);
         await sel.addItem(item, true);
         if (sequence.setSelection) await sequence.setSelection(sel);
       }]);
@@ -267,8 +269,9 @@ class Bridge {
       try {
         await fn();
         const now = await (await sequence.getSelection()).getTrackItems();
-        if (now.length) return { selected: await item.getName(), via: name };
-        errors.push(`${name}: nothing selected`);
+        const names = await Promise.all(now.map((i) => i.getName()));
+        if (now.length === 1) return { selected: await item.getName(), via: name };
+        errors.push(`${name}: selection is [${names.join(", ")}]`);
       } catch (e) { errors.push(`${name}: ${e.message}`); }
     }
     throw new Error(`could not select: ${errors.join(" | ") || "no selection API"}`);

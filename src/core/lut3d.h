@@ -23,6 +23,7 @@ public:
     void fill(const std::function<Vec3(Vec3)>& f);
 
     Vec3 apply(Vec3 c) const;  // tetrahedral, input clamped to 0..1
+    const Vec3* data() const { return data_.data(); }  // size^3 entries, red fastest (for GPU upload)
 
     bool writeCube(const std::string& path, const std::string& title) const;
     bool readCube(const std::string& path, std::string* error = nullptr);

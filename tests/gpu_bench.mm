@@ -1,0 +1,45 @@
+// GPU kernel vs CPU fast path timing at 1080p and 4K (colour + grain + vignette).
+#import <Metal/Metal.h>
+#include <chrono>
+#include <cstdio>
+#include <vector>
+#include "engine.h"
+#include "../src/premiere/LookMatchKernel.h"
+using namespace lm;
+int main() {
+    @autoreleasepool {
+        id<MTLDevice> dev = MTLCreateSystemDefaultDevice();
+        NSError* err = nil;
+        id<MTLLibrary> lib = [dev newLibraryWithSource:[NSString stringWithUTF8String:kLookMatchMetalSource] options:nil error:&err];
+        id<MTLComputePipelineState> pso = [dev newComputePipelineStateWithFunction:[lib newFunctionWithName:@"lookmatch_f32"] error:&err];
+        id<MTLCommandQueue> q = [dev newCommandQueue];
+        printf("GPU: %s\n", dev.name.UTF8String);
+        for (auto [w, h] : {std::pair{1920, 1080}, std::pair{3840, 2160}}) {
+            Params p; p.filmStrength = 0.9f; p.grain = 0.3f; p.vignette = 0.2f;
+            Engine e; e.setParams(p);
+            std::vector<float> src(size_t(w) * h * 4, 0.5f), dst(src.size());
+            e.render({src.data(), w, h, w * 4}, {dst.data(), w, h, w * 4}, 0);
+            auto t0 = std::chrono::steady_clock::now();
+            for (int f = 1; f <= 20; ++f) e.render({src.data(), w, h, w * 4}, {dst.data(), w, h, w * 4}, f);
+            double cpu = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() / 20;
+            FinishParams fp; e.prepareDirect(w, h, 1, fp);
+            const Lut3D& lut = e.directLut();
+            id<MTLBuffer> io = [dev newBufferWithLength:src.size() * 4 options:MTLResourceStorageModePrivate];
+            id<MTLBuffer> lb = [dev newBufferWithBytes:lut.data() length:size_t(lut.size()) * lut.size() * lut.size() * 12 options:MTLResourceStorageModeShared];
+            LookMatchGPUParams gp = makeGPUParams(fp, w, w, h, lut.size(), false, 0.5f, 0);
+            auto run = [&] {
+                id<MTLCommandBuffer> cb = [q commandBuffer];
+                id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+                [enc setComputePipelineState:pso]; [enc setBuffer:io offset:0 atIndex:0];
+                [enc setBytes:&gp length:sizeof gp atIndex:1]; [enc setBuffer:lb offset:0 atIndex:2];
+                [enc dispatchThreads:MTLSizeMake(w, h, 1) threadsPerThreadgroup:MTLSizeMake(pso.threadExecutionWidth, 16, 1)];
+                [enc endEncoding]; [cb commit]; [cb waitUntilCompleted];
+            };
+            run();
+            t0 = std::chrono::steady_clock::now();
+            for (int i = 0; i < 20; ++i) run();
+            double gpu = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() / 20;
+            printf("%dx%d  CPU %.1f ms  GPU %.2f ms (incl. submit+wait)  %.0fx\n", w, h, cpu, gpu, cpu / gpu);
+        }
+    }
+}
