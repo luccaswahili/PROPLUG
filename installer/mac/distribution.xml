@@ -27,13 +27,18 @@
                     var app = '/Applications/' + candidates[c] + '/' + candidates[c] + '.app';
                     try {
                         if (!system.files.fileExistsAtPath(app)) continue;
-                        var label = candidates[c];
+                    } catch (e) {
+                        continue;
+                    }
+                    var label = candidates[c];
+                    try {
+                        // the version is a nice-to-have: list the app even if it can't be read
                         var b = system.files.bundleAtPath(app);
                         if (b && b.CFBundleShortVersionString) label += ' (' + b.CFBundleShortVersionString + ')';
-                        names.push(label);
                     } catch (e) {
-                        system.log('LookMatch: could not inspect ' + app + ': ' + e);
+                        system.log('LookMatch: could not read the version of ' + app + ': ' + e);
                     }
+                    names.push(label);
                 }
             }
         }
