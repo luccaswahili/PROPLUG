@@ -111,6 +111,18 @@ controls. So the effect has a collapsed **Panel Link** group of number controls:
 
 The effect never builds a match from Premiere's yellow "Media pending" card, which shows while footage is still loading.
 
+## Known limits
+
+- **Panel matches live on this Mac** until you click **Panel Link > Save into Project** in Effect Controls. A panel
+  can't press an effect's button.
+- **A clip is matched the first time Premiere draws it** (playhead over it, playback or export). Matching a whole
+  sequence doesn't render every clip up front.
+- **No GPU rendering yet.** Premiere runs third-party GPU effects through its own GPU filter API. That needs headers
+  from the Premiere Pro SDK (`PrSDKGPUFilter.h`, `PrSDKGPUDeviceSuite.h`), which aren't in the After Effects SDK and
+  need an Adobe developer login to download. The CPU path is optimised: 1080p colour-only is about 10 ms per frame on
+  an M1 Max, and about 42 ms with halation, bloom, grain and softness all on.
+- **Windows** builds (effect and panel) are written to be portable but are untested.
+
 ## Building and installing (developers)
 
 ```bash
