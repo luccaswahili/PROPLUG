@@ -50,6 +50,11 @@ After **Match**, the panel shows each clip's analysis inline as soon as Premiere
 | Temperature / Tint | white the clip was balanced for (K, tint; D65 = 6504 K / 0) | | |
 | Contrast | stops between the 5th and 95th percentile of luminance | | |
 
+**Deband.** Compressed 8- and 10-bit log footage stores smooth gradients such as skies as fine steps, and a grade
+expands them into contour rings. So whenever the effect changes the picture, it smooths those steps first, on the
+GPU and the CPU alike, and leaves edges and texture alone. Untouched clips pass through unchanged. See
+[MATCHING.md](MATCHING.md#deband-contour-rings-in-skies).
+
 A match never applies a film print: matching sets **Film Strength** to 0 (projects saved with an earlier build keep
 their film settings until a clip is matched again).
 

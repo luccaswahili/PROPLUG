@@ -181,6 +181,20 @@ It is applied in linear Rec.709, before the display encode.
 Measured on 8 frames: consistency is unchanged, at mean 1.48 / p95 2.86 against 2.91 before.
 Grey-axis jump failures fall from 16 to 13. Content preservation is unchanged.
 
+## Already in the design
+
+Three of the open-source techniques reviewed were already how the matcher works, so they were not
+added again:
+
+- **Illuminant from surfaces and from edges** (darktable colour calibration). `estimateIlluminant`
+  uses the most neutral pixels (iterated) together with a white patch and grey-edge. It leaves out
+  clipped, very dark, skin-like and strongly coloured pixels.
+- **Cluster pairing with soft weights** (darktable colour mapping). The look is moved per hue
+  sector, using overlapping smooth weights. A sector moves only when the reference has evidence for
+  it, and colours move about the neutral axis.
+- **Hue-preserving tone curves on a norm** (AgX / sigmoid). The tone match is applied to luminance
+  as a ratio, so it does not skew hues.
+
 ## Tried and not adopted
 
 - **CAT16 instead of Bradford for the white-balance correction.** Over 8 frames, every white-balance

@@ -55,12 +55,19 @@ Requirements: CMake 3.16+, a C++17 compiler.
 # engine, command-line renderer and tests (any OS)
 cmake -S . -B build && cmake --build build -j
 ./build/engine_tests
-(cd build && ctest)   # engine, consistency and GPU tests
+(cd build && ctest)   # engine, consistency, banding and GPU tests
 
 # consistency test on real frames: grab a few frames per clip, then point it at a reference still
 swift tools/extract_frames.swift tests/frames 640 2 clip1.mov clip2.mp4
 cmake -S . -B build -DLOOKMATCH_TEST_REF=/path/to/reference.png
 ./build/consistency_tests --old      # --old adds the previous matcher's numbers
+
+# sky banding: 16-bit frames of a log clip, named NAME-sky<W>x<H>.png (the sky's extent), then
+swift tools/extract_frame16.swift clip.mov 61.0 tests/frames-sky/beach-sky1100x440.png 1920
+./build/banding_tests
+
+# ground truth for the camera curves and gamuts (test-only: pip install colour-science)
+python tests/check_transfers.py build/lookmatch-render
 
 # Premiere effect (Windows: Visual Studio 2022; macOS: Xcode 15+)
 # Download the After Effects SDK from Adobe's developer site (free Adobe account), then:
@@ -136,8 +143,11 @@ cmake -S . -B build -DLOOKMATCH_BUILD_PLUGIN=ON -DAE_SDK_DIR=<AE SDK>/Examples \
   Program monitor differed by a mean of 0.2/255 between the two paths.
 - **On the CPU:** clips with halation, bloom, softness, gate weave, flicker or a log **Footage Encoding**, and clips with a panel
   request still waiting. The GPU filter declines those, and Premiere renders them with the CPU effect.
-- **Speed (M1 Max, colour + grain + vignette):** 1080p is 10.3 ms on the CPU and 0.97 ms on the GPU (11×). 4K is
-  40.6 ms vs 1.8 ms (23×). Measured with `gpu_bench`.
+- **Deband:** before the grade, both paths smooth the source's quantisation steps, which would otherwise show as
+  contour rings in compressed log skies (see docs/MATCHING.md). The GPU filter grades from a copy of the frame for
+  this.
+- **Speed (M1 Max, colour + deband, worst case):** 1080p is 53 ms on the CPU and 2.9 ms on the GPU. 4K is 326 ms vs
+  9.6 ms (34×). Without deband, 4K was 40.6 ms on the CPU and 1.8 ms on the GPU. Measured with `gpu_bench`.
 - `LOOKMATCH_NO_GPU=1` turns the GPU path off.
 - The GPU filter API returns popups 0-based, while the AE API and Effect Controls are 1-based. The code accounts for this.
 
@@ -147,10 +157,12 @@ cmake -S . -B build -DLOOKMATCH_BUILD_PLUGIN=ON -DAE_SDK_DIR=<AE SDK>/Examples \
 |---|---|
 | Engine (match, film, texture) | `engine_tests` passes: identity, film neutrality, export LUT, self-match, fast path vs full path, concurrent renders, transfer curves, CCT/tint, cast and log detection |
 | Source-aware match | `consistency_tests`: real frames under exposure, white balance, curve, saturation and log perturbations, CIEDE2000 against the untouched match. See [docs/MATCHING.md](docs/MATCHING.md) |
+| Banding | `banding_tests`: compressed 8/10-bit log skies (synthetic and real) show no contour steps after the grade, and deband keeps at least 93% of the texture detail |
+| Camera curves | `tests/check_transfers.py`: 11 log curves and their gamuts match colour-science |
 | Command-line renderer | Built and tested |
 | Premiere effect | Tested in Premiere Pro 2026 (26.5) on macOS: matching, film, split view, panel link. Universal arm64 + x86_64. |
 | Panel | Tested in Premiere 26.5 through its test agent (self-test 8/8 or 9/9 with a reference); `node src/panel-uxp/test/run.js` |
-| Speed (M1 Max) | CPU: 1080p colour-only 9.6 ms, everything on 42 ms; 4K colour-only 37 ms, everything on 196 ms. GPU (colour path): 1080p 0.97 ms, 4K 1.8 ms |
+| Speed (M1 Max) | GPU (colour + deband): 1080p 2.9 ms, 4K 9.6 ms. CPU colour + deband: 1080p 53 ms, 4K 326 ms (without deband 9.6 / 37 ms) |
 
 ## Next steps
 
