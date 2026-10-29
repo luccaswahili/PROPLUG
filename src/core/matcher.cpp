@@ -179,7 +179,7 @@ public:
             sm[i] = s / 9;
         }
         for (int i = 1; i < 256; ++i) sm[i] = std::max(sm[i], sm[i - 1]);
-        curve_ = limitSlope(sm, S);
+        curve_ = limitSlope(sm, sq);
 
         // 2. Monge-Kantorovich chroma transfer
         auto wcov = [](const Stats& st, double& ma, double& mb) {
@@ -236,18 +236,21 @@ public:
         }
     }
 
-    // Re-integrates the tone curve with its slope clamped, then shifts it so the source's average
-    // lightness still lands where the unclamped curve put it (keeps the overall exposure intent).
-    std::vector<float> limitSlope(const std::vector<float>& c, const Stats& S) const {
+    // Re-integrates the tone curve with its slope clamped, then shifts it so the source's darkest
+    // tones (1st percentile) still land where the unclamped curve put them. The minimum slope only
+    // applies inside the source's tonal range; outside it the curve may stay flat.
+    std::vector<float> limitSlope(const std::vector<float>& c, const std::vector<float>& srcQuantiles) const {
         const int n = int(c.size());
+        const float lo = srcQuantiles[srcQuantiles.size() / 100], hi = srcQuantiles[srcQuantiles.size() * 99 / 100];
         std::vector<float> out(n);
         out[0] = c[0];
         for (int i = 1; i < n; ++i) {
             float step = (c[i] - c[i - 1]) * (n - 1);
-            out[i] = out[i - 1] + std::clamp(step, kMinToneSlope, kMaxToneSlope) / (n - 1);
+            float minSlope = knots_[i] >= lo && knots_[i] <= hi ? kMinToneSlope : 0.0f;
+            out[i] = out[i - 1] + std::clamp(step, minSlope, kMaxToneSlope) / (n - 1);
         }
-        (void)S;
-        for (float& v : out) v = clamp01(v);
+        float shift = interp(lo, knots_, c) - interp(lo, knots_, out);
+        for (float& v : out) v = clamp01(v + shift);
         return out;
     }
 

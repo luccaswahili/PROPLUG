@@ -114,17 +114,27 @@ bool isPremiere(PF_InData* in_data) { return in_data->appl_id == 'PrMr'; }
 // ---------- pixel conversion ----------
 
 // ---------- diagnostics ----------
-// Logging is off unless ~/Library/Logs/LookMatch.log exists (touch it to turn logging on).
+// Off by default. Set LOOKMATCH_LOG=1 in the host's environment (on macOS, for a host started
+// from the Dock: `launchctl setenv LOOKMATCH_LOG 1`, then relaunch it) to append to
+// ~/Library/Logs/LookMatch.log.
+
+bool logEnabled() {
+    static const bool on = [] {
+        const char* v = std::getenv("LOOKMATCH_LOG");
+        return v && v[0] == '1';
+    }();
+    return on;
+}
 
 void lmLog(const char* fmt, ...) {
+    if (!logEnabled()) return;
     static std::mutex m;
     const char* home = std::getenv("HOME");
     if (!home) return;
     std::string path = std::string(home) + "/Library/Logs/LookMatch.log";
     std::lock_guard<std::mutex> lock(m);
-    FILE* f = std::fopen(path.c_str(), "r+");
+    FILE* f = std::fopen(path.c_str(), "a");
     if (!f) return;
-    std::fseek(f, 0, SEEK_END);
     std::time_t t = std::time(nullptr);
     char ts[32];
     std::strftime(ts, sizeof ts, "%H:%M:%S", std::localtime(&t));
