@@ -18,7 +18,7 @@
 #define LM_DESCRIPTION "Match the look of any still, then finish it with film print emulation, halation, bloom and grain."
 #define LM_MAJOR 1
 #define LM_MINOR 0
-#define LM_BUG 0
+#define LM_BUG 1
 #define LM_BUILD 1
 
 enum ParamId {
@@ -69,6 +69,7 @@ enum ParamId {
     // output
     P_MIX,
     P_EXPORT_LUT,
+    P_MATCH_DATA,  // hidden: the computed match (see MatchData)
     P_NUM_PARAMS
 };
 
@@ -79,22 +80,25 @@ enum DiskId {
     D_FILM_TOPIC, D_FILM_STRENGTH, D_NEGATIVE, D_PRINT, D_PRINTER_R, D_PRINTER_G, D_PRINTER_B, D_FILM_SAT, D_FADE, D_FILM_TOPIC_END,
     D_TEXTURE_TOPIC, D_HALATION, D_HALATION_RADIUS, D_HALATION_THRESHOLD, D_BLOOM, D_BLOOM_RADIUS, D_BLOOM_THRESHOLD,
     D_GRAIN, D_GRAIN_SIZE, D_GRAIN_COLOR, D_SOFTNESS, D_VIGNETTE, D_WEAVE, D_FLICKER, D_TEXTURE_TOPIC_END,
-    D_MIX, D_EXPORT_LUT
+    D_MIX, D_EXPORT_LUT, D_MATCH_DATA
 };
 
-// Sequence data: one per effect instance, saved inside the project. Plain old data with no
-// pointers, so the host can save it as-is (no flattening needed).
+// The computed match lives in a hidden arbitrary-data parameter, not in sequence data:
+// Premiere renders on separate effect instances with their own copies of sequence data, so a
+// match computed when the user clicks a button never reached the renderer. Parameters are
+// passed to every render, saved in the project and undoable. Plain old data, no pointers.
 constexpr int kMatchLutSize = 33;
-constexpr uint32_t kSeqMagic = 0x4C4D5351;  // 'LMSQ'
-constexpr uint32_t kSeqVersion = 1;
+constexpr uint32_t kMatchMagic = 0x4C4D4D44;  // 'LMMD'
+constexpr uint32_t kMatchVersion = 1;
 
-struct SeqData {
+struct MatchData {
     uint32_t magic;
     uint32_t version;
     uint64_t matchId;  // changes every time a new match is computed (engine cache key)
     int32_t hasMatch;
-    char referencePath[1024];  // UTF-8, informational
-    float matchLut[kMatchLutSize * kMatchLutSize * kMatchLutSize * 3];
+    int32_t reserved;
+    char referencePath[1024];  // UTF-8, used by Match to This Frame
+    uint16_t lut[kMatchLutSize * kMatchLutSize * kMatchLutSize * 3];  // display RGB 0..1 as 0..65535
 };
 
 // platform file dialogs (Dialogs_mac.mm / Dialogs_win.cpp). Return false if cancelled.
