@@ -5,6 +5,7 @@
 // host parameters and pixel buffers onto it.
 #include "LookMatch.h"
 
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -98,7 +99,8 @@ lm::Params readParams(PF_ParamDef* params[]) {
 }
 
 void setError(PF_OutData* out_data, const char* msg) {
-    PF_STRCPY(out_data->return_msg, msg);
+    // PF_STRCPY needs in_data in scope; a bounded copy does the same job here
+    std::snprintf(out_data->return_msg, sizeof(out_data->return_msg), "%s", msg);
     out_data->out_flags |= PF_OutFlag_DISPLAY_ERROR_MESSAGE;
 }
 
@@ -454,8 +456,10 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
 extern "C" DllExport PF_Err PluginDataEntryFunction2(PF_PluginDataPtr inPtr, PF_PluginDataCB2 inPluginDataCallBackPtr,
                                                      SPBasicSuite* inSPBasicSuitePtr, const char* inHostName,
                                                      const char* inHostVersion) {
-    return PF_REGISTER_EFFECT_EXT2(inPtr, inPluginDataCallBackPtr, LM_NAME, "PROPLUGS LookMatch", "PRO PLUGS",
-                                   AE_RESERVED_INFO, "EffectMain", "https://github.com/luccaswahili");
+    PF_Err result = PF_Err_INVALID_CALLBACK;  // PF_REGISTER_EFFECT_EXT2 assigns to a local named result
+    result = PF_REGISTER_EFFECT_EXT2(inPtr, inPluginDataCallBackPtr, LM_NAME, "PROPLUGS LookMatch", "PRO PLUGS",
+                                     AE_RESERVED_INFO, "EffectMain", "https://github.com/luccaswahili");
+    return result;
 }
 
 extern "C" DllExport PF_Err EffectMain(PF_Cmd cmd, PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[],

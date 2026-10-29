@@ -1,4 +1,5 @@
 build/
+build-*/
 *.aex
 *.plugin/
 .DS_Store

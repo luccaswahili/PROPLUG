@@ -58,8 +58,15 @@ elseif(APPLE)
     BUNDLE_EXTENSION "plugin"
     OSX_ARCHITECTURES "arm64;x86_64"
     MACOSX_BUNDLE_GUI_IDENTIFIER "com.proplugs.lookmatch"
-    MACOSX_BUNDLE_BUNDLE_NAME "LookMatch")
+    MACOSX_BUNDLE_BUNDLE_NAME "LookMatch"
+    MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/LookMatch-Info.plist.in")
+  # PkgInfo (type + creator), as the SDK samples generate with GENERATE_PKGINFO_FILE
+  add_custom_command(TARGET LookMatch POST_BUILD
+    COMMAND /bin/sh -c "printf eFKTFXTC > \"$<TARGET_BUNDLE_CONTENT_DIR:LookMatch>/PkgInfo\""
+    VERBATIM)
   target_link_libraries(LookMatch PRIVATE "-framework Cocoa" "-framework UniformTypeIdentifiers")
+  # the universal plugin links the engine, so the engine must be universal too
+  set_target_properties(lookmatch_core PROPERTIES OSX_ARCHITECTURES "arm64;x86_64")
 else()
   message(FATAL_ERROR "The Premiere effect builds on Windows and macOS only")
 endif()
