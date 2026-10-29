@@ -769,6 +769,11 @@ void renderThumbnails(const std::string& base, const std::vector<float>& frame, 
             if (end == std::string::npos) break;
             pos = end + 1;
         }
+        // Grain and weave are per pixel: at full size, shrinking the frame averages grain away by about
+        // the scale factor, so scale them to look like a downsized full-resolution render.
+        const float scale = float(tw) / float(w);
+        p.grain *= scale;
+        p.weave *= scale;
         lm::Engine e;
         e.setParams(p);
         e.setMatchLut(matchLut);
