@@ -48,6 +48,15 @@ struct ImageView {  // interleaved float RGBA, rows may be padded
     float* px(int x, int y) const { return data + size_t(y) * stride + size_t(x) * 4; }
 };
 
+// Constants of the final per-pixel pass (grain, vignette, mix), so a GPU kernel can reproduce the
+// CPU fast path exactly.
+struct FinishParams {
+    float grainAmp = 0, cell = 1, grainColor = 0;
+    float vignette = 0, mix = 1;
+    float cx = 0, cy = 0, invDiag = 0;
+    int frame = 0;
+};
+
 class Engine {
 public:
     Engine();
@@ -63,13 +72,22 @@ public:
     // Colour-only transform from input code values to display, for .cube export.
     Lut3D bakeExportLut(int size) const;
 
+    // GPU support: if this frame can use the single-LUT fast path (Rec.709 input, no weave, flicker,
+    // halation, bloom or softness), builds that LUT, fills `fp` and returns true.
+    bool prepareDirect(int w, int h, long frame, FinishParams& fp);
+    const Lut3D& directLut() const { return direct_; }
+
 private:
     Vec3 inputGain() const;
     Vec3 colorFromLinear(Vec3 lin) const;  // scene linear Rec.709 -> display
     void rebuildLut();
+    template <class ColourAt>
+    void finish(const ImageView& in, const ImageView& out, long frame, ColourAt colourAt);
 
     Params p_;
     bool lutDirty_ = true;
+    bool directDirty_ = true;  // direct_ needs rebuilding (colour or input gain changed)
+    Lut3D direct_;             // input code -> display in one lookup, for frames with no spatial effects
     std::shared_ptr<const Lut3D> match_;
     std::unique_ptr<FilmModel> film_;
     Lut3D lut_;  // log2-shaped scene linear -> display

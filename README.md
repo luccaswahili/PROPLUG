@@ -93,22 +93,50 @@ Otherwise the builds are ad-hoc signed and the pkg is unsigned.
 ./build/lookmatch-render --list-stocks
 ```
 
+## LookMatch panel (Premiere Pro 2025+)
+
+A dockable panel drives the effect. It has a reference library with drag and drop, matching of selected clips or a
+whole sequence, hero-clip shot matching, 8 film looks plus every stock combination with previews rendered from your
+own shot, all film controls, saved looks (`.lmlook`), `.cube` export and a before/after split. See
+**[docs/PANEL.md](docs/PANEL.md)**.
+
+![LookMatch panel in Premiere](docs/panel/premiere-with-panel.png)
+
+## GPU rendering (Premiere Pro, Metal)
+
+With the Premiere Pro SDK, the effect also registers a Premiere GPU filter (`src/premiere/LookMatchGPU.mm`):
+
+```bash
+cmake -S . -B build -DLOOKMATCH_BUILD_PLUGIN=ON -DAE_SDK_DIR=<AE SDK>/Examples \
+      -DLOOKMATCH_PR_SDK_DIR="<Premiere Pro SDK>/Examples"   # any SDK from CC 2017 on
+```
+
+- **On the GPU:** colour (match, film, fade, via one baked LUT), grain, vignette, mix and split view, for Rec.709 footage.
+  The Metal kernel mirrors the CPU fast path. `gpu_tests` checks GPU against CPU (max 0/255). In Premiere 26.5 the
+  Program monitor differed by a mean of 0.2/255 between the two paths.
+- **On the CPU:** clips with halation, bloom, softness, gate weave, flicker or log footage, and clips with a panel
+  request still waiting. The GPU filter declines those, and Premiere renders them with the CPU effect.
+- **Speed (M1 Max, colour + grain + vignette):** 1080p is 10.3 ms on the CPU and 0.97 ms on the GPU (11×). 4K is
+  40.6 ms vs 1.8 ms (23×). Measured with `gpu_bench`.
+- `LOOKMATCH_NO_GPU=1` turns the GPU path off.
+- The GPU filter API returns popups 0-based, while the AE API and Effect Controls are 1-based. The code accounts for this.
+
 ## Status
 
 | Part | State |
 |---|---|
-| Engine (match, film, texture) | Built and tested here: `engine_tests` passes. With everything off the output is pixel-identical. |
-| Command-line renderer | Built and tested here |
-| Premiere effect wrapper | Builds on macOS (Xcode 27, AE SDK 27.0) as a universal arm64 + x86_64 bundle. Not yet run inside Premiere. |
-| Speed | CPU only for now. 1080p with every effect on takes ≈ 0.17 s/frame on 4 cores. Colour-only takes a few ms. Real-time playback needs the GPU path (next). |
+| Engine (match, film, texture) | `engine_tests` passes: identity, film neutrality, export LUT, self-match, fast path vs full path, concurrent renders |
+| Command-line renderer | Built and tested |
+| Premiere effect | Tested in Premiere Pro 2026 (26.5) on macOS: matching, film, split view, panel link. Universal arm64 + x86_64. |
+| Panel | Tested in Premiere 26.5 through its test agent (self-test 8/8 or 9/9 with a reference); `node src/panel-uxp/test/run.js` |
+| Speed (M1 Max) | CPU: 1080p colour-only 9.6 ms, everything on 42 ms; 4K colour-only 37 ms, everything on 196 ms. GPU (colour path): 1080p 0.97 ms, 4K 1.8 ms |
 
 ## Next steps
 
-1. **First build in Premiere** on your machine. Fix SDK compile issues and check the pixel formats (BGRA 8-bit and 32f).
-2. **GPU render path** (Premiere GPU effect API with Metal / CUDA / OpenCL kernels) for real-time 4K playback. The engine is already split into a LUT plus a few blur and noise passes, which map straight onto GPU kernels.
-3. **Editor window** with a reference drop zone, before/after split and stock thumbnails, like the QG UI.
-4. **DaVinci Resolve OFX** build, reusing the same engine.
-5. Installer, licensing, and per-stock tuning against real film scans.
+1. **GPU versions of halation, bloom and softness, and log decoding**, so every look renders on the GPU (CUDA/OpenCL for Windows).
+2. **Windows build** of the effect and panel (the code is portable; untested).
+3. **DaVinci Resolve OFX** build, reusing the same engine.
+4. Signed and notarised installers, licensing, and per-stock tuning against real film scans.
 
 ## Sample renders
 

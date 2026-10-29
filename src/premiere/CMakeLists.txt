@@ -65,6 +65,23 @@ elseif(APPLE)
     COMMAND /bin/sh -c "printf eFKTFXTC > \"$<TARGET_BUNDLE_CONTENT_DIR:LookMatch>/PkgInfo\""
     VERBATIM)
   target_link_libraries(LookMatch PRIVATE "-framework Cocoa" "-weak_framework UniformTypeIdentifiers")  # weak: absent before macOS 11
+
+  # Premiere GPU render (Metal). Needs the Premiere Pro SDK's Examples folder (any version from CC 2017;
+  # the GPU filter interface is unchanged since). Without it the effect renders on the CPU only.
+  set(LOOKMATCH_PR_SDK_DIR "" CACHE PATH "Premiere Pro SDK 'Examples' folder (enables the GPU render)")
+  if(LOOKMATCH_PR_SDK_DIR)
+    if(NOT EXISTS "${LOOKMATCH_PR_SDK_DIR}/Headers/PrSDKGPUFilter.h")
+      message(FATAL_ERROR "LOOKMATCH_PR_SDK_DIR must be the Premiere Pro SDK 'Examples' folder (Headers/PrSDKGPUFilter.h)")
+    endif()
+    target_sources(LookMatch PRIVATE LookMatchGPU.mm)
+    # Premiere and After Effects SDK headers share names: scope the Premiere ones to this file only
+    set_source_files_properties(LookMatchGPU.mm PROPERTIES
+      INCLUDE_DIRECTORIES "${LOOKMATCH_PR_SDK_DIR}/Headers"
+      COMPILE_OPTIONS "-fno-objc-arc")
+    target_link_libraries(LookMatch PRIVATE "-framework Metal" "-framework Foundation")
+    target_compile_definitions(LookMatch PRIVATE LOOKMATCH_GPU=1)
+    message(STATUS "LookMatch: Premiere GPU render enabled (${LOOKMATCH_PR_SDK_DIR})")
+  endif()
   # the universal plugin links the engine, so the engine must be universal too
   set_target_properties(lookmatch_core PROPERTIES OSX_ARCHITECTURES "arm64;x86_64")
 else()

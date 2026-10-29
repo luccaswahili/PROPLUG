@@ -10,6 +10,11 @@ constexpr int kRegions = 8;  // neutral + 7 hue regions
 constexpr float kNeutralC = 0.025f;
 constexpr float kMinShare = 0.03f;
 constexpr int kSkin = 2;
+// Limits on how steep the match may get. Full histogram matching can stretch a narrow band
+// (e.g. a frame that is mostly deep shadow) by 10x, turning compression blocks and 8-bit steps
+// into visible posterisation. Colourists' tools cap this; so do we.
+constexpr float kMaxToneSlope = 2.0f, kMinToneSlope = 0.3f;
+constexpr double kMaxChromaGain = 2.0, kMinChromaGain = 0.5;
 const char* kRegionNames[kRegions] = {"neutral", "red", "skin", "yellow", "green", "cyan", "blue", "magenta"};
 // hue centre / sigma in degrees for regions 1..7. OKLab hue of human skin sits at ~40-68 deg.
 const float kHueC[7] = {15, 55, 95, 140, 200, 260, 320};
@@ -53,7 +58,9 @@ std::array<float, 3> bandWeights(float L) {
 struct S2 { double a, b, c; };
 struct M2 { double m00, m01, m10, m11; };
 
-M2 sqrtPsd(S2 s) {
+// V f(L) V^T for a symmetric 2x2 matrix with eigen-decomposition V L V^T
+template <class F>
+M2 eigMap(S2 s, F f) {
     double tr = s.a + s.c, det = s.a * s.c - s.b * s.b;
     double disc = std::sqrt(std::max(0.0, tr * tr / 4 - det));
     double l1 = std::max(1e-12, tr / 2 + disc), l2 = std::max(1e-12, tr / 2 - disc);
@@ -61,10 +68,11 @@ M2 sqrtPsd(S2 s) {
     double vx, vy;
     if (std::abs(s.b) > 1e-15) { vx = l1 - s.c; vy = s.b; } else if (s.a >= s.c) { vx = 1; vy = 0; } else { vx = 0; vy = 1; }
     double n = std::hypot(vx, vy); vx /= n; vy /= n;
-    double r1 = std::sqrt(l1), r2 = std::sqrt(l2);
+    double r1 = f(l1), r2 = f(l2);
     // V diag(r) V^T with V = [[vx, -vy],[vy, vx]]
     return {r1 * vx * vx + r2 * vy * vy, (r1 - r2) * vx * vy, (r1 - r2) * vx * vy, r1 * vy * vy + r2 * vx * vx};
 }
+M2 sqrtPsd(S2 s) { return eigMap(s, [](double l) { return std::sqrt(l); }); }
 M2 mul(M2 a, M2 b) {
     return {a.m00 * b.m00 + a.m01 * b.m10, a.m00 * b.m01 + a.m01 * b.m11, a.m10 * b.m00 + a.m11 * b.m10, a.m10 * b.m01 + a.m11 * b.m11};
 }
@@ -171,7 +179,7 @@ public:
             sm[i] = s / 9;
         }
         for (int i = 1; i < 256; ++i) sm[i] = std::max(sm[i], sm[i - 1]);
-        curve_ = sm;
+        curve_ = limitSlope(sm, sq);
 
         // 2. Monge-Kantorovich chroma transfer
         auto wcov = [](const Stats& st, double& ma, double& mb) {
@@ -190,7 +198,10 @@ public:
         M2 csh = sqrtPsd(cs), cshi = inv(csh);
         M2 mid = mul(mul(csh, M2{cr.a, cr.b, cr.b, cr.c}), csh);
         M2 midS = sqrtPsd({mid.m00, 0.5 * (mid.m01 + mid.m10), mid.m11});
-        T_ = mul(mul(cshi, midS), cshi);
+        M2 T = mul(mul(cshi, midS), cshi);
+        // cap how much chroma spread is scaled along each axis
+        T_ = eigMap({T.m00, 0.5 * (T.m01 + T.m10), T.m11},
+                    [](double l) { return std::clamp(l, kMinChromaGain, kMaxChromaGain); });
 
         // 3. region offsets
         std::vector<Vec3> mapped(S.lab.size());
@@ -223,6 +234,28 @@ public:
             bandA_[b] = float(ra / wr - ma / wm);
             bandB_[b] = float(rb / wr - mb / wm);
         }
+    }
+
+    // Re-integrates the tone curve with its slope clamped. The minimum slope only applies inside
+    // the source's tonal range (1st-99th percentile); outside it the curve may stay flat.
+    std::vector<float> limitSlope(const std::vector<float>& c, const std::vector<float>& srcQuantiles) const {
+        const int n = int(c.size());
+        const float lo = srcQuantiles[srcQuantiles.size() / 100], hi = srcQuantiles[srcQuantiles.size() * 99 / 100];
+        std::vector<float> out(n);
+        out[0] = c[0];
+        for (int i = 1; i < n; ++i) {
+            float step = (c[i] - c[i - 1]) * (n - 1);
+            float minSlope = knots_[i] >= lo && knots_[i] <= hi ? kMinToneSlope : 0.0f;
+            out[i] = out[i - 1] + std::clamp(step, minSlope, kMaxToneSlope) / (n - 1);
+        }
+        // Pin both ends of the source's range to where the unclamped curve put them, so clamping a
+        // steep stretch near one end doesn't drag the other end (e.g. dull, grey highlights).
+        // The correction is spread evenly over the range, and is itself capped.
+        const float cLo = interp(lo, knots_, c), cHi = interp(hi, knots_, c);
+        const float oLo = interp(lo, knots_, out), oHi = interp(hi, knots_, out);
+        const float k = oHi - oLo > 1e-4f ? std::clamp((cHi - cLo) / (oHi - oLo), 0.5f, 2.0f) : 1.0f;
+        for (float& v : out) v = clamp01(cLo + (v - oLo) * k);
+        return out;
     }
 
     Vec3 global(const Vec3& lab) const {

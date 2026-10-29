@@ -18,84 +18,12 @@
 #define LM_DESCRIPTION "Match the look of any still, then finish it with film print emulation, halation, bloom and grain."
 #define LM_MAJOR 1
 #define LM_MINOR 0
-#define LM_BUG 0
+#define LM_BUG 2
 #define LM_BUILD 1
 
-enum ParamId {
-    P_INPUT_LAYER = 0,
-    // look match
-    P_MATCH_TOPIC,
-    P_LOAD_REF,
-    P_REMATCH,
-    P_MATCH_STRENGTH,
-    P_REGION_STRENGTH,
-    P_SKIN_AUTO,
-    P_SKIN_PROTECT,
-    P_MATCH_TOPIC_END,
-    // input
-    P_INPUT_TOPIC,
-    P_INPUT_SPACE,
-    P_EXPOSURE,
-    P_TEMPERATURE,
-    P_TINT,
-    P_INPUT_TOPIC_END,
-    // film colour
-    P_FILM_TOPIC,
-    P_FILM_STRENGTH,
-    P_NEGATIVE,
-    P_PRINT,
-    P_PRINTER_R,
-    P_PRINTER_G,
-    P_PRINTER_B,
-    P_FILM_SAT,
-    P_FADE,
-    P_FILM_TOPIC_END,
-    // film texture
-    P_TEXTURE_TOPIC,
-    P_HALATION,
-    P_HALATION_RADIUS,
-    P_HALATION_THRESHOLD,
-    P_BLOOM,
-    P_BLOOM_RADIUS,
-    P_BLOOM_THRESHOLD,
-    P_GRAIN,
-    P_GRAIN_SIZE,
-    P_GRAIN_COLOR,
-    P_SOFTNESS,
-    P_VIGNETTE,
-    P_WEAVE,
-    P_FLICKER,
-    P_TEXTURE_TOPIC_END,
-    // output
-    P_MIX,
-    P_EXPORT_LUT,
-    P_NUM_PARAMS
-};
+#include "LookMatchParamIds.h"
 
-// Stable disk IDs: never renumber, only append (projects store parameters by these).
-enum DiskId {
-    D_MATCH_TOPIC = 1, D_LOAD_REF, D_REMATCH, D_MATCH_STRENGTH, D_REGION_STRENGTH, D_SKIN_AUTO, D_SKIN_PROTECT, D_MATCH_TOPIC_END,
-    D_INPUT_TOPIC, D_INPUT_SPACE, D_EXPOSURE, D_TEMPERATURE, D_TINT, D_INPUT_TOPIC_END,
-    D_FILM_TOPIC, D_FILM_STRENGTH, D_NEGATIVE, D_PRINT, D_PRINTER_R, D_PRINTER_G, D_PRINTER_B, D_FILM_SAT, D_FADE, D_FILM_TOPIC_END,
-    D_TEXTURE_TOPIC, D_HALATION, D_HALATION_RADIUS, D_HALATION_THRESHOLD, D_BLOOM, D_BLOOM_RADIUS, D_BLOOM_THRESHOLD,
-    D_GRAIN, D_GRAIN_SIZE, D_GRAIN_COLOR, D_SOFTNESS, D_VIGNETTE, D_WEAVE, D_FLICKER, D_TEXTURE_TOPIC_END,
-    D_MIX, D_EXPORT_LUT
-};
-
-// Sequence data: one per effect instance, saved inside the project. Plain old data with no
-// pointers, so the host can save it as-is (no flattening needed).
-constexpr int kMatchLutSize = 33;
-constexpr uint32_t kSeqMagic = 0x4C4D5351;  // 'LMSQ'
-constexpr uint32_t kSeqVersion = 1;
-
-struct SeqData {
-    uint32_t magic;
-    uint32_t version;
-    uint64_t matchId;  // changes every time a new match is computed (engine cache key)
-    int32_t hasMatch;
-    char referencePath[1024];  // UTF-8, informational
-    float matchLut[kMatchLutSize * kMatchLutSize * kMatchLutSize * 3];
-};
+#include "MatchData.h"
 
 // platform file dialogs (Dialogs_mac.mm / Dialogs_win.cpp). Return false if cancelled.
 bool LM_OpenImageDialog(char* pathOut, int capacity);
