@@ -51,6 +51,9 @@ struct SceneMatch {
     std::string report;
 };
 
+// What a still's look is made of: neutral-axis tint per lightness band, skin, saturation, hue sectors.
+std::string describeLook(const Image& displayRgb);
+
 // `source` holds the frame's code values (what the effect receives); `reference` is display RGB.
 SceneMatch matchScene(const Image& reference, const Image& source, const SceneMatchOptions& opt);
 

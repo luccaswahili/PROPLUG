@@ -525,6 +525,162 @@ std::vector<float> frameShaper(const Image& img) {
 
 }  // namespace
 
+// ---------- the reference's look, translated thing by thing ----------
+// Matching global colour statistics after normalisation makes a filter (whites pushed to whatever the
+// mean says, skin and everything else split apart). A grade renders each kind of thing its own way,
+// so the look is read from the reference per thing and applied per thing:
+//   * the neutral axis: the tint of the reference's near-grey pixels per lightness band (its split
+//     tone). Greys take exactly that, so whites get the reference's white;
+//   * skin: toward the reference's skin hue and saturation, in bounded steps (kept if it has none);
+//   * other colours per hue sector, only where the reference has that sector: its hue shift (within
+//     15 deg) and saturation; elsewhere just the overall saturation;
+//   * colours move relative to the neutral axis by rotation and scaling, so none crosses it.
+
+namespace {
+
+constexpr int kLBands = 5, kSectors = 6;
+const float kSectorHue[kSectors] = {25, 85, 145, 205, 265, 325};  // red, yellow, green, cyan, blue, magenta (OKLab deg)
+
+inline float bandW(float L, int k) { float c = 0.1f + 0.2f * k, d = (L - c) / 0.12f; return std::exp(-d * d); }
+inline float angDiff(float a, float b) { return std::remainder(a - b, 6.2831853f); }
+
+struct LookProfile {
+    float nA[kLBands] = {}, nB[kLBands] = {}, nW[kLBands] = {};  // neutral tint per band
+    float skinHue = 0, skinC = 0, skinShare = 0;
+    float secHue[kSectors] = {}, secC[kSectors] = {}, secShare[kSectors] = {};
+    float sat = 0;               // median chroma of the colourful pixels (relative to the neutral axis)
+    float l2 = 0, l50 = 0, l98 = 0;
+
+    Vec3 neutral(float L) const {  // (unused, a, b) tint of grey at lightness L
+        float a = 0, b = 0, w = 0;
+        for (int k = 0; k < kLBands; ++k) { float g = bandW(L, k) * nW[k]; a += g * nA[k]; b += g * nB[k]; w += g; }
+        return w > 1e-6f ? Vec3(0, a / w, b / w) : Vec3(0, 0, 0);
+    }
+
+    explicit LookProfile(const std::vector<Vec3>& lab) {
+        double na[kLBands] = {}, nb[kLBands] = {}, nw[kLBands] = {};
+        for (const Vec3& c : lab) {
+            float C = std::hypot(c.g, c.b);
+            float g = std::exp(-(C / 0.02f) * (C / 0.02f));
+            if (g < 0.05f) continue;
+            for (int k = 0; k < kLBands; ++k) { float w = g * bandW(c.r, k); na[k] += w * c.g; nb[k] += w * c.b; nw[k] += w; }
+        }
+        for (int k = 0; k < kLBands; ++k) {
+            nW[k] = float(std::min(1.0, nw[k] / (0.01 * lab.size() + 1)));  // confidence: enough grey in the band
+            if (nw[k] > 1e-6) { nA[k] = float(na[k] / nw[k]); nB[k] = float(nb[k] / nw[k]); }
+        }
+        double sx = 0, sy = 0, sc = 0, sw = 0, ex[kSectors] = {}, ey[kSectors] = {}, ec[kSectors] = {}, ew[kSectors] = {};
+        std::vector<float> cs;
+        size_t colourful = 0;
+        for (const Vec3& c : lab) {
+            Vec3 n = neutral(c.r);
+            float a = c.g - n.g, b = c.b - n.b, C = std::hypot(a, b);
+            if (c.r < 0.12f || C < 0.02f) continue;
+            cs.push_back(C);
+            ++colourful;
+            float h = std::atan2(b, a), sk = skinWeight(c);
+            if (sk > 0.2f) { sx += sk * std::cos(h); sy += sk * std::sin(h); sc += sk * C; sw += sk; }
+            if (C < 0.04f) continue;
+            for (int k = 0; k < kSectors; ++k) {
+                float d = angDiff(h, kSectorHue[k] * 0.0174533f) / 0.44f, w = std::exp(-d * d) * (1 - sk);
+                ex[k] += w * std::cos(h); ey[k] += w * std::sin(h); ec[k] += w * C; ew[k] += w;
+            }
+        }
+        const double total = std::max<double>(1, lab.size());
+        skinShare = float(sw / total);
+        if (sw > 0) { skinHue = float(std::atan2(sy, sx)); skinC = float(sc / sw); }
+        for (int k = 0; k < kSectors; ++k) {
+            secShare[k] = float(ew[k] / total);
+            if (ew[k] > 0) { secHue[k] = float(std::atan2(ey[k], ex[k])); secC[k] = float(ec[k] / ew[k]); }
+        }
+        sat = cs.empty() ? 0.0f : evenQuantiles(cs, 3)[1];
+        std::vector<float> L;
+        for (const Vec3& c : lab) L.push_back(c.r);
+        std::vector<float> q = evenQuantiles(L, 51);
+        l2 = q[1]; l50 = q[25]; l98 = q[49];
+        (void)colourful;
+    }
+
+    std::string describe() const {
+        std::string s;
+        char b[160];
+        static const char* bandName[kLBands] = {"blacks", "shadows", "mids", "highlights", "whites"};
+        s += "neutral axis (OKLab tint of greys):";
+        for (int k = 0; k < kLBands; ++k) {
+            if (nW[k] < 0.2f) continue;
+            float C = std::hypot(nA[k], nB[k]), h = std::atan2(nB[k], nA[k]) * 57.2958f;
+            std::snprintf(b, sizeof b, " %s %.3f @ %.0f deg;", bandName[k], C, h < 0 ? h + 360 : h);
+            s += b;
+        }
+        std::snprintf(b, sizeof b, "\nskin: %.1f%% of the frame, hue %.0f deg, chroma %.3f\nsaturation (median chroma) %.3f; "
+                      "lightness 2/50/98%%: %.2f / %.2f / %.2f\nsectors:", 100 * skinShare, skinHue * 57.2958f, skinC, sat, l2, l50, l98);
+        s += b;
+        static const char* secName[kSectors] = {"red", "yellow", "green", "cyan", "blue", "magenta"};
+        for (int k = 0; k < kSectors; ++k) {
+            if (secShare[k] < 0.02f) continue;
+            float h = secHue[k] * 57.2958f;
+            std::snprintf(b, sizeof b, " %s %.0f%% (hue %.0f, chroma %.3f);", secName[k], 100 * secShare[k], h < 0 ? h + 360 : h, secC[k]);
+            s += b;
+        }
+        return s + "\n";
+    }
+};
+
+class Grade {
+public:
+    Grade(const LookProfile& ref, const LookProfile& src) : ref_(ref), src_(src) {
+        sat_ = src.sat > 1e-4f ? std::clamp(ref.sat / src.sat, 0.7f, 1.4f) : 1.0f;
+        hasSkin_ = ref.skinShare >= 0.02f && src.skinShare >= 0.005f;
+        if (hasSkin_) {
+            skinDh_ = std::clamp(angDiff(ref.skinHue, src.skinHue), -0.14f, 0.14f);  // 8 deg
+            skinCr_ = src.skinC > 1e-4f ? std::clamp(ref.skinC / src.skinC, 0.8f, 1.2f) : 1.0f;
+        } else {
+            skinCr_ = std::clamp(std::sqrt(sat_), 0.9f, 1.1f);
+        }
+        for (int k = 0; k < kSectors; ++k) {
+            ev_[k] = std::min(1.0f, std::min(ref.secShare[k], src.secShare[k]) / 0.03f);
+            dh_[k] = std::clamp(angDiff(ref.secHue[k], src.secHue[k]), -0.26f, 0.26f);  // 15 deg
+            cr_[k] = src.secC[k] > 1e-4f ? std::clamp(ref.secC[k] / src.secC[k], 0.75f, 1.33f) : sat_;
+        }
+    }
+
+    Vec3 apply(Vec3 lab) const {
+        const Vec3 ns = src_.neutral(lab.r), nr = ref_.neutral(lab.r);
+        float a = lab.g - ns.g, b = lab.b - ns.b;
+        const float C = std::hypot(a, b), h = std::atan2(b, a);
+        // per hue sector where both frames have it, else the overall saturation
+        float dh = 0, cr = 0, w = 0;
+        for (int k = 0; k < kSectors; ++k) {
+            float d = angDiff(h, kSectorHue[k] * 0.0174533f) / 0.44f, g = std::exp(-d * d);
+            dh += g * ev_[k] * dh_[k];
+            cr += g * (ev_[k] * cr_[k] + (1 - ev_[k]) * sat_);
+            w += g;
+        }
+        dh /= std::max(w, 1e-6f); cr /= std::max(w, 1e-6f);
+        const float sk = skinWeight(lab);
+        dh += (skinDh_ - dh) * sk;
+        cr += (skinCr_ - cr) * sk;
+        dh *= clamp01((C - 0.015f) / 0.035f);  // no hue to turn on a grey
+        const float c = std::cos(dh), s = std::sin(dh);
+        const float a2 = (a * c - b * s) * cr, b2 = (a * s + b * c) * cr;
+        return {lab.r, a2 + nr.g, b2 + nr.b};
+    }
+
+private:
+    const LookProfile ref_, src_;
+    float sat_ = 1, skinDh_ = 0, skinCr_ = 1;
+    bool hasSkin_ = false;
+    float ev_[kSectors] = {}, dh_[kSectors] = {}, cr_[kSectors] = {};
+};
+
+}  // namespace
+
+std::string describeLook(const Image& img) {
+    std::vector<Vec3> lab;
+    for (const Vec3& c : downsample(img, 480).px) lab.push_back(rgbToOklab(clamp01(c)));
+    return LookProfile(lab).describe();
+}
+
 SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOptions& o) {
     SceneMatch res;
     const Image ref = downsample(refIn, 480), src = downsample(srcIn, 480);
@@ -684,22 +840,15 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
     std::vector<Vec3> canonRgb(n);
     for (size_t i = 0; i < n; ++i) canonRgb[i] = oklabToRgb(canonical(src.px[i]));
 
-    // ---- 5. the reference's look on the canonical frame (tone already done) ----
-    MatchOptions mo = o.look;
-    mo.matchTone = false;
-    // gentler than a plain match: the canonical frame is already close to the reference's tone, and
-    // skin in a close-up must not pick up a sky's or a shirt's colour
-    mo.maxColourShift = 0.035f;
-    mo.autoSkinProtect = 0.6f;
-    mo.chromaAboutNeutral = true;
-    mo.maxChromaGain = 1.5f;
-    mo.hueFloor = 0.04f;
-    std::vector<Vec3> refRgb(ref.px.begin(), ref.px.end());
-    for (Vec3& v : refRgb) v = clamp01(v);
-    auto model = std::make_shared<Model>(refRgb, canonRgb, mo);
-    auto full = [canonical, model, ls](Vec3 code) {
+    // ---- 5. the reference's look on the canonical frame (tone already done), thing by thing ----
+    std::vector<Vec3> refLab, canonLabs;
+    for (const Vec3& v : ref.px) refLab.push_back(rgbToOklab(clamp01(v)));
+    for (const Vec3& v : canonRgb) canonLabs.push_back(rgbToOklab(v));
+    const LookProfile refLook(refLab), srcLook(canonLabs);
+    auto grade = std::make_shared<Grade>(refLook, srcLook);
+    auto full = [canonical, grade, ls](Vec3 code) {
         Vec3 lab = canonical(code);
-        return oklabToRgb(lerp(lab, model->applyLab(lab), ls));
+        return oklabToRgb(lerp(lab, grade->apply(lab), ls));
     };
     res.lut = Lut3D(o.look.lutSize);
     res.lut.setShaper(frameShaper(src));
@@ -720,7 +869,7 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
                   transferShortName(res.source.transfer), res.source.logScore, res.source.exposure, res.source.cct,
                   res.source.tint, res.source.contrast, res.reference.exposure, res.reference.cct, res.reference.tint,
                   res.reference.contrast, mr2);
-    res.report = buf + model->report();
+    res.report = std::string(buf) + "reference look:\n" + refLook.describe() + "source (canonical):\n" + srcLook.describe();
     return res;
 }
 
