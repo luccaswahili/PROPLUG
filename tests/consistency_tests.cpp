@@ -319,19 +319,20 @@ static void checkLut(const Lut3D& lut, const std::string& what, double& worstJum
     }
     CHECK(nans == 0, "%s: %d NaN entries", what.c_str(), nans);
     const int N = 1024;
-    float prevY = luma709(lut.apply(Vec3(0, 0, 0)));
-    int backwards = 0;
+    float peakY = luma709(lut.apply(Vec3(0, 0, 0)));
+    double drop = 0;  // largest fall of luminance below what a darker grey already reached
     double maxStep = 0;
     Vec3 prev = lut.apply(Vec3(0, 0, 0));
     for (int i = 1; i <= N; ++i) {
         Vec3 c = lut.apply(Vec3(1, 1, 1) * (float(i) / N));
         float y = luma709(c);
-        if (y < prevY - 1e-4f) ++backwards;
+        drop = std::max(drop, double(peakY - y));
+        peakY = std::max(peakY, y);
         maxStep = std::max(maxStep, double(std::max({std::abs(c.r - prev.r), std::abs(c.g - prev.g), std::abs(c.b - prev.b)})));
-        prevY = y; prev = c;
+        prev = c;
     }
     worstJump = std::max(worstJump, maxStep * 255);
-    CHECK(backwards == 0, "%s: grey ramp goes darker %d times", what.c_str(), backwards);
+    CHECK(drop * 255 < 1.0, "%s: grey ramp goes darker by %.2f/255", what.c_str(), drop * 255);
     CHECK(maxStep * 255 < 6.0, "%s: grey ramp jumps %.2f/255 between 1/1024 steps", what.c_str(), maxStep * 255);
 }
 

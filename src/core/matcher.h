@@ -15,6 +15,11 @@ struct MatchOptions {
     float balance = 0.5f;         // fallback content balancing when the images share few regions
     int lutSize = 33;
     bool matchTone = true;        // histogram-match lightness (off when the tone is handled elsewhere)
+    float maxColourShift = 1.0f;  // cap on region / split-toning colour offsets (OKLab ab)
+    float autoSkinProtect = 0.3f; // skin protect used by "auto" when the reference has skin
+    float maxChromaGain = 2.0f;       // cap on the chroma transfer's gain along any axis
+    float hueFloor = 0.0f;            // hue-region offsets fade in above this chroma (0 = always)
+    bool chromaAboutNeutral = false;  // chroma transfer about neutral (white balanced sources) rather than the mean
 };
 
 struct MatchResult {

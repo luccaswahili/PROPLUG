@@ -41,8 +41,8 @@ RW regionWeights(const Vec3& lab) {
 
 float skinWeight(const Vec3& lab) {
     float C = std::hypot(lab.g, lab.b), L = lab.r;
-    float gc = clamp01((C - 0.015f) / 0.02f) * clamp01((0.20f - C) / 0.05f);
-    float gl = clamp01((L - 0.2f) / 0.1f) * clamp01((0.95f - L) / 0.05f);
+    float gc = clamp01((C - 0.004f) / 0.02f) * clamp01((0.20f - C) / 0.05f);  // pale skin highlights count
+    float gl = clamp01((L - 0.2f) / 0.1f) * clamp01((0.995f - L) / 0.03f);
     return regionWeights(lab)[kSkin] * gc * gl;
 }
 
@@ -146,10 +146,11 @@ float interp(float x, const std::vector<float>& xs, const std::vector<float>& ys
 
 class Model {
 public:
-    Model(const std::vector<Vec3>& refRgb, const std::vector<Vec3>& srcRgb, const MatchOptions& opt) : rs_(opt.regionStrength) {
+    Model(const std::vector<Vec3>& refRgb, const std::vector<Vec3>& srcRgb, const MatchOptions& opt)
+        : rs_(opt.regionStrength), hueFloor_(opt.hueFloor) {
         Stats R = analyse(refRgb, opt.balance), S = analyse(srcRgb, opt.balance);
         shareRef_ = R.share; shareSrc_ = S.share;
-        skinProtect_ = opt.skinProtect >= 0 ? opt.skinProtect : (R.share[kSkin] >= kMinShare ? 0.3f : 0.8f);
+        skinProtect_ = opt.skinProtect >= 0 ? opt.skinProtect : (R.share[kSkin] >= kMinShare ? opt.autoSkinProtect : 0.8f);
 
         // compare like with like: global stats from regions both images contain, each counted equally
         bool shared[kRegions]; float covR = 0, covS = 0; bool any = false;
@@ -187,10 +188,20 @@ public:
         }
 
         // 2. Monge-Kantorovich chroma transfer
-        auto wcov = [](const Stats& st, double& ma, double& mb) {
-            double sw = 0; ma = mb = 0;
-            for (size_t i = 0; i < st.lab.size(); ++i) { sw += st.w[i]; ma += st.w[i] * st.lab[i].g; mb += st.w[i] * st.lab[i].b; }
-            ma /= sw; mb /= sw;
+        // centre = -1: the weighted mean; 0: neutral (0, 0); 1: the mean of the near-neutral pixels.
+        // About the mean, a frame that is mostly skin has its mean taken out, which turns its greys
+        // the opposite way (cyan). About neutral, the frame's colours keep their direction.
+        auto wcov = [](const Stats& st, double& ma, double& mb, int centre) {
+            double sw = 0, sn = 0; ma = mb = 0;
+            if (centre == 1) {
+                for (size_t i = 0; i < st.lab.size(); ++i) { sn += st.rw[i][0]; ma += st.rw[i][0] * st.lab[i].g; mb += st.rw[i][0] * st.lab[i].b; }
+                if (sn > 1e-6) { ma /= sn; mb /= sn; } else ma = mb = 0;
+            }
+            for (size_t i = 0; i < st.lab.size(); ++i) {
+                sw += st.w[i];
+                if (centre < 0) { ma += st.w[i] * st.lab[i].g; mb += st.w[i] * st.lab[i].b; }
+            }
+            if (centre < 0) { ma /= sw; mb /= sw; }
             S2 c{0, 0, 0};
             for (size_t i = 0; i < st.lab.size(); ++i) {
                 double da = st.lab[i].g - ma, db = st.lab[i].b - mb;
@@ -199,14 +210,18 @@ public:
             c.a = c.a / sw + 1e-6; c.b /= sw; c.c = c.c / sw + 1e-6;
             return c;
         };
-        S2 cs = wcov(S, msA_, msB_), cr = wcov(R, mrA_, mrB_);
+        S2 cs = wcov(S, msA_, msB_, opt.chromaAboutNeutral ? 0 : -1), cr = wcov(R, mrA_, mrB_, opt.chromaAboutNeutral ? 1 : -1);
+        if (opt.chromaAboutNeutral) {  // the look's tint of whites, gently: highlights on skin take it too
+            const double t = std::hypot(mrA_, mrB_), cap = 0.4 * opt.maxColourShift;
+            if (t > cap) { mrA_ *= cap / t; mrB_ *= cap / t; }
+        }
         M2 csh = sqrtPsd(cs), cshi = inv(csh);
         M2 mid = mul(mul(csh, M2{cr.a, cr.b, cr.b, cr.c}), csh);
         M2 midS = sqrtPsd({mid.m00, 0.5 * (mid.m01 + mid.m10), mid.m11});
         M2 T = mul(mul(cshi, midS), cshi);
         // cap how much chroma spread is scaled along each axis
         T_ = eigMap({T.m00, 0.5 * (T.m01 + T.m10), T.m11},
-                    [](double l) { return std::clamp(l, kMinChromaGain, kMaxChromaGain); });
+                    [&](double l) { return std::clamp(l, kMinChromaGain, std::min(kMaxChromaGain, double(opt.maxChromaGain))); });
 
         // 3. region offsets
         std::vector<Vec3> mapped(S.lab.size());
@@ -220,6 +235,8 @@ public:
             Vec3 d = mr * float(1 / wr) - ms * float(1 / ws);
             d.r *= 0.5f;
             regionOffs_[r] = d * std::min(1.0f, (conf - kMinShare) / kMinShare);
+            const float ab = std::hypot(regionOffs_[r].g, regionOffs_[r].b), capR = r ? opt.maxColourShift : 0.4f * opt.maxColourShift;
+            if (ab > capR) { regionOffs_[r].g *= capR / ab; regionOffs_[r].b *= capR / ab; }
         }
         for (size_t i = 0; i < mapped.size(); ++i)
             for (int r = 0; r < kRegions; ++r) mapped[i] = mapped[i] + regionOffs_[r] * (rs_ * S.rw[i][r]);
@@ -238,6 +255,8 @@ public:
             if (wm < 50 || wr < 50) continue;
             bandA_[b] = float(ra / wr - ma / wm);
             bandB_[b] = float(rb / wr - mb / wm);
+            const float ab = std::hypot(bandA_[b], bandB_[b]), cap = 0.7f * opt.maxColourShift;
+            if (ab > cap) { bandA_[b] *= cap / ab; bandB_[b] *= cap / ab; }
         }
     }
 
@@ -271,7 +290,10 @@ public:
     Vec3 applyLab(const Vec3& lab) const {
         Vec3 out = global(lab);
         RW w = regionWeights(lab);
-        for (int r = 0; r < kRegions; ++r) out = out + regionOffs_[r] * (rs_ * w[r]);
+        // Hue regions only where there is hue to speak of: a nearly grey wall's hue flips with every
+        // 8-bit step of its chroma, and so would its region offset (rings across the wall).
+        const float hueConf = hueFloor_ > 0 ? clamp01((std::hypot(lab.g, lab.b) - hueFloor_) / (2 * hueFloor_)) : 1.0f;
+        for (int r = 0; r < kRegions; ++r) out = out + regionOffs_[r] * (rs_ * w[r] * (r ? hueConf : 1.0f));
         auto bw = bandWeights(out.r);
         for (int b = 0; b < 3; ++b) { out.g += bw[b] * bandA_[b]; out.b += bw[b] * bandB_[b]; }
         // skin protect: hold skin hue within 8 degrees and chroma within -20%/+25%
@@ -302,7 +324,7 @@ public:
     }
 
 private:
-    float rs_, skinProtect_ = 0.3f;
+    float rs_, skinProtect_ = 0.3f, hueFloor_ = 0;
     RW shareRef_{}, shareSrc_{};
     std::vector<float> knots_, curve_;
     double msA_ = 0, msB_ = 0, mrA_ = 0, mrB_ = 0;
@@ -330,6 +352,9 @@ constexpr int kTone = 257;
 constexpr float kCanonSigma = 1.6f;     // canonical scene: log2 luminance ~ normal, sigma in stops
 constexpr float kCanonChroma = 0.07f;   // canonical RMS OKLab chroma
 constexpr float kStopFloor = 1.0f / 4096;
+// limits on the tone curve, in stops per stop: contrast at most 2.5x locally, never flattened below
+// about a third, and the frame's overall range (5th-95th percentile) stretched at most 2x
+constexpr float kMinToneSlopeStops = 0.35f, kMaxToneSlopeStops = 2.5f, kMaxStretch = 2.0f;
 
 // Acklam's inverse normal CDF
 float invNormal(double p) {
@@ -430,6 +455,44 @@ Curve quantileMap(const std::vector<float>& from, const std::vector<float>& to, 
     return c;
 }
 
+// Smooth monotone curve from quantile pairs: 17 control points (every 1/16 of the ranks) joined by a
+// monotone cubic (Fritsch-Carlson), then its slope held in [lo, hi]. A curve read straight off the
+// quantiles of an 8-bit frame is a staircase (flat where codes repeat, steep across gaps), which turns
+// into posterisation and amplified noise; this one is smooth.
+Curve smoothMap(const std::vector<float>& from, const std::vector<float>& to, float lo, float hi) {
+    const int K = 17, N = int(from.size());
+    std::vector<double> X(K), Y(K), d(K - 1), m(K);
+    for (int k = 0; k < K; ++k) {
+        int i = std::min(N - 1, k * (N - 1) / (K - 1));
+        // average a few quantiles around each control point: steadier than a single one
+        double sx = 0, sy = 0; int c = 0;
+        for (int j = std::max(0, i - 4); j <= std::min(N - 1, i + 4); ++j) { sx += from[j]; sy += to[j]; ++c; }
+        X[k] = sx / c; Y[k] = sy / c;
+        if (k) { X[k] = std::max(X[k], X[k - 1] + 0.05); Y[k] = std::max(Y[k], Y[k - 1]); }
+    }
+    for (int k = 0; k < K - 1; ++k) d[k] = (Y[k + 1] - Y[k]) / (X[k + 1] - X[k]);
+    m[0] = d[0]; m[K - 1] = d[K - 2];
+    for (int k = 1; k < K - 1; ++k) m[k] = d[k - 1] * d[k] <= 0 ? 0 : (d[k - 1] + d[k]) / 2;
+    for (int k = 0; k < K - 1; ++k) {
+        if (d[k] == 0) { m[k] = m[k + 1] = 0; continue; }
+        double a = m[k] / d[k], b = m[k + 1] / d[k], h = a * a + b * b;
+        if (h > 9) { double t = 3 / std::sqrt(h); m[k] = t * a * d[k]; m[k + 1] = t * b * d[k]; }
+    }
+    Curve c;
+    const int S = 256;
+    for (int i = 0; i <= S; ++i) {
+        double x = X[0] + (X[K - 1] - X[0]) * i / S;
+        int k = std::min(K - 2, int(std::upper_bound(X.begin(), X.end(), x) - X.begin()) - 1);
+        k = std::max(k, 0);
+        double h = X[k + 1] - X[k], t = (x - X[k]) / h, t2 = t * t, t3 = t2 * t;
+        double y = (2 * t3 - 3 * t2 + 1) * Y[k] + (t3 - 2 * t2 + t) * h * m[k] + (-2 * t3 + 3 * t2) * Y[k + 1] + (t3 - t2) * h * m[k + 1];
+        c.x.push_back(float(x));
+        c.y.push_back(float(y));
+    }
+    capSlope(c, lo, hi);
+    return c;
+}
+
 // LUT shaper from where the frame's code values are: a third the identity, two thirds their CDF (all
 // three channels pooled, smoothed), so the grid is dense where the picture is and never empty elsewhere.
 std::vector<float> frameShaper(const Image& img) {
@@ -483,7 +546,16 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
     // (Bradford, from the analysis' near-neutral estimate). How far depends on how neutral those
     // pixels really are: a scene with nothing grey in it (a blue-hour sky, a red-lit stage) keeps its
     // colour instead of having it taken for a cast. The measure doesn't change with a cast. ----
-    const float wbConfidence = clamp01(res.source.neutralShare / 0.2f);
+    float wbConfidence = clamp01(res.source.neutralShare / 0.2f);
+    {
+        // An estimate that is warm AND magenta sits where skin does, not where light sources do (they
+        // lie along the Planckian locus): in a frame that is mostly skin the "most neutral" pixels are
+        // skin highlights, and neutralising them fully turns a face grey and its highlights the look's
+        // colour of white. Take out half of such a cast.
+        auto ramp = [](float a, float b, float x) { return clamp01((x - a) / (b - a)); };
+        const float skinLike = ramp(5.0f, 12.0f, res.source.tint) * ramp(5600.0f, 4400.0f, res.source.cct);
+        wbConfidence *= 1 - 0.5f * skinLike;
+    }
     const float cwe = cw * wbConfidence;
     const Mat3 wb = adaptation(kD65x + (res.source.whiteX - kD65x) * cwe, kD65y + (res.source.whiteY - kD65y) * cwe, kD65x, kD65y);
     auto linear = [tf, wb](Vec3 code) {
@@ -499,7 +571,6 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
     std::vector<float> st0 = lumaStops(lin0);
     const float key0 = trimmedMean(st0);
     const std::vector<float> s0 = evenQuantiles(std::move(st0), kTone);
-    const Curve g1 = quantileMap(s0, canon, 0.33f, 3.0f, 3);
     auto byLuminance = [](const Curve& g, Vec3 l) {
         // below the floor, fill up to it with grey, so black meets the curve's floor continuously
         const float y0 = luma709(l);
@@ -507,9 +578,6 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
         const float y = std::max(luma709(l), kStopFloor);
         return l * (0.18f * std::exp2(g(std::log2(y / 0.18f))) / y);
     };
-    std::vector<Vec3> lin1(n);
-    for (size_t i = 0; i < n; ++i) lin1[i] = byLuminance(g1, lin0[i]);
-    const std::vector<float> s1 = evenQuantiles(lumaStops(lin1), kTone);
 
     // ---- 3. where the tone lands: the reference's distribution, its key moderated ----
     std::vector<Vec3> refLin(ref.px.size());
@@ -535,10 +603,19 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
         float q = (s0[i] - ce * key0) + (canon[i] + keep - (s0[i] - ce * key0)) * cc;
         t[i] = q + (look(q - keep) + keep - q) * ls;
     }
-    const Curve g2 = quantileMap(s1, t, 0.33f, 2.5f, 3);
+    // Don't stretch a legitimately soft frame (a close-up face, haze) far past its own range: an 8-bit
+    // source has only so many steps to give.
+    {
+        const int lo = kTone * 5 / 100, hi = kTone * 95 / 100, mid = kTone / 2;
+        const float spreadS = s0[hi] - s0[lo], spreadT = t[hi] - t[lo];
+        const float k = spreadT > kMaxStretch * spreadS && spreadT > 1e-3f ? kMaxStretch * spreadS / spreadT : 1.0f;
+        const float tm = t[mid];
+        for (float& v : t) v = tm + (v - tm) * k;
+    }
+    const Curve g1 = smoothMap(s0, t, kMinToneSlopeStops, kMaxToneSlopeStops);
 
-    auto canonicalDisplay = [linear, byLuminance, g1, g2](Vec3 code) {
-        Vec3 lc = byLuminance(g2, byLuminance(g1, linear(code)));
+    auto canonicalDisplay = [linear, byLuminance, g1](Vec3 code) {
+        Vec3 lc = byLuminance(g1, linear(code));
         // highlights: roll luminance off toward white, and bring an out-of-range colour back toward its
         // luminance rather than clipping one channel
         const float y = std::max(luma709(lc), kStopFloor), y2 = softClip(y);
@@ -591,12 +668,17 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
     }
     // 75th percentile of chroma; for the canonical distribution (Rayleigh, RMS kCanonChroma) it is 1.2x the RMS
     const float srcChroma = chromas.size() > 20 ? evenQuantiles(chromas, 5)[3] / 1.2f : kCanonChroma;
-    const float satScale = 1 + (std::clamp(kCanonChroma / std::max(srcChroma, 1e-4f), 0.5f, 2.0f) - 1) * cc;
+    const float satScale = 1 + (std::clamp(kCanonChroma / std::max(srcChroma, 1e-4f), 0.6f, 1.6f) - 1) * cc;
     auto canonical = [canonicalDisplay, offA, offB, satScale](Vec3 code) {
         Vec3 lab = rgbToOklab(canonicalDisplay(code));
         const float u = lab.r - 0.5f;
-        lab.g = (lab.g - offA[0] - offA[1] * u) * satScale;
-        lab.b = (lab.b - offB[0] - offB[1] * u) * satScale;
+        lab.g -= offA[0] + offA[1] * u;
+        lab.b -= offB[0] + offB[1] * u;
+        // skin keeps its own saturation more than the rest: a face pushed to a canonical saturation
+        // goes orange or grey
+        const float k = satScale > 1 ? 1 + (satScale - 1) * (1 - 0.7f * skinWeight(lab)) : satScale;
+        lab.g *= k;
+        lab.b *= k;
         return rgbToOklab(oklabToRgb(lab));  // in gamut
     };
     std::vector<Vec3> canonRgb(n);
@@ -605,6 +687,13 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
     // ---- 5. the reference's look on the canonical frame (tone already done) ----
     MatchOptions mo = o.look;
     mo.matchTone = false;
+    // gentler than a plain match: the canonical frame is already close to the reference's tone, and
+    // skin in a close-up must not pick up a sky's or a shirt's colour
+    mo.maxColourShift = 0.035f;
+    mo.autoSkinProtect = 0.6f;
+    mo.chromaAboutNeutral = true;
+    mo.maxChromaGain = 1.5f;
+    mo.hueFloor = 0.04f;
     std::vector<Vec3> refRgb(ref.px.begin(), ref.px.end());
     for (Vec3& v : refRgb) v = clamp01(v);
     auto model = std::make_shared<Model>(refRgb, canonRgb, mo);
