@@ -6,7 +6,7 @@
 set -e
 PROJ="${1:?usage: restart_premiere.sh project.prproj}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-B="$ROOT/build-installer/cmake/src/premiere/LookMatch.plugin"
+B="${PLUGIN:-$ROOT/build-installer/cmake/src/premiere/LookMatch.plugin}"  # PLUGIN=... to install another build
 I="/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/LookMatch.plugin"
 APP="Adobe Premiere Pro 2026"
 
@@ -24,6 +24,8 @@ if pgrep -qx "$APP"; then
   sleep 3
 fi
 ditto "$B" "$I" && codesign -v "$I"
+# Premiere caches plug-in info by the bundle's dates: touch it so a new build is rescanned
+touch "$I" "$I/Contents" "$I/Contents/MacOS/LookMatch"
 echo "installed $(shasum -a 256 "$I/Contents/MacOS/LookMatch" | cut -c1-16)"
 : > "$HOME/Library/Logs/LookMatch.log"
 open -a "$APP" "$PROJ"
