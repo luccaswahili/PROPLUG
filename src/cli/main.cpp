@@ -1,0 +1,165 @@
+// lookmatch-render: drive the LookMatch engine from the command line.
+// Same engine the Premiere effect uses, so renders here match the plugin.
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <map>
+#include <string>
+#include "../core/engine.h"
+#include "../core/matcher.h"
+
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+
+using namespace lm;
+
+struct Image {
+    int w = 0, h = 0;
+    std::vector<float> px;  // RGBA
+    ImageView view() { return {px.data(), w, h, w * 4}; }
+};
+
+static bool load(const std::string& path, Image& img) {
+    int n;
+    stbi_us* d = stbi_load_16(path.c_str(), &img.w, &img.h, &n, 4);
+    if (!d) { std::fprintf(stderr, "cannot read %s: %s\n", path.c_str(), stbi_failure_reason()); return false; }
+    img.px.resize(size_t(img.w) * img.h * 4);
+    for (size_t i = 0; i < img.px.size(); ++i) img.px[i] = d[i] / 65535.0f;
+    stbi_image_free(d);
+    return true;
+}
+
+static bool save(const std::string& path, const Image& img) {
+    std::vector<unsigned char> b(img.px.size());
+    for (size_t i = 0; i < b.size(); ++i) b[i] = (unsigned char)(clamp01(img.px[i]) * 255.0f + 0.5f);
+    bool jpg = path.size() > 4 && (path.substr(path.size() - 4) == ".jpg" || path.substr(path.size() - 5) == ".jpeg");
+    int ok = jpg ? stbi_write_jpg(path.c_str(), img.w, img.h, 4, b.data(), 95)
+                 : stbi_write_png(path.c_str(), img.w, img.h, 4, b.data(), img.w * 4);
+    if (!ok) std::fprintf(stderr, "cannot write %s\n", path.c_str());
+    return ok != 0;
+}
+
+// every ~nth pixel, as display RGB
+static std::vector<Vec3> subsample(const Image& img, size_t target, const std::function<Vec3(Vec3)>& f) {
+    size_t total = size_t(img.w) * img.h, step = std::max<size_t>(1, total / target);
+    std::vector<Vec3> v;
+    v.reserve(total / step + 1);
+    for (size_t i = 0; i < total; i += step) v.push_back(f({img.px[i * 4], img.px[i * 4 + 1], img.px[i * 4 + 2]}));
+    return v;
+}
+
+static void usage() {
+    std::printf(
+        "lookmatch-render --in FRAME --out OUT.png [options]\n\n"
+        "Look match\n"
+        "  --ref IMAGE            reference still to match (the footage frame is --in)\n"
+        "  --match-strength F     0..1 (1)\n"
+        "  --region-strength F    0..1 (1)    --skin-protect F  0..1 (auto)\n"
+        "Input\n"
+        "  --input NAME           rec709 | logc3 | slog3 | vlog (rec709)\n"
+        "  --exposure F --temperature F --tint F\n"
+        "Film\n"
+        "  --film F               film emulation strength 0..1 (0)\n"
+        "  --negative N --print N stock indices, see --list-stocks\n"
+        "  --printer R,G,B        printer points\n"
+        "  --film-sat F           film saturation (1)\n"
+        "  --fade F               black lift 0..1\n"
+        "  --halation F [--halation-radius F --halation-threshold F]\n"
+        "  --bloom F [--bloom-radius F --bloom-threshold F]\n"
+        "  --grain F [--grain-size F --grain-color F]\n"
+        "  --softness F --vignette F --weave PX --flicker F\n"
+        "Output\n"
+        "  --mix F                0..1 (1)\n"
+        "  --frame N              frame number for grain / weave / flicker (0)\n"
+        "  --sequence N           render N frames as OUT_0000.png ... (shows grain, weave, flicker)\n"
+        "  --export-lut PATH      also write the colour part as a .cube for Lumetri\n"
+        "  --lut-size N           export LUT size (65)\n"
+        "  --list-stocks          print film stocks\n");
+}
+
+int main(int argc, char** argv) {
+    std::map<std::string, std::string> a;
+    for (int i = 1; i < argc; ++i) {
+        std::string k = argv[i];
+        if (k.rfind("--", 0) != 0) { usage(); return 1; }
+        k = k.substr(2);
+        if (k == "list-stocks" || k == "help") { a[k] = "1"; continue; }
+        if (i + 1 >= argc) { std::fprintf(stderr, "missing value for --%s\n", k.c_str()); return 1; }
+        a[k] = argv[++i];
+    }
+    if (a.count("help")) { usage(); return 0; }
+    if (a.count("list-stocks")) {
+        std::printf("Negatives:\n");
+        for (int i = 0; i < negativeStockCount(); ++i) std::printf("  %d  %s\n", i, negativeStock(i).name);
+        std::printf("Prints:\n");
+        for (int i = 0; i < printStockCount(); ++i) std::printf("  %d  %s\n", i, printStock(i).name);
+        return 0;
+    }
+    if (!a.count("in") || !a.count("out")) { usage(); return 1; }
+    auto F = [&](const char* k, float d) { return a.count(k) ? std::strtof(a[k].c_str(), nullptr) : d; };
+    auto I = [&](const char* k, int d) { return a.count(k) ? std::atoi(a[k].c_str()) : d; };
+
+    Params p;
+    std::string in = a.count("input") ? a["input"] : "rec709";
+    p.input = in == "logc3" ? InputSpace::ArriLogC3 : in == "slog3" ? InputSpace::SonySLog3 : in == "vlog" ? InputSpace::PanaVLog : InputSpace::Rec709;
+    p.exposure = F("exposure", 0); p.temperature = F("temperature", 0); p.tint = F("tint", 0);
+    p.matchStrength = F("match-strength", 1);
+    p.filmStrength = F("film", 0);
+    p.film.negative = I("negative", 0); p.film.print = I("print", 1); p.film.saturation = F("film-sat", 1);
+    if (a.count("printer")) std::sscanf(a["printer"].c_str(), "%f,%f,%f", &p.film.printerPoints[0], &p.film.printerPoints[1], &p.film.printerPoints[2]);
+    p.fade = F("fade", 0);
+    p.halation = F("halation", 0); p.halationRadius = F("halation-radius", 1); p.halationThreshold = F("halation-threshold", 0.6f);
+    p.bloom = F("bloom", 0); p.bloomRadius = F("bloom-radius", 1); p.bloomThreshold = F("bloom-threshold", 0.5f);
+    p.grain = F("grain", 0); p.grainSize = F("grain-size", 1); p.grainColor = F("grain-color", 0.3f);
+    p.softness = F("softness", 0); p.vignette = F("vignette", 0); p.weave = F("weave", 0); p.flicker = F("flicker", 0);
+    p.mix = F("mix", 1);
+
+    Image src;
+    if (!load(a["in"], src)) return 1;
+    Engine engine;
+    engine.setParams(p);
+
+    if (a.count("ref")) {
+        Image ref;
+        if (!load(a["ref"], ref)) return 1;
+        auto t0 = std::chrono::steady_clock::now();
+        MatchOptions mo;
+        mo.regionStrength = F("region-strength", 1);
+        mo.skinProtect = F("skin-protect", -1);
+        auto refPx = subsample(ref, 250000, [](Vec3 c) { return c; });
+        auto srcPx = subsample(src, 250000, [&](Vec3 c) { return engine.neutralDisplay(c); });
+        MatchResult m = matchLook(refPx, srcPx, mo);
+        auto t1 = std::chrono::steady_clock::now();
+        std::printf("%smatch built in %.0f ms\n", m.report.c_str(), std::chrono::duration<double, std::milli>(t1 - t0).count());
+        engine.setMatchLut(std::make_shared<Lut3D>(std::move(m.lut)));
+    }
+
+    if (a.count("export-lut")) {
+        Lut3D l = engine.bakeExportLut(I("lut-size", 65));
+        if (!l.writeCube(a["export-lut"], "LookMatch")) { std::fprintf(stderr, "cannot write %s\n", a["export-lut"].c_str()); return 1; }
+        std::printf("wrote %s (colour only: halation, bloom, grain, weave and vignette need the plugin)\n", a["export-lut"].c_str());
+    }
+
+    int frames = I("sequence", 1);
+    long frame0 = I("frame", 0);
+    Image dst = src;
+    for (int f = 0; f < frames; ++f) {
+        auto t0 = std::chrono::steady_clock::now();
+        engine.render(src.view(), dst.view(), frame0 + f);
+        auto t1 = std::chrono::steady_clock::now();
+        std::string out = a["out"];
+        if (frames > 1) {
+            char suffix[16];
+            std::snprintf(suffix, sizeof suffix, "_%04d", f);
+            size_t dot = out.find_last_of('.');
+            out = out.substr(0, dot) + suffix + out.substr(dot);
+        }
+        if (!save(out, dst)) return 1;
+        std::printf("frame %ld %dx%d rendered in %.1f ms -> %s\n", frame0 + f, src.w, src.h,
+                    std::chrono::duration<double, std::milli>(t1 - t0).count(), out.c_str());
+    }
+    return 0;
+}
