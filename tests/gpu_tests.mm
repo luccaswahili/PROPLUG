@@ -81,6 +81,7 @@ int main() {
             }
             const Lut3D& lut = e.directLut();
             id<MTLBuffer> io = [device newBufferWithBytes:bgra.data() length:bgra.size() * 4 options:MTLResourceStorageModeShared];
+            id<MTLBuffer> srcCopy = [device newBufferWithBytes:bgra.data() length:bgra.size() * 4 options:MTLResourceStorageModeShared];
             std::vector<float> lutData(reinterpret_cast<const float*>(lut.data()),
                                        reinterpret_cast<const float*>(lut.data()) + size_t(lut.size()) * lut.size() * lut.size() * 3);
             lutData.insert(lutData.end(), lut.shaper().begin(), lut.shaper().end());
@@ -94,6 +95,7 @@ int main() {
             [enc setBuffer:io offset:0 atIndex:0];
             [enc setBytes:&gp length:sizeof gp atIndex:1];
             [enc setBuffer:lb offset:0 atIndex:2];
+            [enc setBuffer:srcCopy offset:0 atIndex:3];
             [enc dispatchThreads:MTLSizeMake(w, h, 1) threadsPerThreadgroup:MTLSizeMake(16, 16, 1)];
             [enc endEncoding];
             [cb commit];

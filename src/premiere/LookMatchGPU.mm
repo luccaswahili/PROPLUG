@@ -121,10 +121,12 @@ public:
     Pipelines pipelines;
     lm::Engine engine;
     id<MTLBuffer> lutBuffer = nil;
+    id<MTLBuffer> srcBuffer = nil;  // unchanged copy of the frame: the kernel grades in place, deband reads neighbours
     std::shared_ptr<const lm::Lut3D> match;
 
     ~Instance() {
         if (lutBuffer) [lutBuffer release];
+        if (srcBuffer) [srcBuffer release];
     }
 
     // Effect Controls value of a parameter (AE index, input layer = 0) at clip time `t`.
@@ -328,12 +330,21 @@ prSuiteError Render(PrGPUFilterInstance* io, const PrGPUFilterRenderParams* rp, 
 
         id<MTLCommandQueue> queue = (id<MTLCommandQueue>)inst->device.outCommandQueueHandle;
         id<MTLCommandBuffer> cb = [queue commandBuffer];
+        const NSUInteger frameBytes = NSUInteger(rowBytes) * NSUInteger(h);
+        if (!inst->srcBuffer || inst->srcBuffer.length < frameBytes) {
+            if (inst->srcBuffer) [inst->srcBuffer release];
+            inst->srcBuffer = [device newBufferWithLength:frameBytes options:MTLResourceStorageModePrivate];
+        }
+        id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
+        [blit copyFromBuffer:(id<MTLBuffer>)data sourceOffset:0 toBuffer:inst->srcBuffer destinationOffset:0 size:frameBytes];
+        [blit endEncoding];
         id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
         id<MTLComputePipelineState> pso = f32 ? inst->pipelines.f32 : inst->pipelines.f16;
         [enc setComputePipelineState:pso];
         [enc setBuffer:(id<MTLBuffer>)data offset:0 atIndex:0];
         [enc setBytes:&gp length:sizeof gp atIndex:1];
         [enc setBuffer:inst->lutBuffer offset:0 atIndex:2];
+        [enc setBuffer:inst->srcBuffer offset:0 atIndex:3];
         MTLSize group = MTLSizeMake(pso.threadExecutionWidth, 16, 1);
         MTLSize grid = MTLSizeMake((w + group.width - 1) / group.width, (h + group.height - 1) / group.height, 1);
         [enc dispatchThreadgroups:grid threadsPerThreadgroup:group];

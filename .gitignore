@@ -6,3 +6,4 @@ build-*/
 tests/frames/
 tests/frames-log/
 tests/frames-pr/
+tests/frames-sky/

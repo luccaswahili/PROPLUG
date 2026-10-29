@@ -21,6 +21,7 @@ inline float noise(int x, int y, long f, int c) {
     return ((h & 0xFFFF) + (h >> 16)) * (1.0f / 65535.0f) * 2.449f - 2.449f;
 }
 inline float smooth01(float t) { return t * t * (3 - 2 * t); }
+inline float smoothstep(float a, float b, float v) { return smooth01(std::clamp((v - a) / (b - a), 0.0f, 1.0f)); }
 // smooth 1D noise over time, -1..1
 float timeNoise(float t, int seed) {
     int i = int(std::floor(t));
@@ -197,7 +198,53 @@ Lut3D Engine::bakeLut(int size, bool shaped) const {
     return l;
 }
 
+DebandParams debandParams(float amount, int height) {
+    DebandParams d;
+    if (amount <= 0) return d;
+    // 40 px at 1080p: about as wide as a compressed sky's flat steps
+    d.radius = std::max(1, int(std::lround(40.0f * height / 1080.0f)));
+    // ~3 8-bit or ~12 10-bit codes: a compressed sky's steps and its gradient across the radius stay
+    // below it; edges and most texture are above it (tests/banding_tests.cpp checks both)
+    d.threshold = 0.012f * std::min(1.0f, amount);
+    d.dither = 0.0008f * std::min(1.0f, amount);
+    return d;
+}
+
+// Keep in step with deband() in LookMatchKernel.h: same hash, same sample order.
+Vec3 debandAt(const float* data, int width, int height, int stride, int x, int y, const DebandParams& d) {
+    const float* p = data + size_t(y) * stride + size_t(x) * 4;
+    const Vec3 c(p[0], p[1], p[2]);
+    if (d.radius <= 0) return c;
+    const uint32_t span = uint32_t(2 * d.radius + 1);
+    // each neighbour counts as far as it is within the threshold of the centre (a sparse bilateral
+    // filter): on a smooth gradient that is all of them, at an edge only those on the same side
+    Vec3 sum = c;
+    float wsum = 1;
+    for (int k = 0; k < kDebandPairs; ++k) {
+        const uint32_t h = hash4(x, y, 0x5EED, k);
+        const int dx = int((h & 0xFFFFu) % span) - d.radius, dy = int((h >> 16) % span) - d.radius;
+        for (int s = -1; s <= 1; s += 2) {
+            const int xx = std::clamp(x + s * dx, 0, width - 1), yy = std::clamp(y + s * dy, 0, height - 1);
+            const float* q = data + size_t(yy) * stride + size_t(xx) * 4;
+            const float diff = std::max({std::abs(q[0] - c.r), std::abs(q[1] - c.g), std::abs(q[2] - c.b)});
+            const float w = 1 - smoothstep(0.5f * d.threshold, d.threshold, diff);
+            sum = sum + Vec3(q[0], q[1], q[2]) * w;
+            wsum += w;
+        }
+    }
+    Vec3 o = sum * (1.0f / wsum);
+    // dither in proportion to how much was smoothed, so smoothed areas don't form new flat steps
+    const float amount = (wsum - 1) / (2 * kDebandPairs);
+    for (int ch = 0; ch < 3; ++ch) {
+        const uint32_t h = hash4(x, y, 0x5EED, 64 + ch);
+        o[ch] += (float((h & 0xFFFFu) + (h >> 16)) * (1.0f / 65535.0f) - 1.0f) * d.dither * amount;
+    }
+    return o;
+}
+
 void Engine::render(const ImageView& in, const ImageView& out, long frame) {
+    const DebandParams db = debandParams(p_.deband, in.height);
+    auto source = [&](int x, int y) { return debandAt(in.data, in.width, in.height, in.stride, x, y, db); };
     const int w = in.width, h = in.height;
     // Fast path: with no weave, flicker or light spreading, the whole colour chain (decode, gain,
     // match, film, fade) is one function of the input pixel, baked into a single 3D LUT.
@@ -207,10 +254,7 @@ void Engine::render(const ImageView& in, const ImageView& out, long frame) {
                 direct_ = bakeLut(p_.lutSize, true);
                 directDirty_ = false;
             }
-            finish(in, out, frame, [&](int x, int y) {
-                const float* p = in.px(x, y);
-                return direct_.apply({p[0], p[1], p[2]});
-            });
+            finish(in, out, frame, [&](int x, int y) { return direct_.apply(source(x, y)); });
         } else {
             // Log footage: near clip, saturated highlights make the transform jump (gamut matrix on
             // clipped channels), which one baked LUT would smooth over. Decode exactly per pixel instead,
@@ -219,8 +263,7 @@ void Engine::render(const ImageView& in, const ImageView& out, long frame) {
             const Mat3& M = gamutToRec709(p_.input);
             const Vec3 gain = inputGain();
             finish(in, out, frame, [&](int x, int y) {
-                const float* p = in.px(x, y);
-                Vec3 l = M * decode(p_.input, {p[0], p[1], p[2]}) * gain;
+                Vec3 l = M * decode(p_.input, source(x, y)) * gain;
                 return lut_.apply({shaperEncode(l.r), shaperEncode(l.g), shaperEncode(l.b)});
             });
         }
@@ -254,8 +297,7 @@ void Engine::render(const ImageView& in, const ImageView& out, long frame) {
                 auto at = [&](int xx, int yy) { const float* p = in.px(xx, yy); return Vec3(p[0], p[1], p[2]); };
                 c = lerp(lerp(at(x0, y0), at(x1, y0), fx), lerp(at(x0, y1), at(x1, y1), fx), fy);
             } else {
-                const float* p = in.px(x, y);
-                c = {p[0], p[1], p[2]};
+                c = source(x, y);
             }
             Vec3 l = M * decode(p_.input, c) * gain;
             float* o = &lin_[(size_t(y) * w + x) * 3];
@@ -323,6 +365,7 @@ bool Engine::prepareDirect(int w, int h, long frame, FinishParams& fp) {
     fp.cy = h * 0.5f;
     fp.invDiag = 1.0f / std::sqrt(fp.cx * fp.cx + fp.cy * fp.cy);
     fp.frame = int(frame);
+    fp.deband = debandParams(p_.deband, h);
     return true;
 }
 

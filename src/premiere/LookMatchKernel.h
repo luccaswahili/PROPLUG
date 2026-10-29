@@ -17,6 +17,8 @@ struct LookMatchGPUParams {
     int split;
     float splitX, splitNx, splitNy, splitCy, splitLine;
     int shaperSize;  // input shaper entries stored after the LUT in the same buffer (0 = none)
+    int debandRadius;  // lm::DebandParams; the kernel reads the source from a copy of the frame
+    float debandThreshold, debandDither;
 };
 
 // Kernel parameters for one frame from the engine's fast-path constants and the split settings
@@ -45,6 +47,9 @@ inline LookMatchGPUParams makeGPUParams(const lm::FinishParams& f, int pitch, in
     p.splitCy = 0.5f * h;
     p.splitLine = std::fmax(1.0f, h / 540.0f);
     p.shaperSize = 0;
+    p.debandRadius = f.deband.radius;
+    p.debandThreshold = f.deband.threshold;
+    p.debandDither = f.deband.dither;
     return p;
 }
 
@@ -63,6 +68,8 @@ struct Params {
     int split;
     float splitX, splitNx, splitNy, splitCy, splitLine;
     int shaperSize;
+    int debandRadius;
+    float debandThreshold, debandDither;
 };
 
 // --- same hash and noise as the CPU engine ---
@@ -78,6 +85,42 @@ static float noise(int x, int y, int f, int c) {
     return float((h & 0xFFFFu) + (h >> 16)) * (1.0f / 65535.0f) * 2.449f - 2.449f;
 }
 static float smooth01(float t) { return t * t * (3.0f - 2.0f * t); }
+static float smoothstepf(float a, float b, float v) { return smooth01(clamp((v - a) / (b - a), 0.0f, 1.0f)); }
+
+// --- deband, as lm::debandAt (same hash, same sample order); src is BGRA ---
+template <typename T>
+static float3 rgbAt(device const T* src, constant Params& p, int x, int y) {
+    float4 v = float4(src[uint(y) * uint(p.pitch) + uint(x)]);
+    return float3(v.z, v.y, v.x);
+}
+constant int kDebandPairs = 8;  // = lm::kDebandPairs
+template <typename T>
+static float3 deband(device const T* src, constant Params& p, int x, int y) {
+    float3 c = rgbAt(src, p, x, y);
+    if (p.debandRadius <= 0) return c;
+    uint span = uint(2 * p.debandRadius + 1);
+    float3 sum = c;
+    float wsum = 1.0f;
+    for (int k = 0; k < kDebandPairs; ++k) {
+        uint h = hash4(x, y, 0x5EED, k);
+        int dx = int((h & 0xFFFFu) % span) - p.debandRadius, dy = int((h >> 16) % span) - p.debandRadius;
+        for (int s = -1; s <= 1; s += 2) {
+            int xx = clamp(x + s * dx, 0, p.width - 1), yy = clamp(y + s * dy, 0, p.height - 1);
+            float3 q = rgbAt(src, p, xx, yy);
+            float3 d = abs(q - c);
+            float w = 1.0f - smoothstepf(0.5f * p.debandThreshold, p.debandThreshold, max(d.x, max(d.y, d.z)));
+            sum += q * w;
+            wsum += w;
+        }
+    }
+    float3 o = sum * (1.0f / wsum);
+    float amount = (wsum - 1.0f) / float(2 * kDebandPairs);
+    for (int ch = 0; ch < 3; ++ch) {
+        uint h = hash4(x, y, 0x5EED, 64 + ch);
+        o[ch] += (float((h & 0xFFFFu) + (h >> 16)) * (1.0f / 65535.0f) - 1.0f) * p.debandDither * amount;
+    }
+    return o;
+}
 
 // --- tetrahedral 3D LUT, red fastest, 3 floats per entry ---
 static float3 lutAt(device const float* lut, int n, int r, int g, int b) {
@@ -116,12 +159,12 @@ static float shape(device const float* s, int n, float v) {
     return s[i] + (t - float(i)) * (s[i + 1] - s[i]);
 }
 
-// src: input pixel as RGB (BGRA in memory is swizzled by the caller); returns the graded RGB.
-static float3 shade(float3 src, uint2 xy, constant Params& p, device const float* lut) {
-    float3 sc = src;
+// src: input pixel as RGB, lin: the (debanded) value the grade reads; returns the graded RGB.
+static float3 shade(float3 src, float3 lin, uint2 xy, constant Params& p, device const float* lut) {
+    float3 sc = lin;
     if (p.shaperSize > 1) {
         device const float* s = lut + p.lutSize * p.lutSize * p.lutSize * 3;
-        sc = float3(shape(s, p.shaperSize, src.x), shape(s, p.shaperSize, src.y), shape(s, p.shaperSize, src.z));
+        sc = float3(shape(s, p.shaperSize, lin.x), shape(s, p.shaperSize, lin.y), shape(s, p.shaperSize, lin.z));
     }
     float3 c = applyLut(lut, p.lutSize, sc);
     int x = int(xy.x), y = int(xy.y);
@@ -153,21 +196,24 @@ static float3 shade(float3 src, uint2 xy, constant Params& p, device const float
     return out;
 }
 
+// io: the frame, graded in place; src: an unchanged copy of it (deband reads neighbours)
 kernel void lookmatch_f32(device float4* io [[buffer(0)]], constant Params& p [[buffer(1)]],
-                          device const float* lut [[buffer(2)]], uint2 xy [[thread_position_in_grid]]) {
+                          device const float* lut [[buffer(2)]], device const float4* src [[buffer(3)]],
+                          uint2 xy [[thread_position_in_grid]]) {
     if (int(xy.x) >= p.width || int(xy.y) >= p.height) return;
     uint i = xy.y * uint(p.pitch) + xy.x;
-    float4 px = io[i];                       // BGRA
-    float3 rgb = shade(float3(px.z, px.y, px.x), xy, p, lut);
+    float4 px = src[i];                      // BGRA
+    float3 rgb = shade(float3(px.z, px.y, px.x), deband(src, p, int(xy.x), int(xy.y)), xy, p, lut);
     io[i] = float4(rgb.z, rgb.y, rgb.x, px.w);
 }
 
 kernel void lookmatch_f16(device half4* io [[buffer(0)]], constant Params& p [[buffer(1)]],
-                          device const float* lut [[buffer(2)]], uint2 xy [[thread_position_in_grid]]) {
+                          device const float* lut [[buffer(2)]], device const half4* src [[buffer(3)]],
+                          uint2 xy [[thread_position_in_grid]]) {
     if (int(xy.x) >= p.width || int(xy.y) >= p.height) return;
     uint i = xy.y * uint(p.pitch) + xy.x;
-    float4 px = float4(io[i]);
-    float3 rgb = shade(float3(px.z, px.y, px.x), xy, p, lut);
+    float4 px = float4(src[i]);
+    float3 rgb = shade(float3(px.z, px.y, px.x), deband(src, p, int(xy.x), int(xy.y)), xy, p, lut);
     io[i] = half4(half(rgb.z), half(rgb.y), half(rgb.x), half(px.w));
 }
 )METAL";

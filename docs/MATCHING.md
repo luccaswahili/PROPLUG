@@ -71,6 +71,49 @@ third the identity and two thirds the frame's own value distribution, so the gri
 checks it matches the CPU: 0.000/255. A copy saved into the project (**Save into Project**) is resampled to 33³ on the
 same shaper, to keep projects small. Projects saved by earlier builds load unchanged: their Match Data has no shaper.
 
+## Deband (contour rings in skies)
+
+Compressed log footage stores a clear sky as a staircase of flat steps one or two code values high. For
+example, the Marsa beach clip is 10-bit HEVC S-Log3. The grade expands log to display and makes the sky
+4–7× steeper per channel, so each step becomes 1.3–3.5/255. Because R, G and B step on different rows,
+the plateaus show as concentric coloured rings. Premiere already gives the effect 32-bit float frames on
+both the GPU and the CPU path, so the rings were not caused by bit depth. They are in the source, and the
+grade made them visible.
+
+Before the grade, the effect now smooths those steps. The method is the idea behind f3kdb / libplacebo
+`deband`, reimplemented here:
+
+- For each pixel, it samples 16 neighbours in point-symmetric pairs within a radius of 40 px at 1080p
+  (scaled with frame height).
+- It weights each neighbour by how close it is to the centre: full weight within 0.006 code values,
+  falling to zero at 0.012. In effect this is a sparse bilateral filter, so edges and texture don't mix.
+- It adds a little triangular dither where it smoothed.
+
+`lm::debandAt` and the Metal `deband()` use the same hash and sample order, so the GPU and the CPU
+agree (`gpu_tests`: max 0.001/255). The GPU filter now reads from a copy of the frame, because the
+kernel grades in place.
+
+`banding_tests` renders skies through the engine and measures, along each column, the share of the
+gradient's change that happens in visible jumps (> 0.5/255, after averaging 17 px across) and the 99th
+percentile of those jumps. Threshold: share < 15 % and jump < 1/255.
+
+| sky (reference 20.12.03) | step share before | after | largest step before | after |
+|---|---|---|---|---|
+| synthetic S-Log3 sky, 10-bit | 13.0 % | 0.1 % | 1.27/255 | 0.66/255 |
+| synthetic S-Log3 sky, 8-bit | 54.4 % | 1.0 % | 4.20/255 | 0.78/255 |
+| Marsa beach frame (16-bit extract of the 10-bit clip) | 44.7 % | 6.2 % | 2.37/255 | 0.85/255 |
+
+With reference 15.38.33, the Marsa frame goes from 43 % to 2.6 %.
+
+On the real log frames, deband keeps at least 93 % of the high-pass detail (worst case: an 8K
+portrait). Most of what it removes is 8-bit extraction noise.
+
+Cost: the GPU takes 9.6 ms per 4K frame, including the copy. The CPU fallback rises from 39 to about
+310 ms per 4K frame.
+
+Tools: `tools/extract_frame16.swift` extracts a 16-bit frame from a clip. Sky frames go in
+`tests/frames-sky/NAME-sky<W>x<H>.png`, which is git-ignored.
+
 ## Consistency test
 
 `tests/consistency_tests.cpp` (ctest `consistency_tests`) takes real frames from the clips in projects *g* and *d*:
