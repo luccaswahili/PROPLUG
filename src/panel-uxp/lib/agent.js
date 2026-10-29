@@ -29,7 +29,23 @@ const COMMANDS = {
   previewLooks: async (b) => b.lookThumbnails(FILM_LOOKS.map((l) => ({ id: l.id, params: lookParams(l) })), { timeoutMs: 30000 }),
 };
 
-function startAgent(fs, dataDir, bridge, log) {
+function startAgent(fs, dataDir, bridge, log, ui) {
+  // UI commands: set a whitelisted field / click a whitelisted button, then report the status line.
+  if (ui) {
+    COMMANDS.uiSetField = async (b, a) => {
+      if (!ui.fields.includes(a.id)) throw new Error(`field ${a.id} not allowed`);
+      ui.element(a.id).value = String(a.value);
+      return { id: a.id, value: ui.element(a.id).value };
+    };
+    COMMANDS.uiClick = async (b, a) => {
+      if (!ui.buttons.includes(a.id)) throw new Error(`button ${a.id} not allowed`);
+      ui.element(a.id).click();
+      const until = Date.now() + (Number(a.waitMs) || 8000);
+      await new Promise((r) => setTimeout(r, 300));
+      while (Date.now() < until && / busy/.test(ui.status().kind)) await new Promise((r) => setTimeout(r, 200));
+      return { status: ui.status(), savedLooks: ui.savedLooks() };
+    };
+  }
   const dir = joinPath(dataDir, "agent");
   let lastId = null;
   let busy = false;

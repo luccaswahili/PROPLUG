@@ -10,7 +10,7 @@ const { Library, joinPath, baseName } = require("./lib/library.js");
 const { Bridge } = require("./lib/bridge.js");
 const { runSelfTest } = require("./lib/selftest.js");
 
-const VERSION = "0.4.0";  // kept equal to manifest.json by build_panel.sh
+const VERSION = "0.4.1";  // kept equal to manifest.json by build_panel.sh
 const DATA_DIR = os.platform() === "win32"
   ? joinPath(process.env.APPDATA || "", "PRO PLUGS\\LookMatch")
   : joinPath(os.homedir(), "Library/Application Support/PRO PLUGS/LookMatch");
@@ -29,11 +29,20 @@ function status(text, kind) {
   el.className = "status" + (kind ? " " + kind : "");
 }
 
+// The Tools console, mirrored to <data>/panel.log (kept under ~200 KB) for diagnostics.
+const PANEL_LOG = joinPath(DATA_DIR, "panel.log");
+let logQueue = Promise.resolve();
 function log(...a) {
   const line = `${new Date().toLocaleTimeString()} ${a.join(" ")}`;
   const el = $("console");
   el.textContent = (line + "\n" + el.textContent).slice(0, 20000);
   console.log(line);
+  logQueue = logQueue.then(async () => {
+    let old = "";
+    try { old = await fs.readFile(PANEL_LOG, { encoding: "utf-8" }); } catch (e) { /* new file */ }
+    if (old.length > 200000) old = old.slice(-100000);
+    await fs.writeFile(PANEL_LOG, old + line + "\n", { encoding: "utf-8" });
+  }).catch(() => {});
 }
 
 // Runs a panel action with a busy/ok/error status line; errors never escape to Premiere.
@@ -42,6 +51,7 @@ async function run(label, fn) {
   try {
     const msg = await fn();
     status(msg || `${label}: done`, "ok");
+    log(`${label}: ${msg || "done"}`);
   } catch (e) {
     status(`${label}: ${e.message}`, "err");
     log(`${label} failed: ${e.message}`);
@@ -475,6 +485,14 @@ $("selfTest").addEventListener("click", () => run("Self-test", async () => {
   log(`LookMatch panel ${VERSION} ready (data in ${DATA_DIR})`);
   try {
     // dev builds only: lib/agent.js is left out of release packages
-    require("./lib/agent.js").startAgent(fs, DATA_DIR, bridge, log);
+    require("./lib/agent.js").startAgent(fs, DATA_DIR, bridge, log, {
+      // UI driving for tests: only these elements, only set value / click
+      fields: ["refPath", "lookName", "lookFile", "cubePath"],
+      buttons: ["addRef", "matchSel", "matchSeq", "applyStrength", "beforeAfter", "heroRef", "readFilm", "resetFilm",
+                "applyFilm", "saveLook", "importLook", "exportCube", "selfTest", "previewLooks", "probe", "showLog"],
+      status: () => ({ text: $("status").textContent, kind: $("status").className }),
+      savedLooks: () => library.looks.map((l) => l.name),
+      element: (id) => document.getElementById(id),
+    });
   } catch (e) { /* release build */ }
 })();
