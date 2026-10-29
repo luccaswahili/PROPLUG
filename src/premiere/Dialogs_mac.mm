@@ -15,7 +15,15 @@ bool LM_OpenImageDialog(char* pathOut, int capacity) {
     @autoreleasepool {
         NSOpenPanel* panel = [NSOpenPanel openPanel];
         panel.title = @"LookMatch: choose the reference still";
-        panel.allowedContentTypes = @[ UTTypePNG, UTTypeJPEG, UTTypeBMP, [UTType typeWithFilenameExtension:@"tga"] ];
+        if (@available(macOS 11.0, *)) {
+            panel.allowedContentTypes = @[ UTTypePNG, UTTypeJPEG, UTTypeBMP, [UTType typeWithFilenameExtension:@"tga"] ];
+        } else {
+            // macOS 10.9-10.15 (Premiere CC 2015-2020 era): no UniformTypeIdentifiers framework
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+            panel.allowedFileTypes = @[ @"png", @"jpg", @"jpeg", @"bmp", @"tga" ];
+#pragma clang diagnostic pop
+        }
         panel.allowsMultipleSelection = NO;
         if ([panel runModal] != NSModalResponseOK) return false;
         return copyPath(panel.URLs.firstObject, pathOut, capacity);

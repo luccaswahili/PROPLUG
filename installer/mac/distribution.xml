@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>LookMatch</title>
+    <welcome file="welcome.html" mime-type="text/html"/>
+    <conclusion file="conclusion.html" mime-type="text/html"/>
+    <options customize="never" require-scripts="false" hostArchitectures="x86_64,arm64"/>
+    <domains enable_localSystem="true"/>
+    <installation-check script="checkHosts()"/>
+    <script><![CDATA[
+    // Tell the user which Premiere Pro / After Effects versions are on this Mac.
+    // The plug-in works with all of them (CC 2015+), so this only informs; it never blocks.
+    function checkHosts() {
+        if (system.compareVersions(system.version.ProductVersion, '10.9') < 0) {
+            my.result.type = 'Fatal';
+            my.result.title = 'macOS 10.9 or later is required';
+            my.result.message = 'LookMatch needs OS X 10.9 Mavericks or later.';
+            return false;
+        }
+        var names = [];
+        var apps = system.files.fileExistsAtPath('/Applications') ? system.files.directoryContentsAtPath('/Applications') : [];
+        for (var i = 0; i < apps.length; i++) {
+            if (apps[i].indexOf('Adobe Premiere Pro') == 0 || apps[i].indexOf('Adobe After Effects') == 0) names.push(apps[i]);
+        }
+        if (names.length == 0) {
+            my.result.type = 'Warning';
+            my.result.title = 'No Premiere Pro or After Effects found';
+            my.result.message = 'LookMatch works with Premiere Pro and After Effects CC 2015 to 2026. It will install now and load once one of them is installed.';
+            return false;
+        }
+        my.result.type = 'Warning';
+        my.result.title = 'LookMatch will work with:';
+        my.result.message = names.join('\n') + '\n\nOne plug-in covers all of these versions.';
+        return false;
+    }
+    ]]></script>
+    <choices-outline><line choice="lookmatch"/></choices-outline>
+    <choice id="lookmatch" visible="false" title="LookMatch"><pkg-ref id="com.proplugs.lookmatch"/></choice>
+    <pkg-ref id="com.proplugs.lookmatch">LookMatch-component.pkg</pkg-ref>
+</installer-gui-script>
