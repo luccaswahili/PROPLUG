@@ -67,35 +67,46 @@ document.getElementById("probe").addEventListener("click", async () => {
   } catch (e) { log("probe failed:", e.message); }
 });
 
+async function matchSelectedTo(refPath) {
+  const slot = 1 + Math.floor(Math.random() * 999998);
+  fs.mkdirSync(refsDir(), { recursive: true });
+  fs.writeFileSync(`${refsDir()}/${slot}.txt`, refPath);
+  log(`reference ${refPath} -> slot ${slot}`);
+
+  const { project, items } = await selectedTrackItems();
+  if (!items.length) { log("select a clip on the timeline first"); return; }
+  for (const item of items) {
+    let { chain, component } = await findLookMatch(item);
+    if (!component) {
+      component = await ppro.VideoFilterFactory.createComponent(MATCH_NAME);
+      project.lockedAccess(() => project.executeTransaction((ca) => {
+        ca.addAction(chain.createAppendComponentAction(component));
+      }, "Add LookMatch"));
+      ({ component } = await findLookMatch(item));
+      log("  added LookMatch");
+    }
+    const param = await findParam(component, "Reference Slot");
+    if (!param) { log("  no Reference Slot param (old LookMatch build?)"); continue; }
+    const kf = param.createKeyframe(slot);
+    project.lockedAccess(() => project.executeTransaction((ca) => {
+      ca.addAction(param.createSetValueAction(kf, true));
+    }, "LookMatch: match to reference"));
+    log(`  set Reference Slot = ${slot} on ${await item.getName()}`);
+  }
+}
+
 document.getElementById("match").addEventListener("click", async () => {
   try {
     const file = await uxp.storage.localFileSystem.getFileForOpening({ types: ["png", "jpg", "jpeg", "bmp", "tga"] });
-    if (!file) return;
-    const slot = 1 + Math.floor(Math.random() * 999998);
-    fs.mkdirSync(refsDir(), { recursive: true });
-    fs.writeFileSync(`${refsDir()}/${slot}.txt`, file.nativePath);
-    log(`reference ${file.nativePath} -> slot ${slot}`);
+    if (file) await matchSelectedTo(file.nativePath);
+  } catch (e) { log("match failed:", e.message); }
+});
 
-    const { project, sequence, items } = await selectedTrackItems();
-    if (!items.length) { log("select a clip on the timeline first"); return; }
-    for (const item of items) {
-      let { chain, component } = await findLookMatch(item);
-      if (!component) {
-        component = await ppro.VideoFilterFactory.createComponent(MATCH_NAME);
-        project.lockedAccess(() => project.executeTransaction((ca) => {
-          ca.addAction(chain.createAppendComponentAction(component));
-        }, "Add LookMatch"));
-        ({ component } = await findLookMatch(item));
-        log("  added LookMatch");
-      }
-      const param = await findParam(component, "Reference Slot");
-      if (!param) { log("  no Reference Slot param (old LookMatch build?)"); continue; }
-      const kf = param.createKeyframe(slot);
-      project.lockedAccess(() => project.executeTransaction((ca) => {
-        ca.addAction(param.createSetValueAction(kf, true));
-      }, "LookMatch: match to reference"));
-      log(`  set Reference Slot = ${slot} on ${await item.getName()}`);
-    }
+document.getElementById("usePath").addEventListener("click", async () => {
+  try {
+    const path = document.getElementById("path").value.trim();
+    if (!fs.existsSync(path)) { log(`no file at ${path}`); return; }
+    await matchSelectedTo(path);
   } catch (e) { log("match failed:", e.message); }
 });
 
