@@ -23,6 +23,7 @@
 
 #include "engine.h"
 #include "matcher.h"
+#include "parallel.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_WINDOWS_UTF8
@@ -245,7 +246,7 @@ inline char* rowPtr(PF_EffectWorld* w, int y) { return reinterpret_cast<char*>(w
 
 void worldToFloat(PF_EffectWorld* w, Fmt fmt, int width, int height, std::vector<float>& buf) {
     buf.resize(size_t(width) * height * 4);
-    for (int y = 0; y < height; ++y) {
+    lm::parallelFor(0, height, [&](int y) {
         float* o = &buf[size_t(y) * width * 4];
         char* row = rowPtr(w, y);
         for (int x = 0; x < width; ++x, o += 4) {
@@ -276,14 +277,14 @@ void worldToFloat(PF_EffectWorld* w, Fmt fmt, int width, int height, std::vector
                 default: o[0] = o[1] = o[2] = o[3] = 0.0f; break;
             }
         }
-    }
+    });
 }
 
 inline uint8_t to8(float v) { return uint8_t(lm::clamp01(v) * 255.0f + 0.5f); }
 inline A_u_short to16(float v) { return A_u_short(lm::clamp01(v) * 32768.0f + 0.5f); }
 
 void floatToWorld(const std::vector<float>& buf, int width, int height, PF_EffectWorld* w, Fmt fmt) {
-    for (int y = 0; y < height; ++y) {
+    lm::parallelFor(0, height, [&](int y) {
         const float* s = &buf[size_t(y) * width * 4];
         char* row = rowPtr(w, y);
         for (int x = 0; x < width; ++x, s += 4) {
@@ -299,7 +300,7 @@ void floatToWorld(const std::vector<float>& buf, int width, int height, PF_Effec
                 default: break;
             }
         }
-    }
+    });
 }
 
 // ---------- match data (hidden arbitrary parameter) ----------

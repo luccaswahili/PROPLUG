@@ -1,6 +1,12 @@
-body { margin: 0; padding: 8px 10px 16px; color: #d6d6d6; background: #232323; font-size: 12px; }
+html, body { height: 100%; }
+body { margin: 0; padding: 8px 10px 0; color: #d6d6d6; background: #232323; font-size: 12px;
+       display: flex; flex-direction: column; overflow: hidden; }
+header, .status { flex: 0 0 auto; }
+/* tab content scrolls on its own, so short docked panels still reach every control */
+#content { flex: 1 1 auto; overflow-y: auto; padding-bottom: 16px; }
 header { display: flex; flex-direction: column; gap: 6px; margin-bottom: 6px; }
-.tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 2px; }
+.tabs sp-action-button { min-width: 0; }
 section { display: flex; flex-direction: column; gap: 8px; }
 section[hidden] { display: none; }
 .row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }

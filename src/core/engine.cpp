@@ -119,16 +119,19 @@ void Engine::setParams(const Params& p) {
                   p.film.negative != o.film.negative || p.film.print != o.film.print || p.film.saturation != o.film.saturation ||
                   std::memcmp(p.film.printerPoints, o.film.printerPoints, sizeof o.film.printerPoints) != 0 || p.fade != o.fade ||
                   p.lutSize != o.lutSize;
+    bool gainChanged = p.exposure != o.exposure || p.temperature != o.temperature || p.tint != o.tint;
     p_ = p;
     if (colour) {
         film_ = std::make_unique<FilmModel>(p_.film);
         lutDirty_ = true;
     }
+    if (colour || gainChanged) directDirty_ = true;
 }
 
 void Engine::setMatchLut(std::shared_ptr<const Lut3D> lut) {
     match_ = std::move(lut);
     lutDirty_ = true;
+    directDirty_ = true;
 }
 
 Vec3 Engine::inputGain() const {
@@ -180,19 +183,50 @@ Lut3D Engine::bakeExportLut(int size) const {
     Lut3D l(size);
     const Mat3& M = gamutToRec709(p_.input);
     Vec3 g = inputGain();
-    l.fill([&](Vec3 code) { return colorFromLinear(M * decode(p_.input, code) * g); });
+    // Same range limit as render's shaped LUT: scene linear is clamped to the shaper's range
+    // (log footage near clip decodes far above it), so the export and the fast path match a render.
+    auto limit = [](float v) { return shaperDecode(clamp01(shaperEncode(v))); };
+    l.fill([&](Vec3 code) {
+        Vec3 lin = M * decode(p_.input, code) * g;
+        return colorFromLinear({limit(lin.r), limit(lin.g), limit(lin.b)});
+    });
     return l;
 }
 
 void Engine::render(const ImageView& in, const ImageView& out, long frame) {
-    if (lutDirty_) rebuildLut();
     const int w = in.width, h = in.height;
+    // Fast path: with no weave, flicker or light spreading, the whole colour chain (decode, gain,
+    // match, film, fade) is one function of the input pixel, baked into a single 3D LUT.
+    if (p_.halation <= 0 && p_.bloom <= 0 && p_.softness <= 0 && p_.weave <= 0 && p_.flicker <= 0) {
+        if (p_.input == InputSpace::Rec709) {
+            if (directDirty_) {
+                direct_ = bakeExportLut(p_.lutSize);
+                directDirty_ = false;
+            }
+            finish(in, out, frame, [&](int x, int y) {
+                const float* p = in.px(x, y);
+                return direct_.apply({p[0], p[1], p[2]});
+            });
+        } else {
+            // Log footage: near clip, saturated highlights make the transform jump (gamut matrix on
+            // clipped channels), which one baked LUT would smooth over. Decode exactly per pixel instead,
+            // fused into the final pass (no scene-linear buffer).
+            if (lutDirty_) rebuildLut();
+            const Mat3& M = gamutToRec709(p_.input);
+            const Vec3 gain = inputGain();
+            finish(in, out, frame, [&](int x, int y) {
+                const float* p = in.px(x, y);
+                Vec3 l = M * decode(p_.input, {p[0], p[1], p[2]}) * gain;
+                return lut_.apply({shaperEncode(l.r), shaperEncode(l.g), shaperEncode(l.b)});
+            });
+        }
+        return;
+    }
+    if (lutDirty_) rebuildLut();
     const float scale = h / 1080.0f;  // spatial settings are authored at 1080p
     const NegativeStock& stock = negativeStock(p_.film.negative);
     const float filmMix = p_.filmStrength;
-    // film stocks nudge grain and halation (B&W has no red halation, 800T has lots)
-    const float stockGrain = 1 + filmMix * (stock.grain / 0.4f - 1);
-    const float stockGrainSize = 1 + filmMix * (stock.grainSize - 1);
+    // film stocks nudge halation (B&W has no red halation, 800T has lots); grain is nudged in finish()
     const float stockHal = 1 + filmMix * (stock.halation / 0.4f - 1);
 
     // 1+2. weave + decode to scene linear
@@ -259,13 +293,27 @@ void Engine::render(const ImageView& in, const ImageView& out, long frame) {
     }
 
     // 4+5. colour LUT, grain, vignette, mix
+    finish(in, out, frame, [&](int x, int y) {
+        const float* l = &lin_[(size_t(y) * w + x) * 3];
+        return lut_.apply({shaperEncode(l[0]), shaperEncode(l[1]), shaperEncode(l[2])});
+    });
+}
+
+// Grain, vignette and mix on top of the graded colour `colourAt(x, y)`, written to `out`.
+template <class ColourAt>
+void Engine::finish(const ImageView& in, const ImageView& out, long frame, ColourAt colourAt) {
+    const int w = in.width, h = in.height;
+    const float scale = h / 1080.0f;
+    const NegativeStock& stock = negativeStock(p_.film.negative);
+    const float filmMix = p_.filmStrength;
+    const float stockGrain = 1 + filmMix * (stock.grain / 0.4f - 1);
+    const float stockGrainSize = 1 + filmMix * (stock.grainSize - 1);
     const float grainAmp = p_.grain * stockGrain * 0.09f;
     const float cell = std::max(0.5f, p_.grainSize * stockGrainSize * scale);
     const float cx = w * 0.5f, cy = h * 0.5f, invDiag = 1.0f / std::sqrt(cx * cx + cy * cy);
     parallelFor(0, h, [&](int y) {
         for (int x = 0; x < w; ++x) {
-            const float* l = &lin_[(size_t(y) * w + x) * 3];
-            Vec3 c = lut_.apply({shaperEncode(l[0]), shaperEncode(l[1]), shaperEncode(l[2])});
+            Vec3 c = colourAt(x, y);
             if (grainAmp > 0) {
                 // value noise on a grid of `cell` pixels, smooth interpolated
                 float gx = x / cell, gy = y / cell;
