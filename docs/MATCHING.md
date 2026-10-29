@@ -181,6 +181,15 @@ It is applied in linear Rec.709, before the display encode.
 Measured on 8 frames: consistency is unchanged, at mean 1.48 / p95 2.86 against 2.91 before.
 Grey-axis jump failures fall from 16 to 13. Content preservation is unchanged.
 
+## Tried and not adopted
+
+- **CAT16 instead of Bradford for the white-balance correction.** Over 8 frames, every white-balance
+  row got slightly worse. For example, 4300 K tint −20 went from 0.12 to 0.44 mean ΔE00, and
+  4300 K tint 0 from 0.16 to 0.29. The test's simulated casts are Bradford, so this measure favours
+  Bradford, and there is no evidence from real footage either way. Bradford stays.
+- **Statistical transfers as the default** (see above): more consistent, but they erase scene
+  colour and break the grey axis.
+
 ## Consistency test
 
 `tests/consistency_tests.cpp` (ctest `consistency_tests`) takes real frames from the clips in projects *g* and *d*:
