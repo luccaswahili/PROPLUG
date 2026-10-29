@@ -1,0 +1,32 @@
+body { margin: 0; padding: 8px 10px 16px; color: #d6d6d6; background: #232323; font-size: 12px; }
+header { display: flex; flex-direction: column; gap: 6px; margin-bottom: 6px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+section { display: flex; flex-direction: column; gap: 8px; }
+section[hidden] { display: none; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.grow { flex: 1 1 auto; min-width: 120px; }
+.hint { color: #8a8a8a; }
+.status { min-height: 16px; padding: 4px 6px; border-radius: 4px; font-size: 11px; }
+.status.ok { background: #1f3a2a; color: #9be3b3; }
+.status.err { background: #4a2020; color: #ffb3b3; }
+.status.busy { background: #2a3550; color: #b8c8ff; }
+.drop { border: 1px dashed #555; border-radius: 6px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.drop.over { border-color: #4b9cf5; background: #2a3242; }
+.grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.thumb { width: 92px; border: 2px solid transparent; border-radius: 6px; background: #2e2e2e; overflow: hidden; cursor: pointer; }
+.thumb.sel { border-color: #4b9cf5; }
+.thumb img { width: 92px; height: 56px; object-fit: cover; display: block; background: #1a1a1a; }
+.thumb .name { padding: 2px 4px; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.thumb .x { float: right; color: #888; padding: 0 4px; }
+.cards .card { width: 108px; border-radius: 6px; background: #2e2e2e; cursor: pointer; overflow: hidden; }
+.cards.small .card { width: 92px; }
+.card .swatch { height: 34px; }
+.card .name { padding: 3px 5px; font-size: 10px; }
+.card:hover { outline: 1px solid #4b9cf5; }
+.slider-row { display: flex; align-items: center; gap: 6px; }
+.slider-row sp-detail { width: 110px; }
+.slider-row sp-slider { flex: 1 1 auto; }
+.slider-row span { width: 44px; text-align: right; font-size: 11px; color: #aaa; }
+.list .item { display: flex; align-items: center; gap: 6px; padding: 4px 0; border-bottom: 1px solid #333; }
+.list .item .name { flex: 1 1 auto; }
+.console { background: #161616; color: #aaa; padding: 6px; font-size: 10px; white-space: pre-wrap; max-height: 360px; overflow: auto; }
