@@ -21,6 +21,8 @@ section[hidden] { display: none; }
 .cards .card { width: 108px; border-radius: 6px; background: #2e2e2e; cursor: pointer; overflow: hidden; }
 .cards.small .card { width: 92px; }
 .card .swatch { height: 34px; }
+.card .swatch.preview { height: 60px; }
+.card .swatch img { width: 100%; height: 60px; object-fit: cover; display: block; }
 .card .name { padding: 3px 5px; font-size: 10px; }
 .card:hover { outline: 1px solid #4b9cf5; }
 .slider-row { display: flex; align-items: center; gap: 6px; }

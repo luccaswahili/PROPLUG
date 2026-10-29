@@ -55,6 +55,10 @@
 
   <!-- LOOKS: one-click film looks and every stock combination -->
   <section data-panel="looks" hidden>
+    <div class="slider-row"><sp-detail>LOOK INTENSITY</sp-detail><sp-slider id="intensity" min="0" max="150" value="100"></sp-slider><span id="intensityV">100%</span></div>
+    <div class="row">
+      <sp-action-button id="previewLooks">Preview looks on selected clip</sp-action-button>
+    </div>
     <sp-detail>FILM LOOKS</sp-detail>
     <div id="lookGrid" class="grid cards"></div>
     <sp-detail>EVERY STOCK COMBINATION</sp-detail>

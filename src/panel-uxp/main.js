@@ -9,7 +9,7 @@ const { P, NEGATIVES, PRINTS, FILM_DEFAULTS, FILM_LOOKS, lookParams, stockCombos
 const { Library, joinPath, baseName } = require("./lib/library.js");
 const { Bridge } = require("./lib/bridge.js");
 
-const VERSION = "0.2.12";  // kept equal to manifest.json by build_panel.sh
+const VERSION = "0.3.1";  // kept equal to manifest.json by build_panel.sh
 const DATA_DIR = os.platform() === "win32"
   ? joinPath(process.env.APPDATA || "", "PRO PLUGS\\LookMatch")
   : joinPath(os.homedir(), "Library/Application Support/PRO PLUGS/LookMatch");
@@ -227,6 +227,7 @@ function swatchFor(params) {
 function lookCard(look, onClick) {
   const card = document.createElement("div");
   card.className = "card";
+  card.dataset.look = look.id;
   card.innerHTML = `<div class="swatch"></div><div class="name"></div>`;
   card.querySelector(".swatch").style.background = swatchFor(look.params);
   card.querySelector(".name").textContent = look.name;
@@ -235,9 +236,12 @@ function lookCard(look, onClick) {
   return card;
 }
 
+const intensity = () => Number($("intensity").value) / 100;
+bindSlider("intensity", "intensityV");
+
 function applyLook(look) {
   return run(`Apply ${look.name}`, async () => {
-    const params = lookParams(look);
+    const params = lookParams(look, intensity());
     setFilmControls(params);
     const res = await bridge.applyParams("selection", params);
     return `${look.name} on ${res.clips} clip(s)`;
@@ -250,6 +254,24 @@ function renderLooks() {
   const combos = $("comboGrid");
   for (const look of stockCombos()) combos.appendChild(lookCard(look, () => applyLook(look)));
 }
+
+// Real previews: the effect renders the selected clip's frame through every look.
+$("previewLooks").addEventListener("click", () => run("Preview looks", async () => {
+  const looks = FILM_LOOKS.concat(stockCombos()).map((l) => ({ id: l.id, params: lookParams(l, intensity()) }));
+  const paths = await bridge.lookThumbnails(looks, { timeoutMs: 30000 });
+  let shown = 0;
+  for (const card of document.querySelectorAll(".card[data-look]")) {
+    const url = await thumbnailUrl(paths[card.dataset.look]);
+    if (!url) continue;
+    const sw = card.querySelector(".swatch");
+    let img = sw.querySelector("img");
+    if (!img) { img = document.createElement("img"); sw.appendChild(img); }
+    img.src = url;
+    sw.classList.add("preview");
+    shown++;
+  }
+  return `Previewed ${shown} looks on the selected clip`;
+}));
 
 // ---------- film controls ----------
 

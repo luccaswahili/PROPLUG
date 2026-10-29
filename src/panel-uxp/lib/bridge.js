@@ -220,6 +220,16 @@ class Bridge {
     return { slot: res.slot, path: `${res.base}.png`, clip: res.clip };
   }
 
+  // Asks the effect to render small previews of `looks` ([{id, params}]) from the selected clip's
+  // current frame (with its match). Returns { id: pngPath }.
+  async lookThumbnails(looks, opts) {
+    const lines = looks.map((l) => `${l.id}\t${Object.entries(l.params).map(([k, v]) => `${k}=${Number(v)}`).join(";")}`);
+    const res = await this.effectRequest("thumbs", P.thumbsSlot, lines.join("\n") + "\n", opts);
+    const out = {};
+    for (const l of looks) out[l.id] = `${res.base}-${l.id}.png`;
+    return out;
+  }
+
   async selectedLookMatchParams() {
     const { items } = await this.selectedVideoItems();
     for (const item of items) {

@@ -35,6 +35,7 @@ const P = {
   referenceSlot: "Reference Slot",
   exportSlot: "LUT Export Slot",
   captureSlot: "Capture Slot",
+  thumbsSlot: "Thumbs Slot",
 };
 
 // Popup controls. The panel uses 1-based values like Effect Controls; Premiere's UXP API reads
@@ -56,33 +57,42 @@ const FILM_DEFAULTS = {
 };
 
 // Original look names (no trademarks). Each sets a full film/texture state.
+// Printer lights work like a film lab's: raising a colour's light REMOVES that colour from the
+// print (+R = more cyan, +B = more yellow), so warm looks use -R / +B.
 const FILM_LOOKS = [
   { id: "clean", name: "Clean (film off)", params: {} },
   { id: "golden-hour", name: "Golden Hour Print", params: {
-      [P.filmStrength]: 80, [P.negative]: 2, [P.print]: 2, [P.printerR]: 2, [P.printerB]: -2,
-      [P.halation]: 40, [P.grain]: 25, [P.vignette]: 15 } },
+      [P.filmStrength]: 85, [P.negative]: 2, [P.print]: 2, [P.printerR]: -4, [P.printerG]: -1, [P.printerB]: 5,
+      [P.filmSaturation]: 110, [P.halation]: 45, [P.grain]: 25, [P.vignette]: 18 } },
   { id: "teal-night", name: "Teal Night", params: {
-      [P.filmStrength]: 85, [P.negative]: 6, [P.print]: 3, [P.printerB]: 3, [P.printerR]: -1,
-      [P.halation]: 70, [P.bloom]: 25, [P.grain]: 35 } },
+      [P.filmStrength]: 90, [P.negative]: 6, [P.print]: 3, [P.printerR]: 4, [P.printerB]: -3,
+      [P.filmSaturation]: 90, [P.halation]: 70, [P.bloom]: 25, [P.grain]: 35, [P.vignette]: 20 } },
   { id: "soft-portrait", name: "Soft Portrait", params: {
-      [P.filmStrength]: 70, [P.negative]: 4, [P.print]: 4, [P.filmSaturation]: 90, [P.fade]: 10,
-      [P.halation]: 20, [P.softness]: 15, [P.grain]: 15 } },
-  { id: "bleach-skip", name: "Silver Retain", params: {
-      [P.filmStrength]: 90, [P.negative]: 2, [P.print]: 5, [P.filmSaturation]: 55, [P.grain]: 30,
-      [P.vignette]: 20 } },
+      [P.filmStrength]: 75, [P.negative]: 4, [P.print]: 4, [P.printerR]: -1, [P.printerB]: 1,
+      [P.filmSaturation]: 90, [P.fade]: 10, [P.halation]: 25, [P.softness]: 18, [P.grain]: 15 } },
+  { id: "silver-retain", name: "Silver Retain", params: {
+      [P.filmStrength]: 90, [P.negative]: 2, [P.print]: 5, [P.filmSaturation]: 50, [P.grain]: 30,
+      [P.vignette]: 22 } },
   { id: "grainy-16", name: "Grainy 16", params: {
-      [P.filmStrength]: 85, [P.negative]: 1, [P.print]: 2, [P.grain]: 90, [P.grainSize]: 2.2, [P.grainColour]: 45,
-      [P.halation]: 45, [P.softness]: 20, [P.vignette]: 30, [P.gateWeave]: 1.2, [P.flicker]: 15 } },
+      [P.filmStrength]: 85, [P.negative]: 1, [P.print]: 2, [P.printerR]: -2, [P.printerB]: 2, [P.grain]: 90,
+      [P.grainSize]: 2.2, [P.grainColour]: 45, [P.halation]: 45, [P.softness]: 20, [P.vignette]: 30,
+      [P.gateWeave]: 1.2, [P.flicker]: 15 } },
   { id: "faded-memory", name: "Faded Memory", params: {
-      [P.filmStrength]: 75, [P.negative]: 5, [P.print]: 4, [P.fade]: 35, [P.filmSaturation]: 80,
-      [P.grain]: 40, [P.vignette]: 25 } },
+      [P.filmStrength]: 80, [P.negative]: 5, [P.print]: 4, [P.printerR]: -2, [P.printerB]: 3, [P.fade]: 35,
+      [P.filmSaturation]: 70, [P.grain]: 40, [P.vignette]: 25 } },
   { id: "mono-400", name: "Mono 400", params: {
       [P.filmStrength]: 100, [P.negative]: 7, [P.print]: 5, [P.grain]: 55, [P.vignette]: 20 } },
 ];
 
-// Full parameter set for a look: defaults overlaid with the look's values.
-function lookParams(look) {
-  return Object.assign({}, FILM_DEFAULTS, look.params);
+// Full parameter set for a look: defaults overlaid with the look's values. `intensity` (0..1.5)
+// scales how far each continuous control moves from its default; stock choices stay as chosen.
+function lookParams(look, intensity = 1) {
+  const out = Object.assign({}, FILM_DEFAULTS);
+  for (const [k, v] of Object.entries(look.params)) {
+    if (POPUPS.has(k) || intensity === 1) out[k] = v;
+    else out[k] = Math.round((FILM_DEFAULTS[k] + (v - FILM_DEFAULTS[k]) * intensity) * 100) / 100;
+  }
+  return out;
 }
 
 // Every negative x print combination as a look card.

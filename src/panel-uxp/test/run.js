@@ -180,7 +180,7 @@ test("bridge: captureFrame sets the capture slot and returns the PNG the effect 
 
 test("agent: whitelist only, values sanitised", async () => {
   assert.deepStrictEqual(Object.keys(COMMANDS).sort(),
-    ["applyParams", "applyReference", "captureFrame", "clipNames", "exportCube", "inspectParams", "ping", "readSelected", "saveProject", "selectClip", "setPlayhead", "timeline"]);
+    ["applyParams", "applyReference", "captureFrame", "clipNames", "exportCube", "inspectParams", "ping", "previewLooks", "readSelected", "saveProject", "selectClip", "setPlayhead", "timeline"]);
   const v1 = makeItem("V1", true, true);
   const ppro = makePremiere({ selected: [v1] });
   const b = new Bridge(ppro, fsp, os.tmpdir());

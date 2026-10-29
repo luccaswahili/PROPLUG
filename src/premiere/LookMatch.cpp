@@ -42,6 +42,7 @@ namespace {
 // so we keep a few around and hand them out instead of rebuilding a LUT per frame.
 struct PoolEntry {
     lm::Engine engine;
+    std::shared_ptr<const lm::Lut3D> lut;  // the match LUT the engine currently uses (or null)
     uint64_t matchId = ~0ull;
     bool busy = false;
 };
@@ -107,6 +108,44 @@ lm::Params readParams(PF_ParamDef* params[]) {
     p.flicker = F(params, P_FLICKER) / 100.0f;
     p.mix = F(params, P_MIX) / 100.0f;
     return p;
+}
+
+// Applies one control by its Effect Controls name and value (Effect Controls units: percentages,
+// 1-based popups), mirroring readParams. Used for look previews requested by the panel.
+bool applyNamedValue(lm::Params& p, const std::string& name, float v) {
+    static const std::map<std::string, std::function<void(lm::Params&, float)>> setters = {
+        {"Footage Encoding", [](lm::Params& q, float x) { q.input = lm::InputSpace(std::max(0, int(x) - 1)); }},
+        {"Exposure", [](lm::Params& q, float x) { q.exposure = x; }},
+        {"Temperature", [](lm::Params& q, float x) { q.temperature = x / 100.0f; }},
+        {"Tint", [](lm::Params& q, float x) { q.tint = x / 100.0f; }},
+        {"Match Strength", [](lm::Params& q, float x) { q.matchStrength = x / 100.0f; }},
+        {"Film Strength", [](lm::Params& q, float x) { q.filmStrength = x / 100.0f; }},
+        {"Negative Stock", [](lm::Params& q, float x) { q.film.negative = std::max(0, int(x) - 1); }},
+        {"Print Stock", [](lm::Params& q, float x) { q.film.print = std::max(0, int(x) - 1); }},
+        {"Printer Light R", [](lm::Params& q, float x) { q.film.printerPoints[0] = x; }},
+        {"Printer Light G", [](lm::Params& q, float x) { q.film.printerPoints[1] = x; }},
+        {"Printer Light B", [](lm::Params& q, float x) { q.film.printerPoints[2] = x; }},
+        {"Film Saturation", [](lm::Params& q, float x) { q.film.saturation = x / 100.0f; }},
+        {"Fade", [](lm::Params& q, float x) { q.fade = x / 100.0f; }},
+        {"Halation", [](lm::Params& q, float x) { q.halation = x / 100.0f; }},
+        {"Halation Size", [](lm::Params& q, float x) { q.halationRadius = x; }},
+        {"Halation Threshold", [](lm::Params& q, float x) { q.halationThreshold = x; }},
+        {"Bloom", [](lm::Params& q, float x) { q.bloom = x / 100.0f; }},
+        {"Bloom Size", [](lm::Params& q, float x) { q.bloomRadius = x; }},
+        {"Bloom Threshold", [](lm::Params& q, float x) { q.bloomThreshold = x; }},
+        {"Grain", [](lm::Params& q, float x) { q.grain = x / 100.0f; }},
+        {"Grain Size", [](lm::Params& q, float x) { q.grainSize = x; }},
+        {"Grain Colour", [](lm::Params& q, float x) { q.grainColor = x / 100.0f; }},
+        {"Softness", [](lm::Params& q, float x) { q.softness = x / 100.0f; }},
+        {"Vignette", [](lm::Params& q, float x) { q.vignette = x / 100.0f; }},
+        {"Gate Weave", [](lm::Params& q, float x) { q.weave = x; }},
+        {"Flicker", [](lm::Params& q, float x) { q.flicker = x / 100.0f; }},
+        {"Mix", [](lm::Params& q, float x) { q.mix = x / 100.0f; }},
+    };
+    auto it = setters.find(name);
+    if (it == setters.end()) return false;
+    it->second(p, v);
+    return true;
 }
 
 void setError(PF_OutData* out_data, const char* msg) {
@@ -509,6 +548,9 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     PF_ADD_FLOAT_SLIDERX("Capture Slot", 0, 999999, 0, 999999, 0, PF_Precision_INTEGER, 0,
                          PF_ParamFlag_CANNOT_TIME_VARY, D_CAPTURE_SLOT);
     AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Thumbs Slot", 0, 999999, 0, 999999, 0, PF_Precision_INTEGER, 0,
+                         PF_ParamFlag_CANNOT_TIME_VARY, D_THUMBS_SLOT);
+    AEFX_CLR_STRUCT(def);
     PF_END_TOPIC(D_PANEL_TOPIC_END);
 
     out_data->num_params = P_NUM_PARAMS;
@@ -677,6 +719,67 @@ std::vector<unsigned char> to8bitRGB(const std::vector<float>& buf, int width, i
 
 void dumpFrame(const std::string& file, const std::vector<float>& buf, int width, int height) {
     stbi_write_png(file.c_str(), width, height, 3, to8bitRGB(buf, width, height).data(), width * 3);
+}
+
+// Box-filters an RGBA float frame down to at most `tw` pixels wide (tw/th return the size).
+std::vector<float> downscale(const std::vector<float>& src, int w, int h, int& tw, int& th) {
+    tw = std::min(tw, w);
+    th = std::max(1, int(std::lround(double(h) * tw / w)));
+    std::vector<float> out(size_t(tw) * th * 4, 0.0f);
+    for (int y = 0; y < th; ++y) {
+        int y0 = y * h / th, y1 = std::max(y0 + 1, (y + 1) * h / th);
+        for (int x = 0; x < tw; ++x) {
+            int x0 = x * w / tw, x1 = std::max(x0 + 1, (x + 1) * w / tw);
+            float acc[4] = {0, 0, 0, 0};
+            for (int yy = y0; yy < y1; ++yy)
+                for (int xx = x0; xx < x1; ++xx)
+                    for (int c = 0; c < 4; ++c) acc[c] += src[(size_t(yy) * w + xx) * 4 + c];
+            float n = float((y1 - y0) * (x1 - x0));
+            for (int c = 0; c < 4; ++c) out[(size_t(y) * tw + x) * 4 + c] = acc[c] / n;
+        }
+    }
+    return out;
+}
+
+// Renders the look previews the panel asked for (see the Thumbs Slot block in Render).
+void renderThumbnails(const std::string& base, const std::vector<float>& frame, int w, int h, const lm::Params& clip,
+                      std::shared_ptr<const lm::Lut3D> matchLut) {
+    std::string request = base + ".txt", result = "ok";
+    FILE* f = std::fopen(request.c_str(), "rb");
+    if (!f) result = "no request";
+    int tw = 320, th = 0;
+    std::vector<float> small = f ? downscale(frame, w, h, tw, th) : std::vector<float>();
+    int count = 0;
+    char line[4096];
+    while (f && std::fgets(line, sizeof line, f)) {
+        std::string s(line);
+        while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
+        size_t tab = s.find('\t');
+        if (tab == std::string::npos || tab == 0) continue;
+        std::string id = s.substr(0, tab);
+        if (id.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789-_") != std::string::npos) continue;
+        lm::Params p = clip;
+        p.lutSize = 33;  // previews: a smaller colour LUT is plenty and much faster to build
+        size_t pos = tab + 1;
+        while (pos < s.size()) {
+            size_t end = s.find(';', pos);
+            std::string kv = s.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+            size_t eq = kv.find('=');
+            if (eq != std::string::npos) applyNamedValue(p, kv.substr(0, eq), std::strtof(kv.c_str() + eq + 1, nullptr));
+            if (end == std::string::npos) break;
+            pos = end + 1;
+        }
+        lm::Engine e;
+        e.setParams(p);
+        e.setMatchLut(matchLut);
+        std::vector<float> img = small;
+        lm::ImageView v{img.data(), tw, th, tw * 4};
+        e.render(v, v, 0);
+        if (stbi_write_png((base + "-" + id + ".png").c_str(), tw, th, 3, to8bitRGB(img, tw, th).data(), tw * 3)) ++count;
+    }
+    if (f) std::fclose(f);
+    if (FILE* df = std::fopen((base + ".done").c_str(), "wb")) { std::fputs(result.c_str(), df); std::fclose(df); }
+    lmLog("renderThumbnails: %s -> %d previews (%s)", base.c_str(), count, result.c_str());
 }
 
 std::string refsDir() {
@@ -886,7 +989,8 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
         id = lut ? kSlotIdBase | uint64_t(slot) : 0;
     }
     if (id != pe->matchId) {
-        pe->engine.setMatchLut(id ? lut : nullptr);
+        pe->lut = id ? lut : nullptr;
+        pe->engine.setMatchLut(pe->lut);
         pe->matchId = id;
         lmLog("Render: now using match %016llx", (unsigned long long)id);
     }
@@ -906,6 +1010,18 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
             lmLog("Render: export slot %ld -> %s (%s)", exportSlot, target.c_str(), result.c_str());
         }
     }
+    // Panel look previews: a new Thumbs Slot means render this frame (small, with this clip's match)
+    // through each look listed in refs/thumbs-<slot>.txt ("id<TAB>Name=value;Name=value") and write
+    // refs/thumbs-<slot>-<id>.png. Once per slot.
+    const long thumbsSlot = long(F(params, P_THUMBS_SLOT));
+    if (thumbsSlot > 0 && !isMediaPending(buf, w, h)) {
+        static std::mutex tm;
+        static std::set<long> rendered;
+        std::lock_guard<std::mutex> lock(tm);
+        if (rendered.insert(thumbsSlot).second)
+            renderThumbnails(refsDir() + "thumbs-" + std::to_string(thumbsSlot), buf, w, h, readParams(params), pe->lut);
+    }
+
     // Panel "hero clip": a new Capture Slot means save this clip's (ungraded) frame as a PNG the
     // panel then uses as the reference for other clips. Once per slot.
     const long captureSlot = long(F(params, P_CAPTURE_SLOT));

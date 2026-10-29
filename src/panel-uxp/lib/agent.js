@@ -4,6 +4,7 @@
 // from the fixed whitelist below, then writes <data>/agent/result.json. No eval, no scripts.
 
 const { joinPath } = require("./library.js");
+const { FILM_LOOKS, lookParams } = require("./looks.js");
 
 const COMMANDS = {
   ping: async () => "pong",
@@ -23,6 +24,7 @@ const COMMANDS = {
   inspectParams: async (b, a) => b.inspectParams(Number(a.limit) || 8),
   timeline: async (b) => b.timeline(),
   setPlayhead: async (b, a) => b.setPlayhead(Number(a.seconds) || 0),
+  previewLooks: async (b) => b.lookThumbnails(FILM_LOOKS.map((l) => ({ id: l.id, params: lookParams(l) })), { timeoutMs: 30000 }),
 };
 
 function startAgent(fs, dataDir, bridge, log) {
