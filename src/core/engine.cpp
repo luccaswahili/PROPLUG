@@ -299,6 +299,29 @@ void Engine::render(const ImageView& in, const ImageView& out, long frame) {
     });
 }
 
+bool Engine::prepareDirect(int w, int h, long frame, FinishParams& fp) {
+    if (p_.halation > 0 || p_.bloom > 0 || p_.softness > 0 || p_.weave > 0 || p_.flicker > 0 ||
+        p_.input != InputSpace::Rec709)
+        return false;
+    if (directDirty_) {
+        direct_ = bakeExportLut(p_.lutSize);
+        directDirty_ = false;
+    }
+    const float scale = h / 1080.0f;
+    const NegativeStock& stock = negativeStock(p_.film.negative);
+    const float filmMix = p_.filmStrength;
+    fp.grainAmp = p_.grain * (1 + filmMix * (stock.grain / 0.4f - 1)) * 0.09f;
+    fp.cell = std::max(0.5f, p_.grainSize * (1 + filmMix * (stock.grainSize - 1)) * scale);
+    fp.grainColor = p_.grainColor;
+    fp.vignette = p_.vignette;
+    fp.mix = p_.mix;
+    fp.cx = w * 0.5f;
+    fp.cy = h * 0.5f;
+    fp.invDiag = 1.0f / std::sqrt(fp.cx * fp.cx + fp.cy * fp.cy);
+    fp.frame = int(frame);
+    return true;
+}
+
 // Grain, vignette and mix on top of the graded colour `colourAt(x, y)`, written to `out`.
 template <class ColourAt>
 void Engine::finish(const ImageView& in, const ImageView& out, long frame, ColourAt colourAt) {

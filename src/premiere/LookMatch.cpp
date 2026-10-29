@@ -24,6 +24,7 @@
 #include "engine.h"
 #include "matcher.h"
 #include "parallel.h"
+#include "PanelFiles.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_WINDOWS_UTF8
@@ -37,6 +38,12 @@
 #include "stb_image_write.h"
 
 namespace {
+
+using lmpanel::fileLine;
+using lmpanel::lutFromMatch;
+using lmpanel::readSlotLut;
+using lmpanel::refsDir;
+using lmpanel::kSlotLutMagic;
 
 // ---------- engine pool ----------
 // Hosts render frames on several threads at once. Each engine caches its baked colour LUT,
@@ -327,16 +334,6 @@ MatchData* lockMatch(PF_InData* in_data, PF_Handle h) {
         return md;
     PF_UNLOCK_HANDLE(h);
     return nullptr;
-}
-
-std::shared_ptr<lm::Lut3D> lutFromMatch(const MatchData* md) {
-    auto lut = std::make_shared<lm::Lut3D>(kMatchLutSize);
-    const uint16_t* v = md->lut;
-    for (int b = 0; b < kMatchLutSize; ++b)
-        for (int g = 0; g < kMatchLutSize; ++g)
-            for (int r = 0; r < kMatchLutSize; ++r, v += 3)
-                lut->at(r, g, b) = {v[0] / 65535.0f, v[1] / 65535.0f, v[2] / 65535.0f};
-    return lut;
 }
 
 PF_Err ArbitraryCallback(PF_InData* in_data, PF_ArbParamsExtra* extra) {
@@ -815,56 +812,15 @@ void applySplit(std::vector<float>& after, const std::vector<float>& before, int
         }
 }
 
-std::string refsDir() {
-#ifdef AE_OS_WIN
-    const char* base = std::getenv("APPDATA");
-    return base ? std::string(base) + "\\PRO PLUGS\\LookMatch\\refs\\" : "";
-#else
-    const char* base = std::getenv("HOME");
-    return base ? std::string(base) + "/Library/Application Support/PRO PLUGS/LookMatch/refs/" : "";
-#endif
-}
-
-// First line of a small text file the panel wrote (a path), or "" if missing.
-std::string panelFileLine(const std::string& file) {
-    FILE* f = std::fopen(file.c_str(), "rb");
-    if (!f) return "";
-    char buf[1024] = {0};
-    size_t n = std::fread(buf, 1, sizeof buf - 1, f);
-    std::fclose(f);
-    std::string path(buf, n);
-    while (!path.empty() && (path.back() == '\n' || path.back() == '\r')) path.pop_back();
-    return path;
-}
-
 std::string panelReferencePath(long slot) {
     std::string dir = refsDir();
-    return dir.empty() ? "" : panelFileLine(dir + std::to_string(slot) + ".txt");
+    return dir.empty() ? "" : fileLine(dir + std::to_string(slot) + ".txt");
 }
 
 // Premiere does not send PF_Cmd_USER_CHANGED_PARAM when a panel sets a parameter, so a new
 // Reference Slot is noticed in Render: the first render builds the match from its own input
 // frame and every other render (any thread, any instance) reuses it via this cache, which is
 // also written to refs/<slot>.lut so other effect instances and later sessions get the same LUT.
-constexpr uint32_t kSlotLutMagic = 0x4C4D534C;  // 'LMSL'
-
-std::shared_ptr<const lm::Lut3D> readSlotLut(const std::string& file) {
-    FILE* f = std::fopen(file.c_str(), "rb");
-    if (!f) return nullptr;
-    uint32_t hdr[2] = {0, 0};
-    std::vector<float> v(size_t(kMatchLutSize) * kMatchLutSize * kMatchLutSize * 3);
-    bool ok = std::fread(hdr, sizeof hdr, 1, f) == 1 && hdr[0] == kSlotLutMagic && hdr[1] == uint32_t(kMatchLutSize) &&
-              std::fread(v.data(), sizeof(float), v.size(), f) == v.size();
-    std::fclose(f);
-    if (!ok) return nullptr;
-    auto lut = std::make_shared<lm::Lut3D>(kMatchLutSize);
-    const float* q = v.data();
-    for (int b = 0; b < kMatchLutSize; ++b)
-        for (int g = 0; g < kMatchLutSize; ++g)
-            for (int r = 0; r < kMatchLutSize; ++r, q += 3) lut->at(r, g, b) = {q[0], q[1], q[2]};
-    return lut;
-}
-
 void writeSlotLut(const std::string& file, const lm::Lut3D& lut) {
     std::string tmp = file + ".tmp" + std::to_string(std::random_device{}());
     FILE* f = std::fopen(tmp.c_str(), "wb");
@@ -1036,7 +992,7 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
         std::lock_guard<std::mutex> lock(em);
         if (done.insert(exportSlot).second) {
             const std::string base = refsDir() + "export-" + std::to_string(exportSlot);
-            std::string target = panelFileLine(base + ".txt"), result = "ok";
+            std::string target = fileLine(base + ".txt"), result = "ok";
             if (target.empty()) result = "no export path";
             else if (!pe->engine.bakeExportLut(65).writeCube(target, "LookMatch")) result = "could not write " + target;
             if (FILE* f = std::fopen((base + ".done").c_str(), "wb")) { std::fputs(result.c_str(), f); std::fclose(f); }
