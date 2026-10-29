@@ -14,7 +14,8 @@ int main() {
         id<MTLComputePipelineState> pso = [dev newComputePipelineStateWithFunction:[lib newFunctionWithName:@"lookmatch_f32"] error:&err];
         id<MTLCommandQueue> q = [dev newCommandQueue];
         printf("GPU: %s\n", dev.name.UTF8String);
-        for (auto [w, h] : {std::pair{1920, 1080}, std::pair{3840, 2160}}) {
+        for (auto size : {std::pair{1920, 1080}, std::pair{3840, 2160}}) {
+            const int w = size.first, h = size.second;
             Params p; p.filmStrength = 0.9f; p.grain = 0.3f; p.vignette = 0.2f;
             Engine e; e.setParams(p);
             std::vector<float> src(size_t(w) * h * 4, 0.5f), dst(src.size());

@@ -35,5 +35,7 @@ cp "$PANEL" "$APP/Contents/Resources/"
 codesign --force -s "$SIGN" "$APP"
 
 rm -f "$OUT/LookMatch-Installer.dmg"
+# a copy of the panel next to the app: double-clicking it installs through Creative Cloud if the app can't
+cp "$PANEL" "$OUT/app/LookMatchPanel.ccx"
 hdiutil create -quiet -volname "LookMatch" -srcfolder "$OUT/app" -fs HFS+ -format UDZO "$OUT/LookMatch-Installer.dmg"
 echo "Built $OUT/LookMatch-Installer.dmg"
