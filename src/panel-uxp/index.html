@@ -76,6 +76,13 @@
     <sp-body size="XS" class="hint">Saves the Film tab, the match settings and the selected reference.</sp-body>
     <div id="savedList" class="list"></div>
     <sp-divider size="S"></sp-divider>
+    <sp-detail>EXPORT .CUBE (FOR LUMETRI / OTHER APPS)</sp-detail>
+    <div class="row">
+      <sp-textfield id="cubePath" placeholder="/path/to/MyLook.cube" class="grow"></sp-textfield>
+      <sp-action-button id="exportCube">Export LUT</sp-action-button>
+    </div>
+    <sp-body size="XS" class="hint">Exports the selected clip's colour (input, match, film, fade). Grain and other texture can't go in a LUT.</sp-body>
+    <sp-divider size="S"></sp-divider>
     <sp-detail>IMPORT / EXPORT (.lmlook)</sp-detail>
     <div class="row">
       <sp-textfield id="lookFile" placeholder="/path/to/look.lmlook, or a folder to export into" class="grow"></sp-textfield>

@@ -9,7 +9,7 @@ const { P, NEGATIVES, PRINTS, FILM_DEFAULTS, FILM_LOOKS, lookParams, stockCombos
 const { Library, joinPath, baseName } = require("./lib/library.js");
 const { Bridge } = require("./lib/bridge.js");
 
-const VERSION = "0.2.0";  // kept equal to manifest.json by build_panel.sh
+const VERSION = "0.2.1";  // kept equal to manifest.json by build_panel.sh
 const DATA_DIR = os.platform() === "win32"
   ? joinPath(process.env.APPDATA || "", "PRO PLUGS\\LookMatch")
   : joinPath(os.homedir(), "Library/Application Support/PRO PLUGS/LookMatch");
@@ -167,6 +167,7 @@ async function matchClips(scope) {
   }
   const res = await bridge.applyReference(scope, selectedRef.path, params);
   log(`matched ${res.clips} clip(s) to ${selectedRef.name} (slot ${res.slot}${res.added ? `, added LookMatch to ${res.added}` : ""})`);
+  log("tip: to keep this match inside the project (for other Macs), click LookMatch > Panel Link > Save into Project in Effect Controls");
   return `Matched ${res.clips} clip(s) to ${selectedRef.name}`;
 }
 
@@ -369,6 +370,16 @@ $("saveLook").addEventListener("click", () => run("Save look", async () => {
   await library.save();
   renderSaved();
   return `Saved "${look.name}"`;
+}));
+
+$("exportCube").addEventListener("click", () => run("Export LUT", async () => {
+  let target = $("cubePath").value.trim();
+  if (!target) target = joinPath(DATA_DIR, "luts/LookMatch.cube");
+  if (!/\.cube$/i.test(target)) target = joinPath(target, "LookMatch.cube");
+  try { await fs.mkdir(target.replace(/[\\/][^\\/]*$/, ""), { recursive: true }); } catch (e) { /* exists */ }
+  const res = await bridge.exportCube(target);
+  log(`exported LUT to ${res.path}`);
+  return `LUT written to ${res.path}`;
 }));
 
 $("importLook").addEventListener("click", () => run("Import look", async () => {

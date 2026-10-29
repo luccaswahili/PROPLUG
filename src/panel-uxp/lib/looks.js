@@ -33,6 +33,7 @@ const P = {
   flicker: "Flicker",
   mix: "Mix",
   referenceSlot: "Reference Slot",
+  exportSlot: "LUT Export Slot",
 };
 
 // Order matches the effect's popups (src/core/film.cpp); index 0 here is popup value 1.

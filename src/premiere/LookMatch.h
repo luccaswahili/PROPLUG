@@ -70,7 +70,12 @@ enum ParamId {
     P_MIX,
     P_EXPORT_LUT,
     P_MATCH_DATA,  // hidden: the computed match (see MatchData)
-    P_REF_SLOT,    // set by the LookMatch panel: match to the reference it wrote for this slot
+    // panel link (set by the LookMatch panel; see panelReferencePath)
+    P_PANEL_TOPIC,
+    P_REF_SLOT,     // match to the reference the panel wrote for this slot
+    P_BAKE,         // button: store the panel's match in the project
+    P_EXPORT_SLOT,  // write a .cube to the path the panel wrote for this slot
+    P_PANEL_TOPIC_END,
     P_NUM_PARAMS
 };
 
@@ -81,7 +86,7 @@ enum DiskId {
     D_FILM_TOPIC, D_FILM_STRENGTH, D_NEGATIVE, D_PRINT, D_PRINTER_R, D_PRINTER_G, D_PRINTER_B, D_FILM_SAT, D_FADE, D_FILM_TOPIC_END,
     D_TEXTURE_TOPIC, D_HALATION, D_HALATION_RADIUS, D_HALATION_THRESHOLD, D_BLOOM, D_BLOOM_RADIUS, D_BLOOM_THRESHOLD,
     D_GRAIN, D_GRAIN_SIZE, D_GRAIN_COLOR, D_SOFTNESS, D_VIGNETTE, D_WEAVE, D_FLICKER, D_TEXTURE_TOPIC_END,
-    D_MIX, D_EXPORT_LUT, D_MATCH_DATA, D_REF_SLOT
+    D_MIX, D_EXPORT_LUT, D_MATCH_DATA, D_REF_SLOT, D_PANEL_TOPIC, D_BAKE, D_EXPORT_SLOT, D_PANEL_TOPIC_END
 };
 
 // The computed match lives in a hidden arbitrary-data parameter, not in sequence data:

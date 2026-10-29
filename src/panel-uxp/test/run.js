@@ -105,9 +105,30 @@ test("bridge: whole-sequence scope and empty selection", async () => {
   await assert.rejects(b.applyParams("selection", { [P.fade]: 10 }), /Select a video clip/);
 });
 
+test("bridge: exportCube writes the request, sets the slot and waits for the effect", async () => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "lm-"));
+  const v1 = makeItem("V1", true, true);
+  const b = new Bridge(makePremiere({ selected: [v1] }), fsp, dir);
+  let polls = 0;
+  const sleep = async () => {
+    // play the effect: on the 3rd poll, answer like Render does
+    if (++polls === 3) {
+      const { component } = await b.findLookMatch(v1);
+      const slot = (await b.readParams(component))[P.exportSlot];
+      const req = await fsp.readFile(path.join(dir, "refs", `export-${slot}.txt`), "utf-8");
+      assert.strictEqual(req, "/out/My Look.cube");
+      await fsp.writeFile(path.join(dir, "refs", `export-${slot}.done`), "ok");
+    }
+  };
+  const res = await b.exportCube("/out/My Look.cube", { sleep, pollMs: 1, timeoutMs: 100 });
+  assert.strictEqual(res.path, "/out/My Look.cube");
+  await assert.rejects(b.exportCube("/out/x.png", { sleep, pollMs: 1 }), /\.cube/);
+  await assert.rejects(b.exportCube("/out/y.cube", { sleep: async () => {}, pollMs: 1, timeoutMs: 5 }), /playhead/);
+});
+
 test("agent: whitelist only, values sanitised", async () => {
   assert.deepStrictEqual(Object.keys(COMMANDS).sort(),
-    ["applyParams", "applyReference", "clipNames", "ping", "readSelected", "saveProject"]);
+    ["applyParams", "applyReference", "clipNames", "exportCube", "ping", "readSelected", "saveProject"]);
   const v1 = makeItem("V1", true, true);
   const ppro = makePremiere({ selected: [v1] });
   const b = new Bridge(ppro, fsp, os.tmpdir());

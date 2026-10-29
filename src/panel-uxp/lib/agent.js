@@ -17,6 +17,7 @@ const COMMANDS = {
     return b.applyParams(a.scope, params);
   },
   saveProject: async (b) => { await b.saveProject(); return "saved"; },
+  exportCube: async (b, a) => b.exportCube(String(a.path)),
 };
 
 function startAgent(fs, dataDir, bridge, log) {

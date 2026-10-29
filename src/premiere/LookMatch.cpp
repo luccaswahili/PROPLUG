@@ -17,6 +17,7 @@
 #include <memory>
 #include <mutex>
 #include <random>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -494,8 +495,18 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     PF_ADD_ARBITRARY2("Match Data", 1, 1, PF_ParamFlag_CANNOT_TIME_VARY, PF_PUI_NO_ECW_UI, matchDefault, D_MATCH_DATA,
                       nullptr);
     AEFX_CLR_STRUCT(def);
+    def.flags = PF_ParamFlag_START_COLLAPSED;
+    PF_ADD_TOPIC("Panel Link", D_PANEL_TOPIC);
+    AEFX_CLR_STRUCT(def);
     PF_ADD_FLOAT_SLIDERX("Reference Slot", 0, 999999, 0, 999999, 0, PF_Precision_INTEGER, 0,
                          PF_ParamFlag_SUPERVISE | PF_ParamFlag_CANNOT_TIME_VARY, D_REF_SLOT);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_BUTTON("Panel match", "Save into Project", 0, PF_ParamFlag_SUPERVISE, D_BAKE);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("LUT Export Slot", 0, 999999, 0, 999999, 0, PF_Precision_INTEGER, 0,
+                         PF_ParamFlag_CANNOT_TIME_VARY, D_EXPORT_SLOT);
+    AEFX_CLR_STRUCT(def);
+    PF_END_TOPIC(D_PANEL_TOPIC_END);
 
     out_data->num_params = P_NUM_PARAMS;
     return err;
@@ -564,6 +575,9 @@ bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, i
     return true;
 }
 
+PF_Err storeMatch(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], const lm::Lut3D& lut,
+                  const char* refPath);
+
 // Compute a match from the stored reference and the input layer at the current time.
 PF_Err ComputeMatch(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], const char* refPath) {
     PF_ParamDef layer;
@@ -592,8 +606,13 @@ PF_Err ComputeMatch(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* param
         setError(out_data, error.c_str());
         return PF_Err_NONE;
     }
-    // Store the match in the hidden parameter and tell the host its value changed, so it reaches
-    // every render instance and is saved in the project.
+    return storeMatch(in_data, out_data, params, lut, refPath);
+}
+
+// Stores a match in the hidden parameter and tells the host its value changed, so it reaches
+// every render instance and is saved in the project.
+PF_Err storeMatch(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], const lm::Lut3D& lut,
+                  const char* refPath) {
     PF_ParamDef* mp = params[P_MATCH_DATA];
     if (!mp->u.arb_d.value) mp->u.arb_d.value = newMatchHandle(in_data);
     MatchData* md = lockMatch(in_data, mp->u.arb_d.value);
@@ -618,7 +637,7 @@ PF_Err ComputeMatch(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* param
     md->hasMatch = 1;
     md->panelSlot = int32_t(F(params, P_REF_SLOT));  // this match supersedes the panel's current slot
     md->matchId = std::random_device{}() * 0x100000001ull + std::random_device{}();
-    lmLog("ComputeMatch: stored match %016llx in the Match Data parameter", (unsigned long long)md->matchId);
+    lmLog("storeMatch: stored match %016llx in the Match Data parameter", (unsigned long long)md->matchId);
     PF_UNLOCK_HANDLE(mp->u.arb_d.value);
     mp->uu.change_flags |= PF_ChangeFlag_CHANGED_VALUE;
     out_data->out_flags |= PF_OutFlag_FORCE_RERENDER;
@@ -665,10 +684,9 @@ std::string refsDir() {
 #endif
 }
 
-std::string panelReferencePath(long slot) {
-    std::string dir = refsDir();
-    if (dir.empty()) return "";
-    FILE* f = std::fopen((dir + std::to_string(slot) + ".txt").c_str(), "rb");
+// First line of a small text file the panel wrote (a path), or "" if missing.
+std::string panelFileLine(const std::string& file) {
+    FILE* f = std::fopen(file.c_str(), "rb");
     if (!f) return "";
     char buf[1024] = {0};
     size_t n = std::fread(buf, 1, sizeof buf - 1, f);
@@ -676,6 +694,11 @@ std::string panelReferencePath(long slot) {
     std::string path(buf, n);
     while (!path.empty() && (path.back() == '\n' || path.back() == '\r')) path.pop_back();
     return path;
+}
+
+std::string panelReferencePath(long slot) {
+    std::string dir = refsDir();
+    return dir.empty() ? "" : panelFileLine(dir + std::to_string(slot) + ".txt");
 }
 
 // Premiere does not send PF_Cmd_USER_CHANGED_PARAM when a panel sets a parameter, so a new
@@ -775,6 +798,19 @@ PF_Err UserChangedParam(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* p
             if (path.empty()) { setError(out_data, "LookMatch: the panel's reference for this clip is missing."); return PF_Err_NONE; }
             return ComputeMatch(in_data, out_data, params, path.c_str());
         }
+        case P_BAKE: {
+            long slot = long(F(params, P_REF_SLOT));
+            if (slot <= 0) { setError(out_data, "LookMatch: this clip has no match from the panel to save."); return PF_Err_NONE; }
+            std::shared_ptr<const lm::Lut3D> lut = readSlotLut(refsDir() + std::to_string(slot) + ".lut");
+            if (!lut) {
+                setError(out_data, "LookMatch: the panel's match isn't built yet. Play over the clip once, then click "
+                                   "Save into Project again.");
+                return PF_Err_NONE;
+            }
+            std::string ref = panelReferencePath(slot);
+            lmLog("Bake: slot %ld -> Match Data", slot);
+            return storeMatch(in_data, out_data, params, *lut, ref.c_str());
+        }
         case P_EXPORT_LUT: {
             char path[1024] = {0};
             if (!LM_SaveCubeDialog(path, sizeof path)) return PF_Err_NONE;
@@ -835,6 +871,22 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
         pe->engine.setMatchLut(id ? lut : nullptr);
         pe->matchId = id;
         lmLog("Render: now using match %016llx", (unsigned long long)id);
+    }
+    // Panel "Export .cube": a new LUT Export Slot means write the current look to the path the panel
+    // left in refs/export-<slot>.txt, once per slot, and report in refs/export-<slot>.done.
+    const long exportSlot = long(F(params, P_EXPORT_SLOT));
+    if (exportSlot > 0) {
+        static std::mutex em;
+        static std::set<long> done;
+        std::lock_guard<std::mutex> lock(em);
+        if (done.insert(exportSlot).second) {
+            const std::string base = refsDir() + "export-" + std::to_string(exportSlot);
+            std::string target = panelFileLine(base + ".txt"), result = "ok";
+            if (target.empty()) result = "no export path";
+            else if (!pe->engine.bakeExportLut(65).writeCube(target, "LookMatch")) result = "could not write " + target;
+            if (FILE* f = std::fopen((base + ".done").c_str(), "wb")) { std::fputs(result.c_str(), f); std::fclose(f); }
+            lmLog("Render: export slot %ld -> %s (%s)", exportSlot, target.c_str(), result.c_str());
+        }
     }
     long frame = in_data->time_step ? long(in_data->current_time / in_data->time_step) : 0;
     lm::ImageView view{buf.data(), w, h, w * 4};
