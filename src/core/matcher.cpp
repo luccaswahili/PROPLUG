@@ -480,8 +480,12 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
     for (int i = 0; i < kTone; ++i) canon[i] = kCanonSigma * invNormal((i + 0.5) / kTone);
 
     // ---- 1. decode, and white balance in scene linear, where a camera's cast is a plain gain
-    // (Bradford, from the analysis' near-neutral estimate) ----
-    const Mat3 wb = adaptation(kD65x + (res.source.whiteX - kD65x) * cw, kD65y + (res.source.whiteY - kD65y) * cw, kD65x, kD65y);
+    // (Bradford, from the analysis' near-neutral estimate). How far depends on how neutral those
+    // pixels really are: a scene with nothing grey in it (a blue-hour sky, a red-lit stage) keeps its
+    // colour instead of having it taken for a cast. The measure doesn't change with a cast. ----
+    const float wbConfidence = clamp01(res.source.neutralShare / 0.2f);
+    const float cwe = cw * wbConfidence;
+    const Mat3 wb = adaptation(kD65x + (res.source.whiteX - kD65x) * cwe, kD65y + (res.source.whiteY - kD65y) * cwe, kD65x, kD65y);
     auto linear = [tf, wb](Vec3 code) {
         Vec3 l = wb * decodeToRec709(tf, code);
         return Vec3(std::max(l.r, 0.0f), std::max(l.g, 0.0f), std::max(l.b, 0.0f));
@@ -497,6 +501,9 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
     const std::vector<float> s0 = evenQuantiles(std::move(st0), kTone);
     const Curve g1 = quantileMap(s0, canon, 0.33f, 3.0f, 3);
     auto byLuminance = [](const Curve& g, Vec3 l) {
+        // below the floor, fill up to it with grey, so black meets the curve's floor continuously
+        const float y0 = luma709(l);
+        if (y0 < kStopFloor) l = l + Vec3(1, 1, 1) * (kStopFloor - std::max(y0, 0.0f));
         const float y = std::max(luma709(l), kStopFloor);
         return l * (0.18f * std::exp2(g(std::log2(y / 0.18f))) / y);
     };
@@ -570,6 +577,11 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
         offA[0] = float((ridge * sa - w1 * sau) / det); offA[1] = float((w0 * sau - w1 * sa) / det);
         offB[0] = float((ridge * sb - w1 * sbu) / det); offB[1] = float((w0 * sbu - w1 * sb) / det);
     }
+    // only a residual cast, and only as far as the frame has neutrals to judge it by
+    for (float* off : {offA, offB}) {
+        off[0] = std::clamp(off[0], -0.03f, 0.03f) * cw * wbConfidence;
+        off[1] = std::clamp(off[1], -0.06f, 0.06f) * cw * wbConfidence;
+    }
     std::vector<float> chromas;
     for (Vec3& c : canonLab) {
         const float u = c.r - 0.5f;
@@ -579,7 +591,7 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
     }
     // 75th percentile of chroma; for the canonical distribution (Rayleigh, RMS kCanonChroma) it is 1.2x the RMS
     const float srcChroma = chromas.size() > 20 ? evenQuantiles(chromas, 5)[3] / 1.2f : kCanonChroma;
-    const float satScale = 1 + (std::clamp(kCanonChroma / std::max(srcChroma, 1e-4f), 0.25f, 4.0f) - 1) * cc;
+    const float satScale = 1 + (std::clamp(kCanonChroma / std::max(srcChroma, 1e-4f), 0.5f, 2.0f) - 1) * cc;
     auto canonical = [canonicalDisplay, offA, offB, satScale](Vec3 code) {
         Vec3 lab = rgbToOklab(canonicalDisplay(code));
         const float u = lab.r - 0.5f;

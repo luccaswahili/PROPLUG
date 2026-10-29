@@ -272,7 +272,8 @@ static Content checkContent(const Image& in, const Image& out) {
             float din = std::remainder(hues[j].first - hues[i].first, 6.2831853f);
             float dout = std::remainder(hues[j].second - hues[i].second, 6.2831853f);
             if (std::abs(din) < 0.35f) continue;  // neighbouring sectors may merge
-            if (din * dout <= 0 || std::abs(dout) < std::abs(din) / 3) {
+            const bool opposite = std::abs(din) > 2.6f;  // ~opposite hues: the sign of the difference is arbitrary
+            if ((!opposite && din * dout <= 0) || std::abs(dout) < std::abs(din) / 3) {
                 r.ok = false;
                 char b[96];
                 std::snprintf(b, sizeof b, "hues %.0f/%.0f deg apart became %.0f; ", din * 57.3f, din * 57.3f, dout * 57.3f);
