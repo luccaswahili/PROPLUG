@@ -1,0 +1,25 @@
+#!/bin/sh
+# Runs as root after the plug-in is copied into the shared MediaCore folder.
+# LookMatch is one universal binary for every host version (Premiere Pro /
+# After Effects CC 2015 and newer), so nothing is chosen here: we only report
+# which hosts were found and clear quarantine so the hosts can load it.
+DEST="/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/LookMatch.plugin"
+LOG="/Library/Logs/LookMatch-install.log"
+
+xattr -dr com.apple.quarantine "$DEST" 2>/dev/null
+
+{
+  echo "LookMatch installed $(date)"
+  echo "Location: $DEST"
+  echo "Hosts found:"
+  found=0
+  for app in /Applications/Adobe\ Premiere\ Pro*/*.app /Applications/Adobe\ After\ Effects*/*.app; do
+    [ -d "$app" ] || continue
+    case "$app" in *Premiere*|*After\ Effects*) ;; *) continue ;; esac
+    ver=$(defaults read "$app/Contents/Info" CFBundleShortVersionString 2>/dev/null)
+    echo "  $(basename "$app" .app) ${ver:-unknown}"
+    found=1
+  done
+  [ "$found" = 1 ] || echo "  none in /Applications (the plug-in is still installed and loads once a host is installed)"
+} >> "$LOG"
+exit 0

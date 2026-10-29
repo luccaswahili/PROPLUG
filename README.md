@@ -59,6 +59,21 @@ Install the result into the shared Adobe plug-in folder, then restart Premiere:
 
 The effect shows up under **Effects > Video Effects > PRO PLUGS > LookMatch**.
 
+### Version compatibility and the macOS installer
+
+One build works with **Premiere Pro and After Effects CC 2015 through 2026**, so there is no per-version build.
+- The effect uses only API that already existed in CC 2015: basic params, render, and `PF_PixelFormatSuite1`.
+  It compiles against the CC 2015 SDK headers, apart from `PluginDataEntryFunction2`, which only newer hosts call.
+  Older hosts read the PiPL instead.
+- It is built against the newest SDK. The PiPL spec version stays at 13.x, which every host since CS6 accepts.
+- The bundle is universal: x86_64 targets macOS 10.9+ (CC 2015, Intel, Rosetta) and arm64 targets macOS 11+.
+- Every host version reads the shared `Common/Plug-ins/7.0/MediaCore` folder, so one install location covers all of them.
+
+`installer/mac/build_pkg.sh /path/to/AfterEffectsSDK/Examples` builds `build-installer/LookMatch-Installer.pkg`.
+The installer lists the Premiere Pro / After Effects versions it finds and installs into the shared folder.
+It also writes the hosts it found to `/Library/Logs/LookMatch-install.log`.
+Set `CODESIGN_ID` and `SIGN_ID` to your Developer ID identities for a signed release; otherwise the build is ad-hoc signed and the pkg is unsigned.
+
 ## Try the engine without Premiere
 
 ```bash

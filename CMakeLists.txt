@@ -1,4 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
+# Premiere Pro CC 2015 (9.0) runs on OS X 10.9+, so the plug-in must load there too.
+# Without this the binary is stamped with the build machine's macOS version.
+set(CMAKE_OSX_DEPLOYMENT_TARGET "10.9" CACHE STRING "Minimum macOS version")
 project(LookMatch CXX)
 
 set(CMAKE_CXX_STANDARD 17)
