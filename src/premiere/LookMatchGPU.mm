@@ -144,17 +144,18 @@ public:
         }
     }
 
-    // Same mapping as readParams() in LookMatch.cpp (popups are 1-based like Effect Controls).
+    // Same mapping as readParams() in LookMatch.cpp, except popups: the GPU filter API returns them
+    // 0-based (Effect Controls and the AE API are 1-based).
     lm::Params params(PrTime t) const {
         lm::Params p;
-        p.input = lm::InputSpace(std::max(0, int(param(P_INPUT_SPACE, t)) - 1));
+        p.input = lm::InputSpace(std::max(0, int(param(P_INPUT_SPACE, t))));
         p.exposure = float(param(P_EXPOSURE, t));
         p.temperature = float(param(P_TEMPERATURE, t)) / 100.0f;
         p.tint = float(param(P_TINT, t)) / 100.0f;
         p.matchStrength = float(param(P_MATCH_STRENGTH, t)) / 100.0f;
         p.filmStrength = float(param(P_FILM_STRENGTH, t)) / 100.0f;
-        p.film.negative = std::max(0, int(param(P_NEGATIVE, t)) - 1);
-        p.film.print = std::max(0, int(param(P_PRINT, t)) - 1);
+        p.film.negative = std::max(0, int(param(P_NEGATIVE, t)));
+        p.film.print = std::max(0, int(param(P_PRINT, t)));
         p.film.printerPoints[0] = float(param(P_PRINTER_R, t));
         p.film.printerPoints[1] = float(param(P_PRINTER_G, t));
         p.film.printerPoints[2] = float(param(P_PRINTER_B, t));
@@ -192,6 +193,8 @@ public:
                 md = nullptr;
         }
         const bool slotWins = slot > 0 && !(md && md->hasMatch && md->panelSlot == slot);
+        gpuLog("node %d match: Match Data %s (type %d, %s), slot %ld, %s", int(nodeID), haveData ? "read" : "unreadable",
+               int(mp.mType), md ? (md->hasMatch ? "has match" : "empty") : "invalid", slot, slotWins ? "slot wins" : "Match Data wins");
         if (slotWins) {
             match = lmpanel::readSlotLut(lmpanel::refsDir() + std::to_string(slot) + ".lut");
             if (!match) why = "panel match not built yet";
@@ -250,6 +253,15 @@ prSuiteError CreateInstance(PrGPUFilterInstance* io) {
         return suiteError_Fail;
     }
     inst->engine.setMatchLut(inst->match);
+    {
+        PrParam raw = {};
+        inst->s.segment->GetParam(inst->nodeID, P_NEGATIVE - 1, t0, &raw);
+        gpuLog("node %d params: encoding %.0f negative %.0f (type %d) print %.0f film %.1f sat %.1f grain %.1f "
+               "vignette %.1f mix %.1f slot %.0f match %s", int(inst->nodeID), inst->param(P_INPUT_SPACE, t0),
+               inst->param(P_NEGATIVE, t0), int(raw.mType), inst->param(P_PRINT, t0), inst->param(P_FILM_STRENGTH, t0),
+               inst->param(P_FILM_SAT, t0), inst->param(P_GRAIN, t0), inst->param(P_VIGNETTE, t0), inst->param(P_MIX, t0),
+               inst->param(P_REF_SLOT, t0), inst->match ? "yes" : "none");
+    }
     io->ioPrivatePluginData = inst.release();
     io->outIsRealtime = 1;
     gpuLog("node %d renders on the GPU (device %u)", int(io->inNodeID), unsigned(io->inDeviceIndex));
