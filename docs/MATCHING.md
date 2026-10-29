@@ -197,7 +197,7 @@ Other checks on the same run:
 - **Content preservation:** 26 of 29 frames.
 - **Log detection:** all 286 log-encoded frames were detected as log. 12 display-referred perturbed frames were
   taken for log.
-- **GPU vs CPU:** 0.000/255 ().
+- **GPU vs CPU:** 0.000/255 (`gpu_tests`).
 
 ### Open cases
 
