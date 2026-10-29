@@ -1,6 +1,7 @@
 // Install LookMatch: a small native installer that shows which Premiere Pro / After Effects
 // versions are on this Mac inline (no alerts), lets the user locate one manually or continue
-// without, and copies LookMatch.plugin into Adobe's shared MediaCore folder.
+// without, copies LookMatch.plugin into Adobe's shared MediaCore folder and, for Premiere Pro
+// 2025 or later, installs the LookMatch panel (.ccx) with Adobe's UnifiedPluginInstallerAgent.
 //
 // Built by installer/mac/build_app.sh with swiftc (no Xcode project).
 // Environment, for testing only:
@@ -14,6 +15,7 @@ import UniformTypeIdentifiers
 
 let mediaCoreDir = "/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore"
 let installLog = "/Library/Logs/LookMatch-install.log"
+let upiaPath = "/Library/Application Support/Adobe/Adobe Desktop Common/RemoteComponents/UPI/UnifiedPluginInstallerAgent/UnifiedPluginInstallerAgent.app/Contents/MacOS/UnifiedPluginInstallerAgent"
 
 // MARK: - Host detection
 
@@ -35,6 +37,11 @@ struct HostApp: Identifiable, Equatable {
         case .afterEffects: return parts[0] > 13 || (parts[0] == 13 && parts[1] >= 5)
         case .other: return false
         }
+    }
+
+    // The panel is UXP, which Premiere Pro supports from 2025 (25.0).
+    var supportsPanel: Bool {
+        kind == .premiere && (Int(version.split(separator: ".").first ?? "") ?? 0) >= 25
     }
 
     static func == (a: HostApp, b: HostApp) -> Bool { a.path == b.path }
@@ -146,6 +153,39 @@ func installPlugin(hosts: [HostApp]) throws {
     try? FileManager.default.removeItem(atPath: userCopy)
 }
 
+enum PanelResult: Equatable {
+    case installed, noPremiere, noInstaller, missingPayload, failed(String)
+}
+
+/// Installs the bundled panel as the current user (no admin needed); the effect works without it.
+func installPanel(hosts: [HostApp]) -> PanelResult {
+    guard hosts.contains(where: { $0.supportsPanel }) else { return .noPremiere }
+    guard let ccx = Bundle.main.urls(forResourcesWithExtension: "ccx", subdirectory: nil)?.first else {
+        return .missingPayload
+    }
+    if ProcessInfo.processInfo.environment["LOOKMATCH_INSTALLER_DRY_RUN"] == "1" { return .installed }
+    guard FileManager.default.isExecutableFile(atPath: upiaPath) else { return .noInstaller }
+
+    func run(_ args: [String]) -> (Int32, String) {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: upiaPath)
+        p.arguments = args
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = pipe
+        do { try p.run() } catch { return (-1, error.localizedDescription) }
+        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        p.waitUntilExit()
+        return (p.terminationStatus, out)
+    }
+    // Remove an older copy first: the agent won't replace a panel of the same version.
+    _ = run(["--remove", "LookMatch"])
+    let (status, out) = run(["--install", ccx.path])
+    if status == 0 { return .installed }
+    let detail = out.split(separator: "\n").last(where: { !$0.hasPrefix("Creative Cloud") && !$0.isEmpty })
+    return .failed(detail.map(String.init) ?? "Adobe's plug-in installer stopped with code \(status).")
+}
+
 // MARK: - Model
 
 final class InstallerModel: ObservableObject {
@@ -159,6 +199,7 @@ final class InstallerModel: ObservableObject {
     @Published var installing = false
     @Published var installError: String?
     @Published var installCancelled = false
+    @Published var panelResult: PanelResult?
 
     init() { hosts = scanForHosts() }
 
@@ -191,11 +232,16 @@ final class InstallerModel: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async {
             var failure: String?
             var cancelled = false
-            do { try installPlugin(hosts: hosts) } catch InstallError.cancelled { cancelled = true } catch {
+            var panel: PanelResult?
+            do {
+                try installPlugin(hosts: hosts)
+                panel = installPanel(hosts: hosts)
+            } catch InstallError.cancelled { cancelled = true } catch {
                 failure = error.localizedDescription
             }
             DispatchQueue.main.async {
                 self.installing = false
+                self.panelResult = panel
                 if cancelled {
                     self.installCancelled = true
                 } else if let failure = failure {
@@ -265,7 +311,8 @@ struct HostRow: View {
     var note: String {
         if host.kind == .other { return "This isn't Premiere Pro or After Effects, so LookMatch won't appear in it." }
         if !host.supported { return "Older than CC 2015. LookMatch won't load here." }
-        return host.located ? "Located manually. LookMatch will appear in it." : "LookMatch will appear in it."
+        let what = host.supportsPanel ? "The LookMatch effect and panel" : "LookMatch"
+        return host.located ? "Located manually. \(what) will appear in it." : "\(what) will appear in it."
     }
 }
 
@@ -276,7 +323,7 @@ struct WelcomeView: View {
                 .font(.system(size: 22, weight: .semibold))
             Text("Match the look of any reference still, then finish the shot with film print emulation, halation, bloom and grain.")
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Works with Premiere Pro and After Effects CC 2015 to 2026. One plug-in covers every version, so there's nothing to choose.")
+            Text("Works with Premiere Pro and After Effects CC 2015 to 2026. One plug-in covers every version, so there's nothing to choose. Premiere Pro 2025 and later also get the LookMatch panel.")
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Text("Quit Premiere Pro and After Effects before installing.")
@@ -366,6 +413,8 @@ struct InstallView: View {
 }
 
 struct DoneView: View {
+    @ObservedObject var model: InstallerModel
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
@@ -379,7 +428,24 @@ struct DoneView: View {
                 .fixedSize(horizontal: false, vertical: true)
             Text("In After Effects: Effect > PRO PLUGS > LookMatch.")
                 .foregroundColor(.secondary)
+            if let panel = model.panelResult, panel != .noPremiere {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: panel == .installed ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .foregroundColor(panel == .installed ? .green : .orange)
+                    Text(panelNote(panel)).fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
+    }
+}
+
+func panelNote(_ result: PanelResult) -> String {
+    switch result {
+    case .installed: return "The LookMatch panel is installed too: Window > UXP Plugins > LookMatch."
+    case .noPremiere: return ""
+    case .noInstaller: return "The panel wasn't installed because Adobe's plug-in installer is missing. Open Creative Cloud once, then run this installer again. The effect works without it."
+    case .missingPayload: return "This installer doesn't include the panel. The effect works without it."
+    case .failed(let msg): return "The panel couldn't be installed (\(msg)). The effect works without it; run this installer again to retry."
     }
 }
 
@@ -396,7 +462,7 @@ struct InstallerView: View {
                     case .welcome: WelcomeView()
                     case .apps: AppsView(model: model)
                     case .install: InstallView(model: model)
-                    case .done: DoneView()
+                    case .done: DoneView(model: model)
                     }
                 }
                 .padding(28)
@@ -470,7 +536,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ("4-install", { model.step = .install }),
             ("5-installing", { model.installing = true }),
             ("6-install-cancelled", { model.installing = false; model.installCancelled = true }),
-            ("7-done", { model.installCancelled = false; model.step = .done }),
+            ("7-done", { model.installCancelled = false; model.panelResult = .installed; model.step = .done }),
         ]
         for (name, apply) in shots {
             apply()

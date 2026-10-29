@@ -69,12 +69,14 @@ One build works with **Premiere Pro and After Effects CC 2015 through 2026**, so
 - The bundle is universal: x86_64 targets macOS 10.9+ (CC 2015, Intel, Rosetta) and arm64 targets macOS 11+.
 - Every host version reads the shared `Common/Plug-ins/7.0/MediaCore` folder, so one install location covers all of them.
 
-**Installer app (for users):** `installer/mac/build_app.sh /path/to/AfterEffectsSDK/Examples` builds
+**Installer app (for users):** `installer/mac/build_app.sh /path/to/AfterEffectsSDK/Examples [/path/to/PremiereSDK/Examples]` builds
 `build-installer/LookMatch-Installer.dmg`, which contains `Install LookMatch.app` (SwiftUI, macOS 11+).
 The app lists the Premiere Pro / After Effects versions it finds, with their version numbers, right in the window.
 It marks versions older than CC 2015, and has **Locate…** for an app installed somewhere else.
 If it finds nothing, it says so on the page (no alert) and offers **Continue Without**.
 It then copies the plug-in into the shared folder with the standard macOS password prompt, and writes `/Library/Logs/LookMatch-install.log`.
+Pass the Premiere Pro SDK to build in GPU rendering. The dmg also carries the release panel (`.ccx`): when Premiere Pro 2025 or later is found,
+the app installs the panel with Adobe's UnifiedPluginInstallerAgent and reports the result on the last page (the effect works without it).
 Screenshots of each step are in `docs/installer/`.
 
 **Pkg (scripted / MDM installs, and Macs older than macOS 11):** `installer/mac/build_pkg.sh /path/to/AfterEffectsSDK/Examples`
