@@ -1,7 +1,7 @@
 {
   "id": "com.proplugs.lookmatch.panel",
   "name": "LookMatch",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "manifestVersion": 5,
   "main": "index.html",
   "host": { "app": "premierepro", "minVersion": "25.0" },

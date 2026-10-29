@@ -10,7 +10,7 @@ const { Library, joinPath, baseName } = require("./lib/library.js");
 const { Bridge } = require("./lib/bridge.js");
 const { runSelfTest } = require("./lib/selftest.js");
 
-const VERSION = "0.5.0";  // kept equal to manifest.json by build_panel.sh
+const VERSION = "0.5.1";  // kept equal to manifest.json by build_panel.sh
 const DATA_DIR = os.platform() === "win32"
   ? joinPath(process.env.APPDATA || "", "PRO PLUGS\\LookMatch")
   : joinPath(os.homedir(), "Library/Application Support/PRO PLUGS/LookMatch");
@@ -487,7 +487,7 @@ $("selfTest").addEventListener("click", () => run("Self-test", async () => {
     // dev builds only: lib/agent.js is left out of release packages
     require("./lib/agent.js").startAgent(fs, DATA_DIR, bridge, log, {
       // UI driving for tests: only these elements, only set value / click
-      fields: ["refPath", "lookName", "lookFile", "cubePath"],
+      fields: ["refPath", "lookName", "lookFile", "cubePath"],  // plus tab switching (uiTab)
       buttons: ["addRef", "matchSel", "matchSeq", "applyStrength", "beforeAfter", "heroRef", "readFilm", "resetFilm",
                 "applyFilm", "saveLook", "importLook", "exportCube", "selfTest", "previewLooks", "probe", "showLog"],
       status: () => ({ text: $("status").textContent, kind: $("status").className }),
