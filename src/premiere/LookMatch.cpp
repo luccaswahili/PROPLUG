@@ -5,7 +5,12 @@
 // host parameters and pixel buffers onto it.
 #include "LookMatch.h"
 
+#include <atomic>
+#include <cmath>
+#include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
+#include <ctime>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -108,18 +113,77 @@ bool isPremiere(PF_InData* in_data) { return in_data->appl_id == 'PrMr'; }
 
 // ---------- pixel conversion ----------
 
-enum class Fmt { AE8, AE16, PrBGRA8, PrBGRA32f, Unsupported };
+// ---------- diagnostics ----------
+// Logging is off unless ~/Library/Logs/LookMatch.log exists (touch it to turn logging on).
 
-Fmt worldFormat(PF_InData* in_data, PF_EffectWorld* world) {
+void lmLog(const char* fmt, ...) {
+    static std::mutex m;
+    const char* home = std::getenv("HOME");
+    if (!home) return;
+    std::string path = std::string(home) + "/Library/Logs/LookMatch.log";
+    std::lock_guard<std::mutex> lock(m);
+    FILE* f = std::fopen(path.c_str(), "r+");
+    if (!f) return;
+    std::fseek(f, 0, SEEK_END);
+    std::time_t t = std::time(nullptr);
+    char ts[32];
+    std::strftime(ts, sizeof ts, "%H:%M:%S", std::localtime(&t));
+    std::fprintf(f, "%s ", ts);
+    va_list ap;
+    va_start(ap, fmt);
+    std::vfprintf(f, fmt, ap);
+    va_end(ap);
+    std::fputc('\n', f);
+    std::fclose(f);
+}
+
+std::string fourcc(uint32_t v) {
+    char c[5] = {char(v & 0xff), char((v >> 8) & 0xff), char((v >> 16) & 0xff), char(v >> 24), 0};
+    for (char& ch : c) if (ch && (ch < 32 || ch > 126)) ch = '?';
+    return c;
+}
+
+// ---------- pixel formats ----------
+
+enum class Fmt { AE8, AE16, PrBGRA8, PrBGRA16, PrBGRA32f, PrARGB8, PrARGB16, PrARGB32f, PrVUYA8, PrVUYA8_709, PrVUYA32f,
+                 PrVUYA32f_709, Unsupported };
+
+// Premiere reports its own pixel format for every world; After Effects only has ARGB 8/16 bit.
+Fmt worldFormat(PF_InData* in_data, PF_EffectWorld* world, uint32_t* rawOut = nullptr) {
+    if (rawOut) *rawOut = 0;
     if (isPremiere(in_data)) {
         AEFX_SuiteScoper<PF_PixelFormatSuite1> pfs(in_data, kPFPixelFormatSuite, kPFPixelFormatSuiteVersion1);
         PrPixelFormat f = PrPixelFormat_Invalid;
         pfs->GetPixelFormat(world, &f);
-        if (f == PrPixelFormat_BGRA_4444_8u) return Fmt::PrBGRA8;
-        if (f == PrPixelFormat_BGRA_4444_32f) return Fmt::PrBGRA32f;
-        return Fmt::Unsupported;
+        if (rawOut) *rawOut = uint32_t(f);
+        switch (f) {
+            case PrPixelFormat_BGRA_4444_8u: return Fmt::PrBGRA8;
+            case PrPixelFormat_BGRA_4444_16u: return Fmt::PrBGRA16;
+            case PrPixelFormat_BGRA_4444_32f: return Fmt::PrBGRA32f;
+            case PrPixelFormat_ARGB_4444_8u: return Fmt::PrARGB8;
+            case PrPixelFormat_ARGB_4444_16u: return Fmt::PrARGB16;
+            case PrPixelFormat_ARGB_4444_32f: return Fmt::PrARGB32f;
+            case PrPixelFormat_VUYA_4444_8u: return Fmt::PrVUYA8;
+            case PrPixelFormat_VUYA_4444_8u_709: return Fmt::PrVUYA8_709;
+            case PrPixelFormat_VUYA_4444_32f: return Fmt::PrVUYA32f;
+            case PrPixelFormat_VUYA_4444_32f_709: return Fmt::PrVUYA32f_709;
+            default: return Fmt::Unsupported;
+        }
     }
     return PF_WORLD_IS_DEEP(world) ? Fmt::AE16 : Fmt::AE8;
+}
+
+// Formats Render can also write back (VUYA is only read, to sample a frame for matching).
+bool canWrite(Fmt f) {
+    return f == Fmt::AE8 || f == Fmt::AE16 || f == Fmt::PrBGRA8 || f == Fmt::PrBGRA32f;
+}
+
+// Y'CbCr (video range for 8 bit, Cb/Cr centred on 0.5 / 0) to R'G'B'
+inline void yuvToRgb(float y, float cb, float cr, bool rec709, float* o) {
+    const float kr = rec709 ? 0.2126f : 0.299f, kb = rec709 ? 0.0722f : 0.114f, kg = 1.0f - kr - kb;
+    o[0] = y + 2.0f * (1.0f - kr) * cr;
+    o[2] = y + 2.0f * (1.0f - kb) * cb;
+    o[1] = (y - kr * o[0] - kb * o[2]) / kg;
 }
 
 inline char* rowPtr(PF_EffectWorld* w, int y) { return reinterpret_cast<char*>(w->data) + std::ptrdiff_t(y) * w->rowbytes; }
@@ -139,7 +203,22 @@ void worldToFloat(PF_EffectWorld* w, Fmt fmt, int width, int height, std::vector
                     o[0] = p[2] / 255.0f; o[1] = p[1] / 255.0f; o[2] = p[0] / 255.0f; o[3] = p[3] / 255.0f; break; }
                 case Fmt::PrBGRA32f: { const float* p = reinterpret_cast<float*>(row) + x * 4;
                     o[0] = p[2]; o[1] = p[1]; o[2] = p[0]; o[3] = p[3]; break; }
-                default: break;
+                case Fmt::PrBGRA16: { const uint16_t* p = reinterpret_cast<uint16_t*>(row) + x * 4;
+                    o[0] = p[2] / 32768.0f; o[1] = p[1] / 32768.0f; o[2] = p[0] / 32768.0f; o[3] = p[3] / 32768.0f; break; }
+                case Fmt::PrARGB8: { const uint8_t* p = reinterpret_cast<uint8_t*>(row) + x * 4;
+                    o[0] = p[1] / 255.0f; o[1] = p[2] / 255.0f; o[2] = p[3] / 255.0f; o[3] = p[0] / 255.0f; break; }
+                case Fmt::PrARGB16: { const uint16_t* p = reinterpret_cast<uint16_t*>(row) + x * 4;
+                    o[0] = p[1] / 32768.0f; o[1] = p[2] / 32768.0f; o[2] = p[3] / 32768.0f; o[3] = p[0] / 32768.0f; break; }
+                case Fmt::PrARGB32f: { const float* p = reinterpret_cast<float*>(row) + x * 4;
+                    o[0] = p[1]; o[1] = p[2]; o[2] = p[3]; o[3] = p[0]; break; }
+                case Fmt::PrVUYA8: case Fmt::PrVUYA8_709: { const uint8_t* p = reinterpret_cast<uint8_t*>(row) + x * 4;
+                    // byte order V, U, Y, A; video range 16-235 luma, 16-240 chroma
+                    yuvToRgb((p[2] - 16) / 219.0f, (p[1] - 128) / 224.0f, (p[0] - 128) / 224.0f, fmt == Fmt::PrVUYA8_709, o);
+                    o[3] = p[3] / 255.0f; break; }
+                case Fmt::PrVUYA32f: case Fmt::PrVUYA32f_709: { const float* p = reinterpret_cast<float*>(row) + x * 4;
+                    yuvToRgb(p[2], p[1], p[0], fmt == Fmt::PrVUYA32f_709, o);
+                    o[3] = p[3]; break; }
+                default: o[0] = o[1] = o[2] = o[3] = 0.0f; break;
             }
         }
     }
@@ -346,6 +425,7 @@ PF_Err ComputeMatch(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* param
     size_t total = size_t(rw) * rh, step = std::max<size_t>(1, total / 250000);
     for (size_t i = 0; i < total; i += step) refPx.push_back({ref8[i * 3] / 255.0f, ref8[i * 3 + 1] / 255.0f, ref8[i * 3 + 2] / 255.0f});
     stbi_image_free(ref8);
+    lmLog("ComputeMatch: reference %s (%dx%d, %d channels)", refPath, rw, rh, rn);
 
     PF_ParamDef layer;
     AEFX_CLR_STRUCT(layer);
@@ -353,9 +433,13 @@ PF_Err ComputeMatch(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* param
     if (err) return err;
     PF_EffectWorld* world = &layer.u.ld;
     std::vector<lm::Vec3> srcPx;
-    if (world->data) {
+    uint32_t rawFmt = 0;
+    Fmt fmt = Fmt::Unsupported;
+    if (world->data) fmt = worldFormat(in_data, world, &rawFmt);
+    lmLog("ComputeMatch: checked-out layer data=%p %dx%d rowbytes=%d format=%s (%u)", world->data, world->width,
+          world->height, int(world->rowbytes), fourcc(rawFmt).c_str(), unsigned(fmt));
+    if (world->data && fmt != Fmt::Unsupported) {
         std::vector<float> buf;
-        Fmt fmt = worldFormat(in_data, world);
         worldToFloat(world, fmt, world->width, world->height, buf);
         lm::Engine e;
         e.setParams(readParams(params));
@@ -363,13 +447,46 @@ PF_Err ComputeMatch(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* param
         for (size_t i = 0; i < n; i += st) srcPx.push_back(e.neutralDisplay({buf[i * 4], buf[i * 4 + 1], buf[i * 4 + 2]}));
     }
     PF_CHECKIN_PARAM(in_data, &layer);
-    if (srcPx.empty()) { setError(out_data, "LookMatch: no footage under the playhead to match."); return PF_Err_NONE; }
+    if (srcPx.empty()) {
+        if (world->data && fmt == Fmt::Unsupported) {
+            std::string msg = "LookMatch: this clip's pixel format (" + fourcc(rawFmt) + ") isn't supported yet.";
+            setError(out_data, msg.c_str());
+        } else {
+            setError(out_data, "LookMatch: no footage under the playhead to match.");
+        }
+        return PF_Err_NONE;
+    }
+    // A black, blank or unreadable frame would make the matcher stretch noise into a wild LUT
+    // (posterised, oversaturated colour), so refuse to build a match from it.
+    double sum[3] = {0, 0, 0}, sq = 0;
+    for (const lm::Vec3& v : srcPx) {
+        sum[0] += v.r; sum[1] += v.g; sum[2] += v.b;
+        double l = 0.2126 * v.r + 0.7152 * v.g + 0.0722 * v.b;
+        sq += l * l;
+    }
+    const double n = double(srcPx.size());
+    const double meanL = (0.2126 * sum[0] + 0.7152 * sum[1] + 0.0722 * sum[2]) / n;
+    const double sdL = std::sqrt(std::max(0.0, sq / n - meanL * meanL));
+    double rsum[3] = {0, 0, 0};
+    for (const lm::Vec3& v : refPx) { rsum[0] += v.r; rsum[1] += v.g; rsum[2] += v.b; }
+    lmLog("ComputeMatch: source mean RGB %.3f %.3f %.3f, luma sd %.4f (%zu px); reference mean RGB %.3f %.3f %.3f",
+          sum[0] / n, sum[1] / n, sum[2] / n, sdL, srcPx.size(), rsum[0] / refPx.size(), rsum[1] / refPx.size(),
+          rsum[2] / refPx.size());
+    if (meanL < 0.01 || sdL < 0.01) {
+        setError(out_data, "LookMatch: the frame under the playhead is black or blank, so there is nothing to match. "
+                           "Move the playhead onto a normal frame and click Match to This Frame.");
+        return PF_Err_NONE;
+    }
 
     lm::MatchOptions mo;
     mo.regionStrength = F(params, P_REGION_STRENGTH) / 100.0f;
     mo.skinProtect = params[P_SKIN_AUTO]->u.bd.value ? -1.0f : F(params, P_SKIN_PROTECT) / 100.0f;
     mo.lutSize = kMatchLutSize;
     lm::MatchResult m = lm::matchLook(refPx, srcPx, mo);
+    for (float g : {0.18f, 0.5f, 1.0f}) {
+        lm::Vec3 v = m.lut.apply({g, g, g});
+        lmLog("ComputeMatch: LUT grey %.2f -> %.3f %.3f %.3f", g, v.r, v.g, v.b);
+    }
 
     SeqData* sd = lockSeq(in_data);
     if (!sd) return PF_Err_INTERNAL_STRUCT_DAMAGED;
@@ -421,8 +538,15 @@ PF_Err UserChangedParam(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* p
 
 PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], PF_LayerDef* output) {
     PF_EffectWorld* input = &params[P_INPUT_LAYER]->u.ld;
-    Fmt fmt = worldFormat(in_data, output);
-    if (fmt == Fmt::Unsupported || worldFormat(in_data, input) != fmt) {
+    uint32_t rawIn = 0, rawOut = 0;
+    Fmt fmt = worldFormat(in_data, output, &rawOut);
+    Fmt inFmt = worldFormat(in_data, input, &rawIn);
+    static std::atomic<int> logged{0};
+    if (logged.fetch_add(1) < 3)
+        lmLog("Render: in %s %dx%d rowbytes=%d, out %s %dx%d rowbytes=%d", fourcc(rawIn).c_str(), input->width,
+              input->height, int(input->rowbytes), fourcc(rawOut).c_str(), output->width, output->height,
+              int(output->rowbytes));
+    if (!canWrite(fmt) || inFmt != fmt) {
         setError(out_data, "LookMatch: unsupported pixel format.");
         return PF_Err_BAD_CALLBACK_PARAM;
     }
