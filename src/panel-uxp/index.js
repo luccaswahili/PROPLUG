@@ -7,6 +7,8 @@ const fs = require("fs");
 const os = require("os");
 
 const MATCH_NAME = "PROPLUGS LookMatch";
+// Premiere prefixes After Effects-API effects with "AE." in the component chain
+const isLookMatch = (matchName) => !!matchName && matchName.endsWith(MATCH_NAME);
 const logEl = document.getElementById("log");
 const log = (...a) => { logEl.textContent += a.join(" ") + "\n"; console.log(...a); };
 
@@ -31,7 +33,7 @@ async function findLookMatch(item) {
   const n = await chain.getComponentCount();
   for (let i = 0; i < n; i++) {
     const c = await chain.getComponentAtIndex(i);
-    if ((await c.getMatchName()) === MATCH_NAME) return { chain, component: c };
+    if (isLookMatch(await c.getMatchName())) return { chain, component: c };
   }
   return { chain, component: null };
 }
@@ -52,9 +54,14 @@ document.getElementById("probe").addEventListener("click", async () => {
     for (const item of items) {
       const { chain, component } = await findLookMatch(item);
       const n = await chain.getComponentCount();
-      const names = [];
-      for (let i = 0; i < n; i++) names.push(await (await chain.getComponentAtIndex(i)).getMatchName());
-      log(`  ${await item.getName()}: ${names.join(", ")}`);
+      log(`  ${await item.getName()} (${item.constructor && item.constructor.name}): ${n} components`);
+      for (let i = 0; i < n + 4; i++) {
+        try {
+          const c = await chain.getComponentAtIndex(i);
+          if (!c) { log(`    [${i}] (none)`); continue; }
+          log(`    [${i}] ${await c.getMatchName()} / ${await c.getDisplayName()}`);
+        } catch (e) { log(`    [${i}] error: ${e.message}`); }
+      }
       if (component) {
         const pc = await component.getParamCount();
         for (let i = 0; i < pc; i++) {
@@ -69,8 +76,8 @@ document.getElementById("probe").addEventListener("click", async () => {
 
 async function matchSelectedTo(refPath) {
   const slot = 1 + Math.floor(Math.random() * 999998);
-  fs.mkdirSync(refsDir(), { recursive: true });
-  fs.writeFileSync(`${refsDir()}/${slot}.txt`, refPath);
+  try { await fs.mkdir(refsDir(), { recursive: true }); } catch (e) { /* already there */ }
+  await fs.writeFile(`${refsDir()}/${slot}.txt`, refPath, { encoding: "utf-8" });
   log(`reference ${refPath} -> slot ${slot}`);
 
   const { project, items } = await selectedTrackItems();
@@ -78,7 +85,7 @@ async function matchSelectedTo(refPath) {
   for (const item of items) {
     let { chain, component } = await findLookMatch(item);
     if (!component) {
-      component = await ppro.VideoFilterFactory.createComponent(MATCH_NAME);
+      component = await ppro.VideoFilterFactory.createComponent("AE." + MATCH_NAME);
       project.lockedAccess(() => project.executeTransaction((ca) => {
         ca.addAction(chain.createAppendComponentAction(component));
       }, "Add LookMatch"));
@@ -105,7 +112,7 @@ document.getElementById("match").addEventListener("click", async () => {
 document.getElementById("usePath").addEventListener("click", async () => {
   try {
     const path = document.getElementById("path").value.trim();
-    if (!fs.existsSync(path)) { log(`no file at ${path}`); return; }
+    try { await fs.lstat(path); } catch (e) { log(`no file at ${path}`); return; }
     await matchSelectedTo(path);
   } catch (e) { log("match failed:", e.message); }
 });
