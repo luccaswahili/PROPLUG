@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- productbuild distribution: one universal LookMatch.plugin into Adobe's shared MediaCore
+     folder, with a check that lists the Premiere / After Effects versions it finds. -->
+<installer-gui-script minSpecVersion="2">
+    <title>LookMatch</title>
+    <welcome file="welcome.html" mime-type="text/html"/>
+    <options customize="never" require-scripts="false" hostArchitectures="arm64,x86_64"/>
+    <volume-check>
+        <allowed-os-versions><os-version min="10.15"/></allowed-os-versions>
+    </volume-check>
+    <installation-check script="checkHosts()"/>
+    <script><![CDATA[
+var MIN_PREMIERE = "13.0";  // Premiere Pro CC 2019
+var MIN_AE = "16.0";        // After Effects CC 2019
+
+function findApps(prefix, years) {
+    var found = [];
+    for (var i = 0; i < years.length; i++) {
+        var names = [prefix + " " + years[i], prefix + " CC " + years[i]];
+        for (var n = 0; n < names.length; n++) {
+            var path = "/Applications/" + names[n] + "/" + names[n] + ".app";
+            if (system.files.fileExistsAtPath(path)) {
+                var b = system.files.bundleAtPath(path);
+                var v = b ? b.CFBundleShortVersionString : "?";
+                found.push({name: names[n], version: v});
+            }
+        }
+    }
+    return found;
+}
+
+function checkHosts() {
+    var years = [];
+    for (var y = 2015; y <= 2030; y++) years.push("" + y);
+    var pr = findApps("Adobe Premiere Pro", years);
+    var ae = findApps("Adobe After Effects", years);
+    var lines = [], old = [];
+    for (var i = 0; i < pr.length; i++) {
+        lines.push(pr[i].name + " (" + pr[i].version + ")");
+        if (pr[i].version != "?" && system.compareVersions(pr[i].version, MIN_PREMIERE) < 0) old.push(pr[i].name);
+    }
+    for (var j = 0; j < ae.length; j++) {
+        lines.push(ae[j].name + " (" + ae[j].version + ")");
+        if (ae[j].version != "?" && system.compareVersions(ae[j].version, MIN_AE) < 0) old.push(ae[j].name);
+    }
+    system.log("LookMatch: found " + lines.join(", "));
+    if (lines.length == 0) {
+        my.result.type = "Warning";
+        my.result.title = "No Premiere Pro or After Effects found";
+        my.result.message = "LookMatch will still be installed, and will appear the next time you install and open Premiere Pro (2019 or newer) or After Effects (2019 or newer).";
+        return false;
+    }
+    if (old.length > 0) {
+        my.result.type = "Warning";
+        my.result.title = "Some Adobe apps are too old";
+        my.result.message = "LookMatch supports Premiere Pro and After Effects 2019 or newer. It will not load in: " + old.join(", ") + ". It will work in: " + lines.join(", ") + ".";
+        return false;
+    }
+    return true;
+}
+    ]]></script>
+    <choices-outline><line choice="default"/></choices-outline>
+    <choice id="default" title="LookMatch"><pkg-ref id="com.proplugs.lookmatch.plugin"/></choice>
+    <pkg-ref id="com.proplugs.lookmatch.plugin" version="1.0.0" onConclusion="none">LookMatch-plugin.pkg</pkg-ref>
+</installer-gui-script>

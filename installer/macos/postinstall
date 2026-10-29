@@ -1,0 +1,10 @@
+#!/bin/bash
+# Clear the download quarantine flag so Premiere can load the plug-in, and log the hosts found.
+PLUGIN="/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/LookMatch.plugin"
+xattr -dr com.apple.quarantine "$PLUGIN" 2>/dev/null || true
+for app in /Applications/Adobe\ Premiere\ Pro*/*.app /Applications/Adobe\ After\ Effects*/*.app; do
+    [ -d "$app" ] || continue
+    v=$(defaults read "$app/Contents/Info" CFBundleShortVersionString 2>/dev/null || echo "?")
+    echo "LookMatch: detected $(basename "$app") $v"
+done
+exit 0

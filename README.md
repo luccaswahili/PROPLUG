@@ -59,6 +59,13 @@ Install the result into the shared Adobe plug-in folder, then restart Premiere:
 
 The effect shows up under **Effects > Video Effects > PRO PLUGS > LookMatch**.
 
+### Installers for users
+
+`installer/` builds a Mac `.pkg` (`installer/macos/build_pkg.sh`) and a Windows setup (`installer/windows/LookMatch.iss`, Inno Setup 6).
+Both install one plug-in into Adobe's shared MediaCore folder, which every Premiere Pro and After Effects
+version reads. They detect the installed versions and warn about any older than the supported floor.
+See `installer/versions.md`.
+
 ## Try the engine without Premiere
 
 ```bash

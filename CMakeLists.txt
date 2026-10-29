@@ -1,4 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
+# Oldest macOS the plug-in runs on; keeps older Premiere installs supported (see installer/versions.md)
+set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Minimum macOS version")
 project(LookMatch CXX)
 
 set(CMAKE_CXX_STANDARD 17)

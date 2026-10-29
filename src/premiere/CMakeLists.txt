@@ -64,7 +64,7 @@ elseif(APPLE)
   add_custom_command(TARGET LookMatch POST_BUILD
     COMMAND /bin/sh -c "printf eFKTFXTC > \"$<TARGET_BUNDLE_CONTENT_DIR:LookMatch>/PkgInfo\""
     VERBATIM)
-  target_link_libraries(LookMatch PRIVATE "-framework Cocoa" "-framework UniformTypeIdentifiers")
+  target_link_libraries(LookMatch PRIVATE "-framework Cocoa" "-weak_framework UniformTypeIdentifiers")
   # the universal plugin links the engine, so the engine must be universal too
   set_target_properties(lookmatch_core PROPERTIES OSX_ARCHITECTURES "arm64;x86_64")
 else()
