@@ -42,6 +42,11 @@ function startAgent(fs, dataDir, bridge, log, ui) {
       ui.element("tabs").querySelector(`[data-tab="${a.tab}"]`).click();
       return { tab: a.tab };
     };
+    COMMANDS.uiMetrics = async () => {
+      const c = ui.element("content");
+      return { scrollHeight: c.scrollHeight, clientHeight: c.clientHeight, scrolls: c.scrollHeight > c.clientHeight,
+               overflowY: getComputedStyle(c).overflowY };
+    };
     COMMANDS.uiClick = async (b, a) => {
       if (!ui.buttons.includes(a.id)) throw new Error(`button ${a.id} not allowed`);
       ui.element(a.id).click();
