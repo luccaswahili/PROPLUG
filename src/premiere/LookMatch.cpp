@@ -488,6 +488,9 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     if (!matchDefault) return PF_Err_OUT_OF_MEMORY;
     PF_ADD_ARBITRARY2("Match Data", 1, 1, PF_ParamFlag_CANNOT_TIME_VARY, PF_PUI_NO_ECW_UI, matchDefault, D_MATCH_DATA,
                       nullptr);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Reference Slot", 0, 999999, 0, 999999, 0, PF_Precision_INTEGER, 0,
+                         PF_ParamFlag_SUPERVISE | PF_ParamFlag_CANNOT_TIME_VARY, D_REF_SLOT);
 
     out_data->num_params = P_NUM_PARAMS;
     return err;
@@ -607,6 +610,27 @@ PF_Err ComputeMatch(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* param
     return PF_Err_NONE;
 }
 
+// The LookMatch panel can't pass a string to an effect, so it writes the reference path to
+// <app support>/PRO PLUGS/LookMatch/refs/<slot>.txt and sets Reference Slot = <slot>.
+std::string panelReferencePath(long slot) {
+#ifdef AE_OS_WIN
+    const char* base = std::getenv("APPDATA");
+    std::string dir = base ? std::string(base) + "\\PRO PLUGS\\LookMatch\\refs\\" : "";
+#else
+    const char* base = std::getenv("HOME");
+    std::string dir = base ? std::string(base) + "/Library/Application Support/PRO PLUGS/LookMatch/refs/" : "";
+#endif
+    if (dir.empty()) return "";
+    FILE* f = std::fopen((dir + std::to_string(slot) + ".txt").c_str(), "rb");
+    if (!f) return "";
+    char buf[1024] = {0};
+    size_t n = std::fread(buf, 1, sizeof buf - 1, f);
+    std::fclose(f);
+    std::string path(buf, n);
+    while (!path.empty() && (path.back() == '\n' || path.back() == '\r')) path.pop_back();
+    return path;
+}
+
 PF_Err UserChangedParam(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], PF_UserChangedParamExtra* extra) {
     switch (extra->param_index) {
         case P_LOAD_REF: {
@@ -622,6 +646,14 @@ PF_Err UserChangedParam(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* p
                 PF_UNLOCK_HANDLE(mh);
             }
             if (path.empty()) { setError(out_data, "LookMatch: load a reference image first."); return PF_Err_NONE; }
+            return ComputeMatch(in_data, out_data, params, path.c_str());
+        }
+        case P_REF_SLOT: {
+            long slot = long(F(params, P_REF_SLOT));
+            lmLog("UserChangedParam: Reference Slot = %ld", slot);
+            if (slot <= 0) return PF_Err_NONE;
+            std::string path = panelReferencePath(slot);
+            if (path.empty()) { setError(out_data, "LookMatch: the panel's reference for this clip is missing."); return PF_Err_NONE; }
             return ComputeMatch(in_data, out_data, params, path.c_str());
         }
         case P_EXPORT_LUT: {
@@ -675,6 +707,9 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
         lmLog("Render: now using match %016llx", (unsigned long long)id);
     }
     if (md) PF_UNLOCK_HANDLE(mh);
+    static std::atomic<long> lastSlot{0};
+    long slot = long(F(params, P_REF_SLOT));
+    if (lastSlot.exchange(slot) != slot) lmLog("Render: sees Reference Slot = %ld", slot);
     long frame = in_data->time_step ? long(in_data->current_time / in_data->time_step) : 0;
     lm::ImageView view{buf.data(), w, h, w * 4};
     pe->engine.render(view, view, frame);
