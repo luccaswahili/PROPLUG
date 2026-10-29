@@ -78,6 +78,12 @@ enum ParamId {
     P_CAPTURE_SLOT, // save this clip's frame as refs/capture-<slot>.png (hero clip -> reference)
     P_THUMBS_SLOT,  // render small previews of the looks listed in refs/thumbs-<slot>.txt
     P_PANEL_TOPIC_END,
+    // compare: before/after split wipe
+    P_COMPARE_TOPIC,
+    P_SPLIT,        // checkbox
+    P_SPLIT_POS,    // % across the frame
+    P_SPLIT_ANGLE,  // degrees, 0 = vertical line
+    P_COMPARE_TOPIC_END,
     P_NUM_PARAMS
 };
 
@@ -88,7 +94,8 @@ enum DiskId {
     D_FILM_TOPIC, D_FILM_STRENGTH, D_NEGATIVE, D_PRINT, D_PRINTER_R, D_PRINTER_G, D_PRINTER_B, D_FILM_SAT, D_FADE, D_FILM_TOPIC_END,
     D_TEXTURE_TOPIC, D_HALATION, D_HALATION_RADIUS, D_HALATION_THRESHOLD, D_BLOOM, D_BLOOM_RADIUS, D_BLOOM_THRESHOLD,
     D_GRAIN, D_GRAIN_SIZE, D_GRAIN_COLOR, D_SOFTNESS, D_VIGNETTE, D_WEAVE, D_FLICKER, D_TEXTURE_TOPIC_END,
-    D_MIX, D_EXPORT_LUT, D_MATCH_DATA, D_REF_SLOT, D_PANEL_TOPIC, D_BAKE, D_EXPORT_SLOT, D_PANEL_TOPIC_END, D_CAPTURE_SLOT, D_THUMBS_SLOT
+    D_MIX, D_EXPORT_LUT, D_MATCH_DATA, D_REF_SLOT, D_PANEL_TOPIC, D_BAKE, D_EXPORT_SLOT, D_PANEL_TOPIC_END, D_CAPTURE_SLOT, D_THUMBS_SLOT,
+    D_COMPARE_TOPIC, D_SPLIT, D_SPLIT_POS, D_SPLIT_ANGLE, D_COMPARE_TOPIC_END
 };
 
 // The computed match lives in a hidden arbitrary-data parameter, not in sequence data:

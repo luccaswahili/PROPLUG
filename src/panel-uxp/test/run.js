@@ -178,9 +178,21 @@ test("bridge: captureFrame sets the capture slot and returns the PNG the effect 
   await assert.rejects(b.captureFrame({ sleep: failing, pollMs: 1, timeoutMs: 50 }), /could not read/);
 });
 
+test("self-test passes against the mock and restores the clip", async () => {
+  const { runSelfTest } = require("../lib/selftest.js");
+  const v1 = makeItem("V1", true, true);
+  const b = new Bridge(makePremiere({ selected: [v1] }), fsp, await fsp.mkdtemp(path.join(os.tmpdir(), "lm-")));
+  const { pass, lines } = await runSelfTest(b, { referencePath: "/r.png" });
+  assert(pass, lines.join("\n"));
+  const { component } = await b.findLookMatch(v1);
+  const p = await b.readParams(component);
+  assert.strictEqual(p[P.mix], 100, "restored");
+  assert.strictEqual(p[P.split], false, "restored");
+});
+
 test("agent: whitelist only, values sanitised", async () => {
   assert.deepStrictEqual(Object.keys(COMMANDS).sort(),
-    ["applyParams", "applyReference", "captureFrame", "clipNames", "exportCube", "inspectParams", "ping", "previewLooks", "readSelected", "saveProject", "selectClip", "setPlayhead", "timeline"]);
+    ["applyParams", "applyReference", "captureFrame", "clipNames", "exportCube", "inspectParams", "ping", "previewLooks", "readSelected", "saveProject", "selectClip", "selfTest", "setPlayhead", "timeline"]);
   const v1 = makeItem("V1", true, true);
   const ppro = makePremiere({ selected: [v1] });
   const b = new Bridge(ppro, fsp, os.tmpdir());

@@ -553,6 +553,18 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     AEFX_CLR_STRUCT(def);
     PF_END_TOPIC(D_PANEL_TOPIC_END);
 
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_TOPIC("Compare", D_COMPARE_TOPIC);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_CHECKBOXX("Split View", FALSE, 0, D_SPLIT);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Split Position", 0, 100, 0, 100, 50, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0,
+                         D_SPLIT_POS);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Split Angle", -90, 90, -90, 90, 0, PF_Precision_TENTHS, 0, 0, D_SPLIT_ANGLE);
+    AEFX_CLR_STRUCT(def);
+    PF_END_TOPIC(D_COMPARE_TOPIC_END);
+
     out_data->num_params = P_NUM_PARAMS;
     return err;
 }
@@ -785,6 +797,21 @@ void renderThumbnails(const std::string& base, const std::vector<float>& frame, 
     if (f) std::fclose(f);
     if (FILE* df = std::fopen((base + ".done").c_str(), "wb")) { std::fputs(result.c_str(), df); std::fclose(df); }
     lmLog("renderThumbnails: %s -> %d previews (%s)", base.c_str(), count, result.c_str());
+}
+
+// Before/after wipe: pixels left of (or above) the split line show the original, with a thin line.
+void applySplit(std::vector<float>& after, const std::vector<float>& before, int w, int h, float pos, float angleDeg) {
+    const float a = angleDeg * 3.14159265f / 180.0f;
+    const float nx = std::cos(a), ny = std::sin(a);  // line normal; angle 0 = vertical line
+    const float cx = pos * w, cy = 0.5f * h;
+    const float line = std::max(1.0f, h / 540.0f);
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x) {
+            float d = (x + 0.5f - cx) * nx + (y + 0.5f - cy) * ny;
+            size_t i = (size_t(y) * w + x) * 4;
+            if (std::abs(d) < line) { after[i] = after[i + 1] = after[i + 2] = 0.9f; }
+            else if (d < 0) { after[i] = before[i]; after[i + 1] = before[i + 1]; after[i + 2] = before[i + 2]; }
+        }
 }
 
 std::string refsDir() {
@@ -1050,8 +1077,12 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
         }
     }
     long frame = in_data->time_step ? long(in_data->current_time / in_data->time_step) : 0;
+    const bool split = params[P_SPLIT]->u.bd.value != 0;
+    thread_local std::vector<float> before;
+    if (split) before = buf;
     lm::ImageView view{buf.data(), w, h, w * 4};
     pe->engine.render(view, view, frame);
+    if (split) applySplit(buf, before, w, h, F(params, P_SPLIT_POS) / 100.0f, F(params, P_SPLIT_ANGLE));
     releaseEngine(pe);
 
     floatToWorld(buf, w, h, output, fmt);

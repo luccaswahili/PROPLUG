@@ -36,6 +36,9 @@ const P = {
   exportSlot: "LUT Export Slot",
   captureSlot: "Capture Slot",
   thumbsSlot: "Thumbs Slot",
+  split: "Split View",
+  splitPos: "Split Position",
+  splitAngle: "Split Angle",
 };
 
 // Popup controls. The panel uses 1-based values like Effect Controls; Premiere's UXP API reads

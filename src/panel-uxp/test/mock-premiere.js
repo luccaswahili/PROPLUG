@@ -35,7 +35,7 @@ function lookMatchComponent() {
   return makeComponent("AE.PROPLUGS LookMatch", Object.assign({
     "Look Match": undefined, Reference: undefined, [P.matchStrength]: 100, [P.regionMatching]: 100,
     [P.autoSkin]: true, [P.skinProtect]: 30, [P.footageEncoding]: 0, [P.exposure]: 0, [P.temperature]: 0, [P.tint]: 0,
-    [P.mix]: 100, [P.referenceSlot]: 0, [P.exportSlot]: 0, [P.captureSlot]: 0, [P.thumbsSlot]: 0,
+    [P.mix]: 100, [P.referenceSlot]: 0, [P.exportSlot]: 0, [P.captureSlot]: 0, [P.thumbsSlot]: 0, [P.split]: false, [P.splitPos]: 50, [P.splitAngle]: 0,
   }, zeroBased));
 }
 

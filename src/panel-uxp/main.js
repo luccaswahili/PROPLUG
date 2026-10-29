@@ -8,8 +8,9 @@ const os = require("os");
 const { P, NEGATIVES, PRINTS, FILM_DEFAULTS, FILM_LOOKS, lookParams, stockCombos, guessEncoding } = require("./lib/looks.js");
 const { Library, joinPath, baseName } = require("./lib/library.js");
 const { Bridge } = require("./lib/bridge.js");
+const { runSelfTest } = require("./lib/selftest.js");
 
-const VERSION = "0.3.1";  // kept equal to manifest.json by build_panel.sh
+const VERSION = "0.4.0";  // kept equal to manifest.json by build_panel.sh
 const DATA_DIR = os.platform() === "win32"
   ? joinPath(process.env.APPDATA || "", "PRO PLUGS\\LookMatch")
   : joinPath(os.homedir(), "Library/Application Support/PRO PLUGS/LookMatch");
@@ -19,7 +20,6 @@ const $ = (id) => document.getElementById(id);
 const library = new Library(fs, DATA_DIR);
 const bridge = new Bridge(ppro, fs, DATA_DIR);
 let selectedRef = null;
-let savedMix = null;  // Mix value before "Before / after" switched it to 0
 
 // ---------- status & console ----------
 
@@ -198,17 +198,18 @@ $("applyStrength").addEventListener("click", () => run("Apply strength", async (
   const res = await bridge.applyParams("selection", matchSettings());
   return `Updated ${res.clips} clip(s)`;
 }));
+// Before / after: the effect's Split View wipe (original on the left of the line).
 $("beforeAfter").addEventListener("click", () => run("Before / after", async () => {
   const cur = await bridge.selectedLookMatchParams();
   if (!cur) throw new Error("Select a clip with LookMatch.");
-  const mix = cur.params[P.mix];
-  if (mix > 0) {
-    savedMix = mix;
-    await bridge.applyParams("selection", { [P.mix]: 0 });
-    return "Showing BEFORE (Mix 0%). Click again for after.";
-  }
-  await bridge.applyParams("selection", { [P.mix]: savedMix || 100 });
-  return `Showing AFTER (Mix ${savedMix || 100}%)`;
+  const on = !cur.params[P.split];
+  await bridge.applyParams("selection", { [P.split]: on, [P.splitPos]: Number($("splitPos").value) });
+  return on ? "Split view on: original on the left" : "Split view off";
+}));
+bindSlider("splitPos", "splitPosV");
+$("splitPos").addEventListener("change", () => run("Split position", async () => {
+  await bridge.applyParams("selection", { [P.splitPos]: Number($("splitPos").value) });
+  return `Split at ${Math.round($("splitPos").value)}%`;
 }));
 
 // ---------- looks ----------
@@ -456,48 +457,10 @@ $("probe").addEventListener("click", () => run("Probe", async () => {
   return `${items.length} clip(s)`;
 }));
 
-// In-Premiere self-test: exercises the whole flow on the selected clip, then restores its settings.
+// In-Premiere self-test (lib/selftest.js): exercises the whole flow on the selected clip.
 $("selfTest").addEventListener("click", () => run("Self-test", async () => {
-  const results = [];
-  const check = (name, ok, detail) => { results.push(ok); log(`${ok ? "PASS" : "FAIL"} ${name}${detail ? ` (${detail})` : ""}`); };
-  log("---- self-test ----");
-  let before;
-  try {
-    const { items } = await bridge.selectedVideoItems();
-    check("a video clip is selected", items.length > 0, `${items.length}`);
-    if (!items.length) throw new Error("select one video clip and run again");
-    await bridge.applyParams("selection", {});
-    before = await bridge.selectedLookMatchParams();
-    check("LookMatch is on the clip", !!before);
-    check("all panel controls exist", Object.values(P).every((n) => n in before.params || n === P.autoSkin),
-          Object.values(P).filter((n) => !(n in before.params)).join(", ") || "all");
-    await bridge.applyParams("selection", { [P.mix]: 37 });
-    const after = await bridge.selectedLookMatchParams();
-    check("setting a value works", Math.abs(after.params[P.mix] - 37) < 0.01, `Mix = ${after.params[P.mix]}`);
-    const look = FILM_LOOKS[1];
-    await bridge.applyParams("selection", lookParams(look));
-    const lk = await bridge.selectedLookMatchParams();
-    check("film look applies", lk.params[P.negative] === look.params[P.negative] && lk.params[P.grain] === look.params[P.grain]);
-    const tmp = library.saveLook("__selftest__", lookParams(look), null);
-    const round = Library.lookFromFile(Library.lookToFile(tmp));
-    check(".lmlook round trip", round.params[P.grain] === look.params[P.grain]);
-    library.removeLook(tmp.id);
-    if (selectedRef) {
-      const res = await bridge.applyReference("selection", selectedRef.path, {});
-      check("reference slot set", res.slot > 0, `slot ${res.slot}`);
-    } else {
-      log("SKIP reference match (no reference selected)");
-    }
-  } finally {
-    if (before) {
-      const restore = {};
-      for (const [k, v] of Object.entries(before.params)) if (k !== P.referenceSlot) restore[k] = v;
-      await bridge.applyParams("selection", restore).catch((e) => log(`restore failed: ${e.message}`));
-    }
-  }
-  const pass = results.every(Boolean);
-  log(`---- ${pass ? "ALL PASS" : "FAILURES"} (${results.filter(Boolean).length}/${results.length}) ----`);
-  return pass ? `Self-test passed (${results.length} checks)` : "Self-test failed: see Tools";
+  const { pass, lines } = await runSelfTest(bridge, { log, referencePath: selectedRef ? selectedRef.path : null });
+  return pass ? `Self-test passed (${lines.filter((l) => l.startsWith("PASS")).length} checks)` : "Self-test failed: see Tools";
 }));
 
 // ---------- start ----------

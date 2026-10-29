@@ -5,6 +5,7 @@
 
 const { joinPath } = require("./library.js");
 const { FILM_LOOKS, lookParams } = require("./looks.js");
+const { runSelfTest } = require("./selftest.js");
 
 const COMMANDS = {
   ping: async () => "pong",
@@ -24,6 +25,7 @@ const COMMANDS = {
   inspectParams: async (b, a) => b.inspectParams(Number(a.limit) || 8),
   timeline: async (b) => b.timeline(),
   setPlayhead: async (b, a) => b.setPlayhead(Number(a.seconds) || 0),
+  selfTest: async (b, a) => runSelfTest(b, { referencePath: a.referencePath ? String(a.referencePath) : null }),
   previewLooks: async (b) => b.lookThumbnails(FILM_LOOKS.map((l) => ({ id: l.id, params: lookParams(l) })), { timeoutMs: 30000 }),
 };
 
