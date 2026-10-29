@@ -40,6 +40,12 @@ struct SceneMatchOptions {
     float whiteBalance = 1;  // 0..1: how much to neutralise the source's white balance
     float contrast = 1;      // 0..1: how much to undo the source's tone curve and saturation
     float lookStrength = 1;  // 0..1: how much of the reference's look to apply on top
+    // how the look is carried over (internal; for the benchmark in tests/consistency_tests.cpp):
+    // 0 = thing by thing (neutral axis, skin, hue sectors), 1 = statistical HM-MKL-HM transfer
+    // (histogram match on lightness, Monge-Kantorovich linear map of the OKLab distribution, histogram
+    // match again), 2 = the mean of the two, 3 = hybrid: gentle lightness histogram match and the
+    // chroma scaled to the reference's spread (isotropic MKL), then the thing-by-thing grade
+    int method = 0;
 };
 
 struct SceneMatch {

@@ -114,6 +114,44 @@ Cost: the GPU takes 9.6 ms per 4K frame, including the copy. The CPU fallback ri
 Tools: `tools/extract_frame16.swift` extracts a 16-bit frame from a clip. Sky frames go in
 `tests/frames-sky/NAME-sky<W>x<H>.png`, which is git-ignored.
 
+## Statistical transfers benchmarked (color-matcher methods)
+
+I reimplemented color-matcher's methods from the published maths (it is GPL-3.0 and LookMatch is
+closed source, so none of its code is used). They are internal options (`SceneMatchOptions::method`,
+`consistency_tests --method N`), run after the source normalisation and before the per-sector look:
+
+- **1, HM-MKL-HM.** Histogram match on lightness, then the Monge-Kantorovich linear map of the OKLab
+  distribution, T = Σs^-½ (Σs^½ Σt Σs^½)^½ Σs^-½ (Pitié & Kokaram 2007), then a second lightness
+  match. Both histogram matches go through the smooth, slope-capped `smoothMap` curve, not raw CDFs.
+- **2.** The mean of method 1 and the thing-by-thing grade.
+- **3, hybrid.** A gentle lightness histogram match (slope 0.6–1.6) and the chroma scaled by one
+  factor to the reference's spread about neutral (isotropic MKL, clamped 0.85–1.3), then the
+  thing-by-thing grade.
+
+The color-matcher Python package itself (HM-MVGD-HM) runs as an external baseline only, through
+`tools/colormatcher_bench.py`. It is fed the exact frames `consistency_tests --dump DIR` writes, in a
+throwaway virtualenv; nothing is shipped or linked.
+
+8 frames, reference 15.38.33, the average over the unclipped perturbation rows:
+
+| method | mean ΔE00 | p95 | content preserved | grey-axis jump failures |
+|---|---|---|---|---|
+| 0, thing by thing (default) | 1.48 | 2.91 | 7/8 frames, all synthetic scenes | 16 |
+| 1, HM-MKL-HM | 0.66 | 1.62 | **no**: the red stage's hues collapse | 87, and 56 greys that get darker as the input gets brighter |
+| 2, mean of 0 and 1 | about 1.0 | about 2.1 | **no** | 35 |
+| 3, hybrid | 1.39 | 2.97 | 7/8, all synthetic scenes | 21 |
+| color-matcher HM-MVGD-HM (package) | 2.15 | 6.14 | **no**: cyan skin, posterised skies, ringed suns | (not measured) |
+
+Method 1 is the most consistent, because a full statistical transfer makes every input look like the
+reference's distribution. That is also why it fails: it is a filter, not a grade. Its 3×3 map couples
+lightness with colour, so it pushes blacks to red and crosses neutral, and it erases scene colours. The
+package does the same and posterises as well.
+
+Method 3 avoids those failures but gains little: 1.39 against 1.48, with more grey-axis steps. So the
+default stays method 0, and methods 1–3 stay internal for the harness. The contact sheet (source |
+LookMatch | color-matcher) was checked by eye: LookMatch keeps skin, skies and the sun clean;
+color-matcher does not.
+
 ## Consistency test
 
 `tests/consistency_tests.cpp` (ctest `consistency_tests`) takes real frames from the clips in projects *g* and *d*:

@@ -525,6 +525,134 @@ std::vector<float> frameShaper(const Image& img) {
 
 }  // namespace
 
+
+// ---------- statistical transfer: HM-MKL-HM ----------
+// After Pitie & Kokaram, "The linear Monge-Kantorovitch linear colour mapping for example-based colour
+// transfer" (2007), and the compound histogram-match / MKL / histogram-match of Grogan et al.:
+// T = Ss^-1/2 (Ss^1/2 St Ss^1/2)^1/2 Ss^-1/2 maps a distribution with covariance Ss onto one with St.
+// Here it runs in OKLab after the source normalisation, and the histogram matches are on lightness only,
+// through the same smooth slope-capped curve as the tone match (a raw CDF match would posterise).
+namespace {
+
+using M3 = std::array<std::array<double, 3>, 3>;
+
+M3 mul(const M3& a, const M3& b) {
+    M3 r{};
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            for (int k = 0; k < 3; ++k) r[i][j] += a[i][k] * b[k][j];
+    return r;
+}
+
+// symmetric 3x3 -> V diag(f(eigenvalues)) V^T (Jacobi rotations)
+M3 symFunc(M3 a, double (*f)(double)) {
+    M3 v{};
+    for (int i = 0; i < 3; ++i) v[i][i] = 1;
+    for (int sweep = 0; sweep < 50; ++sweep) {
+        double off = std::abs(a[0][1]) + std::abs(a[0][2]) + std::abs(a[1][2]);
+        if (off < 1e-14) break;
+        for (int p = 0; p < 2; ++p)
+            for (int q = p + 1; q < 3; ++q) {
+                if (std::abs(a[p][q]) < 1e-18) continue;
+                const double th = 0.5 * std::atan2(2 * a[p][q], a[q][q] - a[p][p]);
+                const double c = std::cos(th), sn = std::sin(th);
+                for (int k = 0; k < 3; ++k) {  // a = J^T a J
+                    const double akp = a[k][p], akq = a[k][q];
+                    a[k][p] = c * akp - sn * akq; a[k][q] = sn * akp + c * akq;
+                }
+                for (int k = 0; k < 3; ++k) {
+                    const double apk = a[p][k], aqk = a[q][k];
+                    a[p][k] = c * apk - sn * aqk; a[q][k] = sn * apk + c * aqk;
+                }
+                for (int k = 0; k < 3; ++k) {
+                    const double vkp = v[k][p], vkq = v[k][q];
+                    v[k][p] = c * vkp - sn * vkq; v[k][q] = sn * vkp + c * vkq;
+                }
+            }
+    }
+    M3 r{};
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            for (int k = 0; k < 3; ++k) r[i][j] += v[i][k] * f(std::max(a[k][k], 1e-9)) * v[j][k];
+    return r;
+}
+
+void meanCov(const std::vector<Vec3>& px, double mean[3], M3& cov) {
+    mean[0] = mean[1] = mean[2] = 0;
+    for (const Vec3& c : px) for (int i = 0; i < 3; ++i) mean[i] += c[i];
+    for (int i = 0; i < 3; ++i) mean[i] /= std::max<size_t>(1, px.size());
+    cov = M3{};
+    for (const Vec3& c : px)
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) cov[i][j] += (c[i] - mean[i]) * (c[j] - mean[j]);
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) cov[i][j] /= std::max<size_t>(1, px.size());
+        cov[i][i] += 1e-6;
+    }
+}
+
+// lightness match on 257 quantiles through smoothMap (which works in stop-like units: scale by 10)
+Curve lightnessMap(const std::vector<Vec3>& from, const std::vector<Vec3>& to) {
+    std::vector<float> a, b;
+    for (const Vec3& c : from) a.push_back(c.r * 10);
+    for (const Vec3& c : to) b.push_back(c.r * 10);
+    return smoothMap(evenQuantiles(a, 257), evenQuantiles(b, 257), 0.35f, 2.2f);
+}
+
+struct StatTransfer {
+    Curve hm1, hm2;
+    double ms[3], mt[3];
+    M3 T;
+    Vec3 mkl(Vec3 c, double l) const {
+        double x[3] = {l - ms[0], c.g - ms[1], c.b - ms[2]}, y[3];
+        for (int i = 0; i < 3; ++i) y[i] = mt[i] + T[i][0] * x[0] + T[i][1] * x[1] + T[i][2] * x[2];
+        return Vec3(float(y[0]), float(y[1]), float(y[2]));
+    }
+    Vec3 apply(Vec3 lab) const {
+        Vec3 o = mkl(lab, hm1(lab.r * 10) / 10);
+        o.r = hm2(o.r * 10) / 10;
+        return o;
+    }
+    StatTransfer(const std::vector<Vec3>& src, const std::vector<Vec3>& ref) {
+        hm1 = lightnessMap(src, ref);
+        std::vector<Vec3> s1 = src;
+        for (Vec3& c : s1) c.r = hm1(c.r * 10) / 10;
+        M3 cs, ct;
+        meanCov(s1, ms, cs);
+        meanCov(ref, mt, ct);
+        const M3 h = symFunc(cs, [](double v) { return std::sqrt(v); });
+        const M3 hi = symFunc(cs, [](double v) { return 1 / std::sqrt(v); });
+        T = mul(hi, mul(symFunc(mul(h, mul(ct, h)), [](double v) { return std::sqrt(v); }), hi));
+        // identity mean shift is part of the map; lightness is re-matched after it
+        std::vector<Vec3> s2;
+        for (const Vec3& c : s1) s2.push_back(mkl(c, c.r));
+        hm2 = lightnessMap(s2, ref);
+    }
+};
+
+// The hybrid (method 3): lightness histogram-matched to the reference (gently: the canonical tone
+// curve has already done the heavy lifting, so its slope stays in [0.6, 1.6]) and chroma scaled to the
+// reference's spread about neutral by one factor (the isotropic case of MKL: an anisotropic map skews
+// hue relationships), then the thing-by-thing grade on top for the neutral axis, skin and sectors.
+struct ToneChroma {
+    Curve hm;
+    float k = 1;
+    Vec3 apply(Vec3 lab) const { return Vec3(hm(lab.r * 10) / 10, lab.g * k, lab.b * k); }
+    ToneChroma(const std::vector<Vec3>& src, const std::vector<Vec3>& ref) {
+        std::vector<float> a, b;
+        for (const Vec3& c : src) a.push_back(c.r * 10);
+        for (const Vec3& c : ref) b.push_back(c.r * 10);
+        hm = smoothMap(evenQuantiles(a, 257), evenQuantiles(b, 257), 0.6f, 1.6f);
+        double ms = 0, mt = 0;
+        for (const Vec3& c : src) ms += c.g * c.g + c.b * c.b;
+        for (const Vec3& c : ref) mt += c.g * c.g + c.b * c.b;
+        ms /= std::max<size_t>(1, src.size()); mt /= std::max<size_t>(1, ref.size());
+        k = float(std::clamp(std::sqrt(mt / std::max(ms, 1e-8)), 0.85, 1.3));
+    }
+};
+
+}  // namespace
+
 // ---------- the reference's look, translated thing by thing ----------
 // Matching global colour statistics after normalisation makes a filter (whites pushed to whatever the
 // mean says, skin and everything else split apart). A grade renders each kind of thing its own way,
@@ -846,9 +974,23 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
     for (const Vec3& v : canonRgb) canonLabs.push_back(rgbToOklab(v));
     const LookProfile refLook(refLab), srcLook(canonLabs);
     auto grade = std::make_shared<Grade>(refLook, srcLook);
-    auto full = [canonical, grade, ls](Vec3 code) {
+    std::shared_ptr<StatTransfer> stat;
+    if (o.method == 1 || o.method == 2) stat = std::make_shared<StatTransfer>(canonLabs, refLab);
+    std::shared_ptr<ToneChroma> tc;
+    if (o.method == 3) {
+        tc = std::make_shared<ToneChroma>(canonLabs, refLab);
+        std::vector<Vec3> mapped;
+        for (const Vec3& c : canonLabs) mapped.push_back(rgbToOklab(oklabToRgb(tc->apply(c))));
+        grade = std::make_shared<Grade>(refLook, LookProfile(mapped));
+    }
+    const int method = o.method;
+    auto full = [canonical, grade, stat, tc, ls, method](Vec3 code) {
         Vec3 lab = canonical(code);
-        return oklabToRgb(lerp(lab, grade->apply(lab), ls));
+        Vec3 look = method == 0 ? grade->apply(lab)
+                  : method == 1 ? stat->apply(lab)
+                  : method == 2 ? lerp(grade->apply(lab), stat->apply(lab), 0.5f)
+                                : grade->apply(rgbToOklab(oklabToRgb(tc->apply(lab))));
+        return oklabToRgb(lerp(lab, look, ls));
     };
     res.lut = Lut3D(o.look.lutSize);
     res.lut.setShaper(frameShaper(src));

@@ -376,6 +376,8 @@ int main(int argc, char** argv) {
     std::string framesDir = LOOKMATCH_SOURCE_DIR "/tests/frames", refPath, sheet;
     bool runOld = false, verbose = false, exactLog = false, direct = false, detectOnly = false, compareOnly = false;
     int maxFrames = 1000;
+    int method = 0;
+    std::string dumpDir;
     float amounts[4] = {1, 1, 1, 1};
     if (const char* e = std::getenv("LOOKMATCH_REF")) refPath = e;
 #ifdef LOOKMATCH_DEFAULT_REF
@@ -395,6 +397,8 @@ int main(int argc, char** argv) {
             amounts[2] = float(std::atof(argv[i + 3])); amounts[3] = float(std::atof(argv[i + 4])); i += 4;
         }
         else if (!std::strcmp(argv[i], "--max") && i + 1 < argc) maxFrames = std::atoi(argv[++i]);
+        else if (!std::strcmp(argv[i], "--dump") && i + 1 < argc) dumpDir = argv[++i];  // frames for an external matcher
+        else if (!std::strcmp(argv[i], "--method") && i + 1 < argc) method = std::atoi(argv[++i]);  // SceneMatchOptions::method
         else if (!std::strcmp(argv[i], "--sheet") && i + 1 < argc) sheet = argv[++i];
     }
     std::vector<std::pair<std::string, Image>> frames;
@@ -439,6 +443,7 @@ int main(int argc, char** argv) {
 
     if (!sheet.empty() && compareOnly) {  // untouched frames only: input, new match, old match
         SceneMatchOptions so0;
+        so0.method = method;
         so0.look.lutSize = 65;
         std::vector<Image> tiles;
         for (auto& [fname, F] : frames) {
@@ -471,6 +476,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     SceneMatchOptions so;
+    so.method = method;
     so.look.lutSize = 65;  // as the effect builds panel matches (kSlotLutSize)
     so.exposure = amounts[0]; so.whiteBalance = amounts[1]; so.contrast = amounts[2]; so.lookStrength = amounts[3];
     auto applyMatch = [&](const Image& in, const SceneMatch& m) {
@@ -538,6 +544,20 @@ int main(int argc, char** argv) {
         if (!sheet.empty() && sheetTiles.size() < 40) {
             sheetTiles.push_back({F, fname});
             sheetTiles.push_back({outBase, "matched"});
+        }
+        if (!dumpDir.empty()) {
+            savePng(dumpDir + "/" + fname.substr(0, fname.size() - 4) + "__untouched.png", F);
+            for (size_t k = 0; k < perts.size(); ++k) {
+                Image Fp = applyFn(F, perts[k].fn);
+                char nm[32];
+                std::snprintf(nm, sizeof nm, "__p%02zu.png", k);
+                savePng(dumpDir + "/" + fname.substr(0, fname.size() - 4) + nm, Fp);
+            }
+            if (FILE* f = std::fopen((dumpDir + "/perturbations.tsv").c_str(), "w")) {
+                for (size_t k = 0; k < perts.size(); ++k)
+                    std::fprintf(f, "%02zu\t%s\t%s\t%.4f\n", k, perts[k].group.c_str(), perts[k].name.c_str(), clippedShare(applyFn(F, perts[k].fn)) - baseClip);
+                std::fclose(f);
+            }
         }
         for (auto& p : perts) {
             Image Fp = applyFn(F, p.fn);
