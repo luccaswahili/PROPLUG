@@ -352,9 +352,9 @@ constexpr int kTone = 257;
 constexpr float kCanonSigma = 1.6f;     // canonical scene: log2 luminance ~ normal, sigma in stops
 constexpr float kCanonChroma = 0.07f;   // canonical RMS OKLab chroma
 constexpr float kStopFloor = 1.0f / 4096;
-// limits on the tone curve, in stops per stop: contrast at most 2.5x locally, never flattened below
+// limits on the tone curve, in stops per stop: contrast at most 2.2x locally, never flattened below
 // about a third, and the frame's overall range (5th-95th percentile) stretched at most 2x
-constexpr float kMinToneSlopeStops = 0.35f, kMaxToneSlopeStops = 2.5f, kMaxStretch = 2.0f;
+constexpr float kMinToneSlopeStops = 0.35f, kMaxToneSlopeStops = 2.2f, kMaxStretch = 2.0f;
 
 // Acklam's inverse normal CDF
 float invNormal(double p) {
@@ -629,18 +629,18 @@ struct LookProfile {
 class Grade {
 public:
     Grade(const LookProfile& ref, const LookProfile& src) : ref_(ref), src_(src) {
-        sat_ = src.sat > 1e-4f ? std::clamp(ref.sat / src.sat, 0.7f, 1.4f) : 1.0f;
+        sat_ = src.sat > 1e-4f ? std::clamp(ref.sat / src.sat, 0.75f, 1.25f) : 1.0f;
         hasSkin_ = ref.skinShare >= 0.02f && src.skinShare >= 0.005f;
         if (hasSkin_) {
-            skinDh_ = std::clamp(angDiff(ref.skinHue, src.skinHue), -0.14f, 0.14f);  // 8 deg
-            skinCr_ = src.skinC > 1e-4f ? std::clamp(ref.skinC / src.skinC, 0.8f, 1.2f) : 1.0f;
+            skinDh_ = std::clamp(angDiff(ref.skinHue, src.skinHue), -0.105f, 0.105f);  // 6 deg
+            skinCr_ = src.skinC > 1e-4f ? std::clamp(ref.skinC / src.skinC, 0.85f, 1.1f) : 1.0f;
         } else {
             skinCr_ = std::clamp(std::sqrt(sat_), 0.9f, 1.1f);
         }
         for (int k = 0; k < kSectors; ++k) {
             ev_[k] = std::min(1.0f, std::min(ref.secShare[k], src.secShare[k]) / 0.03f);
             dh_[k] = std::clamp(angDiff(ref.secHue[k], src.secHue[k]), -0.26f, 0.26f);  // 15 deg
-            cr_[k] = src.secC[k] > 1e-4f ? std::clamp(ref.secC[k] / src.secC[k], 0.75f, 1.33f) : sat_;
+            cr_[k] = src.secC[k] > 1e-4f ? std::clamp(ref.secC[k] / src.secC[k], 0.8f, 1.25f) : sat_;
         }
     }
 
@@ -824,7 +824,7 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
     }
     // 75th percentile of chroma; for the canonical distribution (Rayleigh, RMS kCanonChroma) it is 1.2x the RMS
     const float srcChroma = chromas.size() > 20 ? evenQuantiles(chromas, 5)[3] / 1.2f : kCanonChroma;
-    const float satScale = 1 + (std::clamp(kCanonChroma / std::max(srcChroma, 1e-4f), 0.6f, 1.6f) - 1) * cc;
+    const float satScale = 1 + (std::clamp(kCanonChroma / std::max(srcChroma, 1e-4f), 0.6f, 1.4f) - 1) * cc;
     auto canonical = [canonicalDisplay, offA, offB, satScale](Vec3 code) {
         Vec3 lab = rgbToOklab(canonicalDisplay(code));
         const float u = lab.r - 0.5f;
