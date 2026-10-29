@@ -5,7 +5,12 @@
 // host parameters and pixel buffers onto it.
 #include "LookMatch.h"
 
+#include <atomic>
+#include <cmath>
+#include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
+#include <ctime>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -108,18 +113,87 @@ bool isPremiere(PF_InData* in_data) { return in_data->appl_id == 'PrMr'; }
 
 // ---------- pixel conversion ----------
 
-enum class Fmt { AE8, AE16, PrBGRA8, PrBGRA32f, Unsupported };
+// ---------- diagnostics ----------
+// Off by default. Set LOOKMATCH_LOG=1 in the host's environment (on macOS, for a host started
+// from the Dock: `launchctl setenv LOOKMATCH_LOG 1`, then relaunch it) to append to
+// ~/Library/Logs/LookMatch.log.
 
-Fmt worldFormat(PF_InData* in_data, PF_EffectWorld* world) {
+bool logEnabled() {
+    static const bool on = [] {
+        const char* v = std::getenv("LOOKMATCH_LOG");
+        return v && v[0] == '1';
+    }();
+    return on;
+}
+
+void lmLog(const char* fmt, ...) {
+    if (!logEnabled()) return;
+    static std::mutex m;
+    const char* home = std::getenv("HOME");
+    if (!home) return;
+    std::string path = std::string(home) + "/Library/Logs/LookMatch.log";
+    std::lock_guard<std::mutex> lock(m);
+    FILE* f = std::fopen(path.c_str(), "a");
+    if (!f) return;
+    std::time_t t = std::time(nullptr);
+    char ts[32];
+    std::strftime(ts, sizeof ts, "%H:%M:%S", std::localtime(&t));
+    std::fprintf(f, "%s ", ts);
+    va_list ap;
+    va_start(ap, fmt);
+    std::vfprintf(f, fmt, ap);
+    va_end(ap);
+    std::fputc('\n', f);
+    std::fclose(f);
+}
+
+std::string fourcc(uint32_t v) {
+    char c[5] = {char(v & 0xff), char((v >> 8) & 0xff), char((v >> 16) & 0xff), char(v >> 24), 0};
+    for (char& ch : c) if (ch && (ch < 32 || ch > 126)) ch = '?';
+    return c;
+}
+
+// ---------- pixel formats ----------
+
+enum class Fmt { AE8, AE16, PrBGRA8, PrBGRA16, PrBGRA32f, PrARGB8, PrARGB16, PrARGB32f, PrVUYA8, PrVUYA8_709, PrVUYA32f,
+                 PrVUYA32f_709, Unsupported };
+
+// Premiere reports its own pixel format for every world; After Effects only has ARGB 8/16 bit.
+Fmt worldFormat(PF_InData* in_data, PF_EffectWorld* world, uint32_t* rawOut = nullptr) {
+    if (rawOut) *rawOut = 0;
     if (isPremiere(in_data)) {
         AEFX_SuiteScoper<PF_PixelFormatSuite1> pfs(in_data, kPFPixelFormatSuite, kPFPixelFormatSuiteVersion1);
         PrPixelFormat f = PrPixelFormat_Invalid;
         pfs->GetPixelFormat(world, &f);
-        if (f == PrPixelFormat_BGRA_4444_8u) return Fmt::PrBGRA8;
-        if (f == PrPixelFormat_BGRA_4444_32f) return Fmt::PrBGRA32f;
-        return Fmt::Unsupported;
+        if (rawOut) *rawOut = uint32_t(f);
+        switch (f) {
+            case PrPixelFormat_BGRA_4444_8u: return Fmt::PrBGRA8;
+            case PrPixelFormat_BGRA_4444_16u: return Fmt::PrBGRA16;
+            case PrPixelFormat_BGRA_4444_32f: return Fmt::PrBGRA32f;
+            case PrPixelFormat_ARGB_4444_8u: return Fmt::PrARGB8;
+            case PrPixelFormat_ARGB_4444_16u: return Fmt::PrARGB16;
+            case PrPixelFormat_ARGB_4444_32f: return Fmt::PrARGB32f;
+            case PrPixelFormat_VUYA_4444_8u: return Fmt::PrVUYA8;
+            case PrPixelFormat_VUYA_4444_8u_709: return Fmt::PrVUYA8_709;
+            case PrPixelFormat_VUYA_4444_32f: return Fmt::PrVUYA32f;
+            case PrPixelFormat_VUYA_4444_32f_709: return Fmt::PrVUYA32f_709;
+            default: return Fmt::Unsupported;
+        }
     }
     return PF_WORLD_IS_DEEP(world) ? Fmt::AE16 : Fmt::AE8;
+}
+
+// Formats Render can also write back (VUYA is only read, to sample a frame for matching).
+bool canWrite(Fmt f) {
+    return f == Fmt::AE8 || f == Fmt::AE16 || f == Fmt::PrBGRA8 || f == Fmt::PrBGRA32f;
+}
+
+// Y'CbCr (video range for 8 bit, Cb/Cr centred on 0.5 / 0) to R'G'B'
+inline void yuvToRgb(float y, float cb, float cr, bool rec709, float* o) {
+    const float kr = rec709 ? 0.2126f : 0.299f, kb = rec709 ? 0.0722f : 0.114f, kg = 1.0f - kr - kb;
+    o[0] = y + 2.0f * (1.0f - kr) * cr;
+    o[2] = y + 2.0f * (1.0f - kb) * cb;
+    o[1] = (y - kr * o[0] - kb * o[2]) / kg;
 }
 
 inline char* rowPtr(PF_EffectWorld* w, int y) { return reinterpret_cast<char*>(w->data) + std::ptrdiff_t(y) * w->rowbytes; }
@@ -139,7 +213,22 @@ void worldToFloat(PF_EffectWorld* w, Fmt fmt, int width, int height, std::vector
                     o[0] = p[2] / 255.0f; o[1] = p[1] / 255.0f; o[2] = p[0] / 255.0f; o[3] = p[3] / 255.0f; break; }
                 case Fmt::PrBGRA32f: { const float* p = reinterpret_cast<float*>(row) + x * 4;
                     o[0] = p[2]; o[1] = p[1]; o[2] = p[0]; o[3] = p[3]; break; }
-                default: break;
+                case Fmt::PrBGRA16: { const uint16_t* p = reinterpret_cast<uint16_t*>(row) + x * 4;
+                    o[0] = p[2] / 32768.0f; o[1] = p[1] / 32768.0f; o[2] = p[0] / 32768.0f; o[3] = p[3] / 32768.0f; break; }
+                case Fmt::PrARGB8: { const uint8_t* p = reinterpret_cast<uint8_t*>(row) + x * 4;
+                    o[0] = p[1] / 255.0f; o[1] = p[2] / 255.0f; o[2] = p[3] / 255.0f; o[3] = p[0] / 255.0f; break; }
+                case Fmt::PrARGB16: { const uint16_t* p = reinterpret_cast<uint16_t*>(row) + x * 4;
+                    o[0] = p[1] / 32768.0f; o[1] = p[2] / 32768.0f; o[2] = p[3] / 32768.0f; o[3] = p[0] / 32768.0f; break; }
+                case Fmt::PrARGB32f: { const float* p = reinterpret_cast<float*>(row) + x * 4;
+                    o[0] = p[1]; o[1] = p[2]; o[2] = p[3]; o[3] = p[0]; break; }
+                case Fmt::PrVUYA8: case Fmt::PrVUYA8_709: { const uint8_t* p = reinterpret_cast<uint8_t*>(row) + x * 4;
+                    // byte order V, U, Y, A; video range 16-235 luma, 16-240 chroma
+                    yuvToRgb((p[2] - 16) / 219.0f, (p[1] - 128) / 224.0f, (p[0] - 128) / 224.0f, fmt == Fmt::PrVUYA8_709, o);
+                    o[3] = p[3] / 255.0f; break; }
+                case Fmt::PrVUYA32f: case Fmt::PrVUYA32f_709: { const float* p = reinterpret_cast<float*>(row) + x * 4;
+                    yuvToRgb(p[2], p[1], p[0], fmt == Fmt::PrVUYA32f_709, o);
+                    o[3] = p[3]; break; }
+                default: o[0] = o[1] = o[2] = o[3] = 0.0f; break;
             }
         }
     }
@@ -168,26 +257,118 @@ void floatToWorld(const std::vector<float>& buf, int width, int height, PF_Effec
     }
 }
 
-// ---------- sequence data ----------
+// ---------- match data (hidden arbitrary parameter) ----------
 
-SeqData* lockSeq(PF_InData* in_data) {
-    if (!in_data->sequence_data) return nullptr;
-    auto* sd = reinterpret_cast<SeqData*>(PF_LOCK_HANDLE(in_data->sequence_data));
-    if (sd && (sd->magic != kSeqMagic || sd->version != kSeqVersion)) {
-        PF_UNLOCK_HANDLE(in_data->sequence_data);
-        return nullptr;
-    }
-    return sd;
+void initMatchData(MatchData* md) {
+    std::memset(md, 0, sizeof(MatchData));
+    md->magic = kMatchMagic;
+    md->version = kMatchVersion;
 }
-void unlockSeq(PF_InData* in_data) { PF_UNLOCK_HANDLE(in_data->sequence_data); }
 
-std::shared_ptr<lm::Lut3D> lutFromSeq(const SeqData* sd) {
+PF_Handle newMatchHandle(PF_InData* in_data) {
+    PF_Handle h = PF_NEW_HANDLE(sizeof(MatchData));
+    if (!h) return nullptr;
+    initMatchData(reinterpret_cast<MatchData*>(PF_LOCK_HANDLE(h)));
+    PF_UNLOCK_HANDLE(h);
+    return h;
+}
+
+// Locks the handle and returns it if it holds a MatchData of this version (else null, unlocked).
+MatchData* lockMatch(PF_InData* in_data, PF_Handle h) {
+    if (!h) return nullptr;
+    auto* md = reinterpret_cast<MatchData*>(PF_LOCK_HANDLE(h));
+    if (md && PF_GET_HANDLE_SIZE(h) >= sizeof(MatchData) && md->magic == kMatchMagic && md->version == kMatchVersion)
+        return md;
+    PF_UNLOCK_HANDLE(h);
+    return nullptr;
+}
+
+std::shared_ptr<lm::Lut3D> lutFromMatch(const MatchData* md) {
     auto lut = std::make_shared<lm::Lut3D>(kMatchLutSize);
-    const float* f = sd->matchLut;
+    const uint16_t* v = md->lut;
     for (int b = 0; b < kMatchLutSize; ++b)
         for (int g = 0; g < kMatchLutSize; ++g)
-            for (int r = 0; r < kMatchLutSize; ++r, f += 3) lut->at(r, g, b) = {f[0], f[1], f[2]};
+            for (int r = 0; r < kMatchLutSize; ++r, v += 3)
+                lut->at(r, g, b) = {v[0] / 65535.0f, v[1] / 65535.0f, v[2] / 65535.0f};
     return lut;
+}
+
+PF_Err ArbitraryCallback(PF_InData* in_data, PF_ArbParamsExtra* extra) {
+    if (extra->id != D_MATCH_DATA) return PF_Err_NONE;
+    switch (extra->which_function) {
+        case PF_Arbitrary_NEW_FUNC:
+            *extra->u.new_func_params.arbPH = newMatchHandle(in_data);
+            return *extra->u.new_func_params.arbPH ? PF_Err_NONE : PF_Err_OUT_OF_MEMORY;
+        case PF_Arbitrary_DISPOSE_FUNC:
+            if (extra->u.dispose_func_params.arbH) PF_DISPOSE_HANDLE(extra->u.dispose_func_params.arbH);
+            return PF_Err_NONE;
+        case PF_Arbitrary_COPY_FUNC: {
+            PF_Handle dst = PF_NEW_HANDLE(sizeof(MatchData));
+            if (!dst) return PF_Err_OUT_OF_MEMORY;
+            auto* d = reinterpret_cast<MatchData*>(PF_LOCK_HANDLE(dst));
+            if (MatchData* s = lockMatch(in_data, extra->u.copy_func_params.src_arbH)) {
+                std::memcpy(d, s, sizeof(MatchData));
+                PF_UNLOCK_HANDLE(extra->u.copy_func_params.src_arbH);
+            } else {
+                initMatchData(d);
+            }
+            PF_UNLOCK_HANDLE(dst);
+            *extra->u.copy_func_params.dst_arbPH = dst;
+            return PF_Err_NONE;
+        }
+        case PF_Arbitrary_FLAT_SIZE_FUNC:
+            *extra->u.flat_size_func_params.flat_data_sizePLu = sizeof(MatchData);
+            return PF_Err_NONE;
+        case PF_Arbitrary_FLATTEN_FUNC: {
+            auto& f = extra->u.flatten_func_params;
+            if (f.buf_sizeLu < sizeof(MatchData)) return PF_Err_INTERNAL_STRUCT_DAMAGED;
+            if (MatchData* md = lockMatch(in_data, f.arbH)) {
+                std::memcpy(f.flat_dataPV, md, sizeof(MatchData));
+                PF_UNLOCK_HANDLE(f.arbH);
+            } else {
+                initMatchData(reinterpret_cast<MatchData*>(f.flat_dataPV));
+            }
+            return PF_Err_NONE;
+        }
+        case PF_Arbitrary_UNFLATTEN_FUNC: {
+            auto& u = extra->u.unflatten_func_params;
+            PF_Handle h = newMatchHandle(in_data);
+            if (!h) return PF_Err_OUT_OF_MEMORY;
+            auto* src = reinterpret_cast<const MatchData*>(u.flat_dataPV);
+            if (u.buf_sizeLu >= sizeof(MatchData) && src->magic == kMatchMagic && src->version == kMatchVersion) {
+                std::memcpy(PF_LOCK_HANDLE(h), src, sizeof(MatchData));
+                PF_UNLOCK_HANDLE(h);
+            }
+            *u.arbPH = h;
+            return PF_Err_NONE;
+        }
+        case PF_Arbitrary_INTERP_FUNC: {
+            // not keyframeable, but answer anyway: hold the left value
+            PF_ArbParamsExtra copy = *extra;
+            copy.which_function = PF_Arbitrary_COPY_FUNC;
+            copy.u.copy_func_params.src_arbH = extra->u.interp_func_params.left_arbH;
+            copy.u.copy_func_params.dst_arbPH = extra->u.interp_func_params.interpPH;
+            return ArbitraryCallback(in_data, &copy);
+        }
+        case PF_Arbitrary_COMPARE_FUNC: {
+            auto& c = extra->u.compare_func_params;
+            uint64_t a = 0, b = 0;
+            if (MatchData* md = lockMatch(in_data, c.a_arbH)) { a = md->hasMatch ? md->matchId : 0; PF_UNLOCK_HANDLE(c.a_arbH); }
+            if (MatchData* md = lockMatch(in_data, c.b_arbH)) { b = md->hasMatch ? md->matchId : 0; PF_UNLOCK_HANDLE(c.b_arbH); }
+            *c.compareP = a == b ? PF_ArbCompare_EQUAL : PF_ArbCompare_NOT_EQUAL;
+            return PF_Err_NONE;
+        }
+        case PF_Arbitrary_PRINT_SIZE_FUNC:
+            *extra->u.print_size_func_params.print_sizePLu = 1;
+            return PF_Err_NONE;
+        case PF_Arbitrary_PRINT_FUNC:
+            if (extra->u.print_func_params.print_sizeLu > 0) extra->u.print_func_params.print_bufferPC[0] = 0;
+            return PF_Err_NONE;
+        case PF_Arbitrary_SCAN_FUNC:
+            return PF_Err_CANNOT_PARSE_KEYFRAME_TEXT;
+        default:
+            return PF_Err_NONE;
+    }
 }
 
 // ---------- commands ----------
@@ -302,32 +483,17 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     PF_ADD_FLOAT_SLIDERX("Mix", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_MIX);
     AEFX_CLR_STRUCT(def);
     PF_ADD_BUTTON("Lumetri LUT", "Export .cube...", 0, PF_ParamFlag_SUPERVISE, D_EXPORT_LUT);
+    AEFX_CLR_STRUCT(def);
+    PF_Handle matchDefault = newMatchHandle(in_data);
+    if (!matchDefault) return PF_Err_OUT_OF_MEMORY;
+    PF_ADD_ARBITRARY2("Match Data", 1, 1, PF_ParamFlag_CANNOT_TIME_VARY, PF_PUI_NO_ECW_UI, matchDefault, D_MATCH_DATA,
+                      nullptr);
 
     out_data->num_params = P_NUM_PARAMS;
     return err;
 }
 
-PF_Err SequenceSetup(PF_InData* in_data, PF_OutData* out_data) {
-    if (in_data->sequence_data) PF_DISPOSE_HANDLE(in_data->sequence_data);
-    PF_Handle h = PF_NEW_HANDLE(sizeof(SeqData));
-    if (!h) return PF_Err_OUT_OF_MEMORY;
-    auto* sd = reinterpret_cast<SeqData*>(PF_LOCK_HANDLE(h));
-    std::memset(sd, 0, sizeof(SeqData));
-    sd->magic = kSeqMagic;
-    sd->version = kSeqVersion;
-    PF_UNLOCK_HANDLE(h);
-    out_data->sequence_data = h;
-    return PF_Err_NONE;
-}
-
-PF_Err SequenceResetup(PF_InData* in_data, PF_OutData* out_data) {
-    if (!in_data->sequence_data) return SequenceSetup(in_data, out_data);
-    SeqData* sd = lockSeq(in_data);
-    if (!sd) return SequenceSetup(in_data, out_data);  // unknown version: start clean
-    unlockSeq(in_data);
-    return PF_Err_NONE;
-}
-
+// Builds before 1.0.1 kept the match in sequence data; it is no longer used. Free it if a project has it.
 PF_Err SequenceSetdown(PF_InData* in_data, PF_OutData* out_data) {
     if (in_data->sequence_data) PF_DISPOSE_HANDLE(in_data->sequence_data);
     out_data->sequence_data = nullptr;
@@ -346,6 +512,7 @@ PF_Err ComputeMatch(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* param
     size_t total = size_t(rw) * rh, step = std::max<size_t>(1, total / 250000);
     for (size_t i = 0; i < total; i += step) refPx.push_back({ref8[i * 3] / 255.0f, ref8[i * 3 + 1] / 255.0f, ref8[i * 3 + 2] / 255.0f});
     stbi_image_free(ref8);
+    lmLog("ComputeMatch: reference %s (%dx%d, %d channels)", refPath, rw, rh, rn);
 
     PF_ParamDef layer;
     AEFX_CLR_STRUCT(layer);
@@ -353,9 +520,13 @@ PF_Err ComputeMatch(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* param
     if (err) return err;
     PF_EffectWorld* world = &layer.u.ld;
     std::vector<lm::Vec3> srcPx;
-    if (world->data) {
+    uint32_t rawFmt = 0;
+    Fmt fmt = Fmt::Unsupported;
+    if (world->data) fmt = worldFormat(in_data, world, &rawFmt);
+    lmLog("ComputeMatch: checked-out layer data=%p %dx%d rowbytes=%d format=%s (%u)", world->data, world->width,
+          world->height, int(world->rowbytes), fourcc(rawFmt).c_str(), unsigned(fmt));
+    if (world->data && fmt != Fmt::Unsupported) {
         std::vector<float> buf;
-        Fmt fmt = worldFormat(in_data, world);
         worldToFloat(world, fmt, world->width, world->height, buf);
         lm::Engine e;
         e.setParams(readParams(params));
@@ -363,27 +534,75 @@ PF_Err ComputeMatch(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* param
         for (size_t i = 0; i < n; i += st) srcPx.push_back(e.neutralDisplay({buf[i * 4], buf[i * 4 + 1], buf[i * 4 + 2]}));
     }
     PF_CHECKIN_PARAM(in_data, &layer);
-    if (srcPx.empty()) { setError(out_data, "LookMatch: no footage under the playhead to match."); return PF_Err_NONE; }
+    if (srcPx.empty()) {
+        if (world->data && fmt == Fmt::Unsupported) {
+            std::string msg = "LookMatch: this clip's pixel format (" + fourcc(rawFmt) + ") isn't supported yet.";
+            setError(out_data, msg.c_str());
+        } else {
+            setError(out_data, "LookMatch: no footage under the playhead to match.");
+        }
+        return PF_Err_NONE;
+    }
+    // A black, blank or unreadable frame would make the matcher stretch noise into a wild LUT
+    // (posterised, oversaturated colour), so refuse to build a match from it.
+    double sum[3] = {0, 0, 0}, sq = 0;
+    for (const lm::Vec3& v : srcPx) {
+        sum[0] += v.r; sum[1] += v.g; sum[2] += v.b;
+        double l = 0.2126 * v.r + 0.7152 * v.g + 0.0722 * v.b;
+        sq += l * l;
+    }
+    const double n = double(srcPx.size());
+    const double meanL = (0.2126 * sum[0] + 0.7152 * sum[1] + 0.0722 * sum[2]) / n;
+    const double sdL = std::sqrt(std::max(0.0, sq / n - meanL * meanL));
+    double rsum[3] = {0, 0, 0};
+    for (const lm::Vec3& v : refPx) { rsum[0] += v.r; rsum[1] += v.g; rsum[2] += v.b; }
+    lmLog("ComputeMatch: source mean RGB %.3f %.3f %.3f, luma sd %.4f (%zu px); reference mean RGB %.3f %.3f %.3f",
+          sum[0] / n, sum[1] / n, sum[2] / n, sdL, srcPx.size(), rsum[0] / refPx.size(), rsum[1] / refPx.size(),
+          rsum[2] / refPx.size());
+    if (meanL < 0.01 || sdL < 0.01) {
+        setError(out_data, "LookMatch: the frame under the playhead is black or blank, so there is nothing to match. "
+                           "Move the playhead onto a normal frame and click Match to This Frame.");
+        return PF_Err_NONE;
+    }
 
     lm::MatchOptions mo;
     mo.regionStrength = F(params, P_REGION_STRENGTH) / 100.0f;
     mo.skinProtect = params[P_SKIN_AUTO]->u.bd.value ? -1.0f : F(params, P_SKIN_PROTECT) / 100.0f;
     mo.lutSize = kMatchLutSize;
     lm::MatchResult m = lm::matchLook(refPx, srcPx, mo);
+    for (float g : {0.18f, 0.5f, 1.0f}) {
+        lm::Vec3 v = m.lut.apply({g, g, g});
+        lmLog("ComputeMatch: LUT grey %.2f -> %.3f %.3f %.3f", g, v.r, v.g, v.b);
+    }
 
-    SeqData* sd = lockSeq(in_data);
-    if (!sd) return PF_Err_INTERNAL_STRUCT_DAMAGED;
-    float* f = sd->matchLut;
+    // Store the match in the hidden parameter and tell the host its value changed, so it reaches
+    // every render instance and is saved in the project.
+    PF_ParamDef* mp = params[P_MATCH_DATA];
+    if (!mp->u.arb_d.value) mp->u.arb_d.value = newMatchHandle(in_data);
+    MatchData* md = lockMatch(in_data, mp->u.arb_d.value);
+    if (!md) {
+        // wrong size or version: replace it with a fresh one
+        PF_DISPOSE_HANDLE(mp->u.arb_d.value);
+        mp->u.arb_d.value = newMatchHandle(in_data);
+        md = lockMatch(in_data, mp->u.arb_d.value);
+        if (!md) return PF_Err_OUT_OF_MEMORY;
+    }
+    uint16_t* q = md->lut;
     for (int b = 0; b < kMatchLutSize; ++b)
         for (int g = 0; g < kMatchLutSize; ++g)
-            for (int r = 0; r < kMatchLutSize; ++r, f += 3) {
+            for (int r = 0; r < kMatchLutSize; ++r, q += 3) {
                 const lm::Vec3& v = m.lut.at(r, g, b);
-                f[0] = v.r; f[1] = v.g; f[2] = v.b;
+                q[0] = uint16_t(lm::clamp01(v.r) * 65535.0f + 0.5f);
+                q[1] = uint16_t(lm::clamp01(v.g) * 65535.0f + 0.5f);
+                q[2] = uint16_t(lm::clamp01(v.b) * 65535.0f + 0.5f);
             }
-    std::strncpy(sd->referencePath, refPath, sizeof(sd->referencePath) - 1);
-    sd->hasMatch = 1;
-    sd->matchId = std::random_device{}() * 0x100000001ull + std::random_device{}();
-    unlockSeq(in_data);
+    std::memset(md->referencePath, 0, sizeof(md->referencePath));
+    std::strncpy(md->referencePath, refPath, sizeof(md->referencePath) - 1);
+    md->hasMatch = 1;
+    md->matchId = std::random_device{}() * 0x100000001ull + std::random_device{}();
+    lmLog("ComputeMatch: stored match %016llx in the Match Data parameter", (unsigned long long)md->matchId);
+    PF_UNLOCK_HANDLE(mp->u.arb_d.value);
+    mp->uu.change_flags |= PF_ChangeFlag_CHANGED_VALUE;
     out_data->out_flags |= PF_OutFlag_FORCE_RERENDER;
     return PF_Err_NONE;
 }
@@ -396,9 +615,12 @@ PF_Err UserChangedParam(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* p
             return ComputeMatch(in_data, out_data, params, path);
         }
         case P_REMATCH: {
-            SeqData* sd = lockSeq(in_data);
-            std::string path = sd && sd->referencePath[0] ? sd->referencePath : "";
-            if (sd) unlockSeq(in_data);
+            std::string path;
+            PF_Handle mh = params[P_MATCH_DATA]->u.arb_d.value;
+            if (MatchData* md = lockMatch(in_data, mh)) {
+                path = md->referencePath;
+                PF_UNLOCK_HANDLE(mh);
+            }
             if (path.empty()) { setError(out_data, "LookMatch: load a reference image first."); return PF_Err_NONE; }
             return ComputeMatch(in_data, out_data, params, path.c_str());
         }
@@ -407,9 +629,11 @@ PF_Err UserChangedParam(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* p
             if (!LM_SaveCubeDialog(path, sizeof path)) return PF_Err_NONE;
             lm::Engine e;
             e.setParams(readParams(params));
-            SeqData* sd = lockSeq(in_data);
-            if (sd && sd->hasMatch) e.setMatchLut(lutFromSeq(sd));
-            if (sd) unlockSeq(in_data);
+            PF_Handle mh = params[P_MATCH_DATA]->u.arb_d.value;
+            if (MatchData* md = lockMatch(in_data, mh)) {
+                if (md->hasMatch) e.setMatchLut(lutFromMatch(md));
+                PF_UNLOCK_HANDLE(mh);
+            }
             if (!e.bakeExportLut(65).writeCube(path, "LookMatch"))
                 setError(out_data, "LookMatch: could not write the LUT file.");
             return PF_Err_NONE;
@@ -421,8 +645,15 @@ PF_Err UserChangedParam(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* p
 
 PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], PF_LayerDef* output) {
     PF_EffectWorld* input = &params[P_INPUT_LAYER]->u.ld;
-    Fmt fmt = worldFormat(in_data, output);
-    if (fmt == Fmt::Unsupported || worldFormat(in_data, input) != fmt) {
+    uint32_t rawIn = 0, rawOut = 0;
+    Fmt fmt = worldFormat(in_data, output, &rawOut);
+    Fmt inFmt = worldFormat(in_data, input, &rawIn);
+    static std::atomic<int> logged{0};
+    if (logged.fetch_add(1) < 3)
+        lmLog("Render: in %s %dx%d rowbytes=%d, out %s %dx%d rowbytes=%d", fourcc(rawIn).c_str(), input->width,
+              input->height, int(input->rowbytes), fourcc(rawOut).c_str(), output->width, output->height,
+              int(output->rowbytes));
+    if (!canWrite(fmt) || inFmt != fmt) {
         setError(out_data, "LookMatch: unsupported pixel format.");
         return PF_Err_BAD_CALLBACK_PARAM;
     }
@@ -434,14 +665,16 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
 
     PoolEntry* pe = acquireEngine();
     pe->engine.setParams(readParams(params));
-    if (SeqData* sd = lockSeq(in_data)) {
-        uint64_t id = sd->hasMatch ? sd->matchId : 0;
-        if (id != pe->matchId) {
-            pe->engine.setMatchLut(sd->hasMatch ? lutFromSeq(sd) : nullptr);
-            pe->matchId = id;
-        }
-        unlockSeq(in_data);
+    uint64_t id = 0;
+    PF_Handle mh = params[P_MATCH_DATA]->u.arb_d.value;
+    MatchData* md = lockMatch(in_data, mh);
+    if (md && md->hasMatch) id = md->matchId;
+    if (id != pe->matchId) {
+        pe->engine.setMatchLut(id ? lutFromMatch(md) : nullptr);
+        pe->matchId = id;
+        lmLog("Render: now using match %016llx", (unsigned long long)id);
     }
+    if (md) PF_UNLOCK_HANDLE(mh);
     long frame = in_data->time_step ? long(in_data->current_time / in_data->time_step) : 0;
     lm::ImageView view{buf.data(), w, h, w * 4};
     pe->engine.render(view, view, frame);
@@ -469,9 +702,8 @@ extern "C" DllExport PF_Err EffectMain(PF_Cmd cmd, PF_InData* in_data, PF_OutDat
             case PF_Cmd_ABOUT: return About(in_data, out_data);
             case PF_Cmd_GLOBAL_SETUP: return GlobalSetup(in_data, out_data);
             case PF_Cmd_PARAMS_SETUP: return ParamsSetup(in_data, out_data);
-            case PF_Cmd_SEQUENCE_SETUP: return SequenceSetup(in_data, out_data);
-            case PF_Cmd_SEQUENCE_RESETUP: return SequenceResetup(in_data, out_data);
             case PF_Cmd_SEQUENCE_SETDOWN: return SequenceSetdown(in_data, out_data);
+            case PF_Cmd_ARBITRARY_CALLBACK: return ArbitraryCallback(in_data, reinterpret_cast<PF_ArbParamsExtra*>(extra));
             case PF_Cmd_USER_CHANGED_PARAM:
                 return UserChangedParam(in_data, out_data, params, reinterpret_cast<PF_UserChangedParamExtra*>(extra));
             case PF_Cmd_RENDER: return Render(in_data, out_data, params, output);
