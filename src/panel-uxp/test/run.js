@@ -76,6 +76,21 @@ test("bridge: applyParams adds LookMatch, skips audio, one undo step", async () 
   }
 });
 
+test("bridge: popups are 1-based in the panel, 0-based in Premiere", async () => {
+  const v1 = makeItem("V1", true, true);
+  const b = new Bridge(makePremiere({ selected: [v1] }), fsp, os.tmpdir());
+  const { component } = await b.findLookMatch(v1);
+  assert.strictEqual((await b.readParams(component))[P.negative], FILM_DEFAULTS[P.negative], "default reads back 1-based");
+  await b.applyParams("selection", { [P.negative]: 7, [P.print]: 1, [P.footageEncoding]: 3 });
+  const raw = Object.fromEntries(component.list.map((p) => [p.displayName, p.value]));
+  assert.strictEqual(raw[P.negative], 6);
+  assert.strictEqual(raw[P.print], 0);
+  assert.strictEqual(raw[P.footageEncoding], 2);
+  const back = await b.readParams(component);
+  assert.strictEqual(back[P.negative], 7);
+  assert.strictEqual(back[P.footageEncoding], 3);
+});
+
 test("bridge: unknown control is reported, nothing is half-applied", async () => {
   const v1 = makeItem("V1", true, true);
   const ppro = makePremiere({ selected: [v1] });
@@ -96,6 +111,23 @@ test("bridge: applyReference writes refs/<slot>.txt and sets the slot", async ()
   const params = await b.readParams(component);
   assert.strictEqual(params[P.referenceSlot], res.slot);
   assert.strictEqual(params[P.matchStrength], 70);
+});
+
+test("bridge: every clip gets its own reference slot", async () => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "lm-"));
+  const clips = [makeItem("a", true, true), makeItem("b", true, false), makeItem("c", true, true)];
+  const ppro = makePremiere({ selected: clips });
+  const b = new Bridge(ppro, fsp, dir);
+  const res = await b.applyReference("selection", "/r.png", { [P.matchStrength]: 50 });
+  assert.strictEqual(new Set(res.slots).size, 3, "distinct slots");
+  for (const [i, c] of clips.entries()) {
+    const { component } = await b.findLookMatch(c);
+    const p = await b.readParams(component);
+    assert.strictEqual(p[P.referenceSlot], res.slots[i]);
+    assert.strictEqual(p[P.matchStrength], 50);
+    assert.strictEqual(await fsp.readFile(path.join(dir, "refs", `${res.slots[i]}.txt`), "utf-8"), "/r.png");
+  }
+  assert.strictEqual(ppro.log.filter((l) => l.label === "LookMatch").length, 1, "still one undo step");
 });
 
 test("bridge: whole-sequence scope and empty selection", async () => {
@@ -148,7 +180,7 @@ test("bridge: captureFrame sets the capture slot and returns the PNG the effect 
 
 test("agent: whitelist only, values sanitised", async () => {
   assert.deepStrictEqual(Object.keys(COMMANDS).sort(),
-    ["applyParams", "applyReference", "captureFrame", "clipNames", "exportCube", "ping", "readSelected", "saveProject"]);
+    ["applyParams", "applyReference", "captureFrame", "clipNames", "exportCube", "inspectParams", "ping", "readSelected", "saveProject", "selectClip", "setPlayhead", "timeline"]);
   const v1 = makeItem("V1", true, true);
   const ppro = makePremiere({ selected: [v1] });
   const b = new Bridge(ppro, fsp, os.tmpdir());

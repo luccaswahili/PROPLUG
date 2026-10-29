@@ -37,6 +37,10 @@ const P = {
   captureSlot: "Capture Slot",
 };
 
+// Popup controls. The panel uses 1-based values like Effect Controls; Premiere's UXP API reads
+// and writes them 0-based, so lib/bridge.js converts at the boundary.
+const POPUPS = new Set([P.footageEncoding, P.negative, P.print]);
+
 // Order matches the effect's popups (src/core/film.cpp); index 0 here is popup value 1.
 const NEGATIVES = ["Tungsten 500T", "Daylight 250D", "Fine Grain 50D", "Portrait 400", "Low-Con Neutral",
                    "Night 800T", "Black & White 400"];
@@ -100,4 +104,4 @@ function guessEncoding(name) {
   return 1;
 }
 
-module.exports = { P, NEGATIVES, PRINTS, ENCODINGS, FILM_DEFAULTS, FILM_LOOKS, lookParams, stockCombos, guessEncoding };
+module.exports = { P, POPUPS, NEGATIVES, PRINTS, ENCODINGS, FILM_DEFAULTS, FILM_LOOKS, lookParams, stockCombos, guessEncoding };

@@ -679,26 +679,6 @@ void dumpFrame(const std::string& file, const std::vector<float>& buf, int width
     stbi_write_png(file.c_str(), width, height, 3, to8bitRGB(buf, width, height).data(), width * 3);
 }
 
-// Checks out the effect's input layer at the current time and reads it (the same path
-// Load Reference uses). Render's own input world is not used for matching: Premiere hands
-// Render several buffer formats (8u and 32f), while the checked-out layer is consistent.
-bool checkoutFrame(PF_InData* in_data, std::vector<float>& buf, int& width, int& height) {
-    PF_ParamDef layer;
-    AEFX_CLR_STRUCT(layer);
-    if (PF_CHECKOUT_PARAM(in_data, P_INPUT_LAYER, in_data->current_time, in_data->time_step, in_data->time_scale, &layer))
-        return false;
-    PF_EffectWorld* world = &layer.u.ld;
-    uint32_t rawFmt = 0;
-    Fmt fmt = world->data ? worldFormat(in_data, world, &rawFmt) : Fmt::Unsupported;
-    width = world->width;
-    height = world->height;
-    lmLog("checkoutFrame: t=%d/%u %dx%d format=%s", int(in_data->current_time), unsigned(in_data->time_scale), width,
-          height, fourcc(rawFmt).c_str());
-    if (fmt != Fmt::Unsupported) worldToFloat(world, fmt, width, height, buf);
-    PF_CHECKIN_PARAM(in_data, &layer);
-    return !buf.empty();
-}
-
 std::string refsDir() {
 #ifdef AE_OS_WIN
     const char* base = std::getenv("APPDATA");
@@ -892,8 +872,17 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
     if (md) PF_UNLOCK_HANDLE(mh);
     if (slotWins) {
         constexpr uint64_t kSlotIdBase = 0x534C4F5400000000ull;  // 'SLOT'
-        lut = slotLut(slot, [&](std::vector<float>& f, int& fw, int& fh) { return checkoutFrame(in_data, f, fw, fh); },
-                      params);
+        // Match from the frame this render is drawing for this clip (Render's input, before grading).
+        // Checking out the layer at current_time is wrong here: in Premiere it returns whatever is on
+        // the track at that sequence time, which for a clip that isn't under the playhead is another clip.
+        lut = slotLut(slot, [&](std::vector<float>& f, int& fw, int& fh) {
+                          f = buf;
+                          fw = w;
+                          fh = h;
+                          lmLog("Render: slot %ld source = this render's input (t=%d/%u, %dx%d)", slot,
+                                int(in_data->current_time), unsigned(in_data->time_scale), w, h);
+                          return true;
+                      }, params);
         id = lut ? kSlotIdBase | uint64_t(slot) : 0;
     }
     if (id != pe->matchId) {
@@ -926,14 +915,17 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
         std::lock_guard<std::mutex> lock(cm);
         if (captured.insert(captureSlot).second) {
             const std::string base = refsDir() + "capture-" + std::to_string(captureSlot);
-            std::vector<float> f;
-            int fw = 0, fh = 0;
             std::string result = "ok";
-            if (!checkoutFrame(in_data, f, fw, fh)) result = "could not read the frame";
-            else if (!stbi_write_png((base + ".png").c_str(), fw, fh, 3, to8bitRGB(f, fw, fh).data(), fw * 3))
+            if (isMediaPending(buf, w, h)) {
+                captured.erase(captureSlot);  // footage still loading: try again on the next render
+                result.clear();
+            } else if (!stbi_write_png((base + ".png").c_str(), w, h, 3, to8bitRGB(buf, w, h).data(), w * 3)) {
                 result = "could not write " + base + ".png";
-            if (FILE* df = std::fopen((base + ".done").c_str(), "wb")) { std::fputs(result.c_str(), df); std::fclose(df); }
-            lmLog("Render: capture slot %ld -> %s.png (%s)", captureSlot, base.c_str(), result.c_str());
+            }
+            if (!result.empty()) {
+                if (FILE* df = std::fopen((base + ".done").c_str(), "wb")) { std::fputs(result.c_str(), df); std::fclose(df); }
+                lmLog("Render: capture slot %ld -> %s.png (%s)", captureSlot, base.c_str(), result.c_str());
+            }
         }
     }
     long frame = in_data->time_step ? long(in_data->current_time / in_data->time_step) : 0;

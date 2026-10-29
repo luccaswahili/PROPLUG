@@ -1,7 +1,7 @@
 // Everything that talks to Premiere's `premierepro` UXP module. The module, fs and the data
 // folder are injected so the logic can be tested in node with a mock (test/mock-premiere.js).
 
-const { P } = require("./looks.js");
+const { P, POPUPS } = require("./looks.js");
 const { joinPath } = require("./library.js");
 
 const LOOKMATCH = "PROPLUGS LookMatch";
@@ -98,33 +98,66 @@ class Bridge {
 
   async readParams(component) {
     const out = {};
+    // Premiere 26.5: param.getStartValue() -> Keyframe { value: { value: <number|bool> } }.
+    // (getValueAtTime needs a TickTime; never call it with a number, it crashes Premiere.)
+    const unwrap = (v) => {
+      for (let i = 0; i < 3 && v && typeof v === "object" && "value" in v; i++) v = v.value;
+      return v;
+    };
     for (const [name, p] of await this.paramMap(component)) {
       try {
-        const v = await p.getValue();
-        const value = v && typeof v === "object" && "value" in v ? v.value : v;
-        if (typeof value === "number" || typeof value === "boolean") out[name] = value;
-      } catch (e) { /* buttons, topics and hidden data have no value */ }
+        const getter = typeof p.getStartValue === "function" ? "getStartValue" : "getValue";
+        const value = unwrap(await p[getter]());
+        if (typeof value === "number") out[name] = POPUPS.has(name) ? value + 1 : value;
+        else if (typeof value === "boolean") out[name] = value;
+      } catch (e) { /* hidden data has no value */ }
     }
     return out;
   }
 
   // Sets params on LookMatch on every item (adding the effect where missing) as ONE undo step.
+  // Premiere invalidates script objects across model changes, so the param objects and their
+  // keyframes/actions are created inside the same locked access as the transaction.
+  // `params` is an object, or a function (itemIndex) -> object for per-clip values.
   async applyParams(scope, params) {
     const { project, items } = await this.items(scope);
+    const paramsFor = typeof params === "function" ? params : () => params;
     if (!items.length) throw new Error(scope === "sequence" ? "The sequence has no video clips." : "Select a video clip on the timeline.");
-    const actions = [];
     let added = 0;
+    const targets = [];
     for (const item of items) {
-      const { component, added: wasAdded } = await this.ensureLookMatch(project, item);
+      const { added: wasAdded } = await this.ensureLookMatch(project, item);
       if (wasAdded) added++;
+    }
+    // fresh component/param objects after any additions
+    for (const [i, item] of items.entries()) {
+      const { component } = await this.findLookMatch(item);
       const map = await this.paramMap(component);
-      for (const [name, value] of Object.entries(params)) {
-        const p = map.get(name);
-        if (!p) throw new Error(`LookMatch has no "${name}" control (update the effect).`);
-        actions.push(p.createSetValueAction(p.createKeyframe(value), true));
+      const entries = Object.entries(paramsFor(i));
+      for (const [name] of entries)
+        if (!map.has(name)) throw new Error(`LookMatch has no "${name}" control (update the effect).`);
+      targets.push({ map, entries });
+    }
+    if (targets.some((t) => t.entries.length)) {
+      let stage = "transaction";
+      try {
+        this.transaction(project, "LookMatch", (ca) => {
+          for (const { map, entries } of targets) {
+            for (const [name, value] of entries) {
+              const p = map.get(name);
+              const v = POPUPS.has(name) ? Math.max(0, Math.round(value) - 1) : value;
+              stage = `keyframe for ${name}`;
+              const kf = p.createKeyframe(v);
+              stage = `set-value action for ${name}`;
+              ca.addAction(p.createSetValueAction(kf, true));
+            }
+          }
+          stage = "commit";
+        });
+      } catch (e) {
+        throw new Error(`${e.message} (at ${stage})`);
       }
     }
-    if (actions.length) this.transaction(project, "LookMatch", (ca) => actions.forEach((a) => ca.addAction(a)));
     return { clips: items.length, added };
   }
 
@@ -136,10 +169,15 @@ class Bridge {
     return slot;
   }
 
+  // Each clip gets its own slot, so its match is built from its own frame (a shared slot would be
+  // built once, from whichever clip Premiere renders first, and reused for all of them).
   async applyReference(scope, path, extraParams) {
-    const slot = await this.writeReferenceSlot(path);
-    const res = await this.applyParams(scope, Object.assign({ [P.referenceSlot]: slot }, extraParams || {}));
-    return Object.assign({ slot }, res);
+    const { items } = await this.items(scope);
+    if (!items.length) throw new Error(scope === "sequence" ? "The sequence has no video clips." : "Select a video clip on the timeline.");
+    const slots = [];
+    for (let i = 0; i < items.length; i++) slots.push(await this.writeReferenceSlot(path));
+    const res = await this.applyParams(scope, (i) => Object.assign({ [P.referenceSlot]: slots[i] }, extraParams || {}));
+    return Object.assign({ slot: slots[0], slots }, res);
   }
 
   // Sets a "request slot" param on the first selected clip's LookMatch after writing the request
@@ -151,7 +189,8 @@ class Bridge {
     const slot = 1 + Math.floor(Math.random() * 999998);
     const base = joinPath(this.refsDir, `${kind}-${slot}`);
     if (requestText !== null) await this.fs.writeFile(`${base}.txt`, requestText, { encoding: "utf-8" });
-    const { component } = await this.ensureLookMatch(project, items[0]);
+    await this.ensureLookMatch(project, items[0]);
+    const { component } = await this.findLookMatch(items[0]);
     const p = (await this.paramMap(component)).get(paramName);
     if (!p) throw new Error(`This LookMatch build has no "${paramName}" (update the effect).`);
     this.transaction(project, `LookMatch: ${kind}`, (ca) => ca.addAction(p.createSetValueAction(p.createKeyframe(slot), true)));
@@ -188,6 +227,97 @@ class Bridge {
       if (component) return { name: await item.getName(), params: await this.readParams(component) };
     }
     return null;
+  }
+
+  // Selects the index-th video clip of the sequence (for scripted tests). Premiere builds differ in
+  // the selection API, so try the known shapes and report what worked.
+  async selectClip(index) {
+    const { project, sequence, items } = await this.allVideoItems();
+    const item = items[index];
+    if (!item) throw new Error(`no video clip #${index} (sequence has ${items.length})`);
+    const T = this.ppro.TrackItemSelection;
+    const tries = [];
+    if (T && typeof T.createEmptySelection === "function") {
+      tries.push(["TrackItemSelection.createEmptySelection + addItem + sequence.setSelection", async () => {
+        const sel = await T.createEmptySelection();
+        await sel.addItem(item, true);
+        await sequence.setSelection(sel);
+      }]);
+    }
+    if (typeof sequence.getSelection === "function") {
+      tries.push(["sequence.getSelection().clearSelection/addItem", async () => {
+        const sel = await sequence.getSelection();
+        if (sel.clearSelection) await sel.clearSelection();
+        await sel.addItem(item, true);
+        if (sequence.setSelection) await sequence.setSelection(sel);
+      }]);
+    }
+    const errors = [];
+    for (const [name, fn] of tries) {
+      try {
+        await fn();
+        const now = await (await sequence.getSelection()).getTrackItems();
+        if (now.length) return { selected: await item.getName(), via: name };
+        errors.push(`${name}: nothing selected`);
+      } catch (e) { errors.push(`${name}: ${e.message}`); }
+    }
+    throw new Error(`could not select: ${errors.join(" | ") || "no selection API"}`);
+  }
+
+  // Read-only debugging aid: what the param objects of LookMatch on the selection look like.
+  async inspectParams(limit) {
+    const { items } = await this.selectedVideoItems();
+    if (!items.length) throw new Error("nothing selected");
+    const { component } = await this.findLookMatch(items[0]);
+    if (!component) throw new Error("no LookMatch on the selection");
+    const describe = (v) => {
+      if (v === null || typeof v !== "object") return { type: typeof v, value: v };
+      const keys = [];
+      for (const k in v) keys.push(k);
+      let proto = [];
+      try { proto = Object.getOwnPropertyNames(Object.getPrototypeOf(v)); } catch (e) { /* ignore */ }
+      return { type: "object", ctor: v.constructor && v.constructor.name, keys, proto, value: v.value };
+    };
+    const out = [];
+    const n = await component.getParamCount();
+    for (let i = 0; i < Math.min(n, limit || 8); i++) {
+      const p = await component.getParam(i);
+      const entry = { i, name: p.displayName, param: describe(p) };
+      // Only argument-less getters: getValueAtTime(<number>) crashes Premiere 26.5 (it needs a TickTime).
+      for (const m of ["getValue", "getStartValue"]) {
+        if (typeof p[m] !== "function") continue;
+        try { entry[m] = describe(await p[m]()); } catch (e) { entry[m] = { error: e.message }; }
+      }
+      out.push(entry);
+    }
+    return out;
+  }
+
+  // Read-only: video clips with start/end (seconds) and the playhead position.
+  async timeline() {
+    const { sequence, items } = await this.allVideoItems();
+    const secs = async (fn) => {
+      try { const t = await fn(); return t && typeof t.seconds === "number" ? Math.round(t.seconds * 1000) / 1000 : null; }
+      catch (e) { return null; }
+    };
+    const clips = [];
+    for (const [i, item] of items.entries()) {
+      clips.push({ i, name: await item.getName(),
+                   start: await secs(() => item.getStartTime()), end: await secs(() => item.getEndTime()) });
+    }
+    const playhead = await secs(() => sequence.getPlayerPosition());
+    return { playhead, clips };
+  }
+
+  // Moves the playhead (seconds). Needs a TickTime: Premiere crashes on raw numbers for time args.
+  async setPlayhead(seconds) {
+    const T = this.ppro.TickTime;
+    if (!T || typeof T.createWithSeconds !== "function") throw new Error("TickTime.createWithSeconds unavailable");
+    const { sequence } = await this.context();
+    if (typeof sequence.setPlayerPosition !== "function") throw new Error("setPlayerPosition unavailable");
+    await sequence.setPlayerPosition(T.createWithSeconds(Number(seconds)));
+    const now = await sequence.getPlayerPosition();
+    return { playhead: now && typeof now.seconds === "number" ? now.seconds : null };
   }
 
   async clipNames(scope) {

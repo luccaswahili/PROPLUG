@@ -5,7 +5,11 @@ function makeParam(name, value) {
   return {
     displayName: name,
     value,
-    async getValue() { if (this.value === undefined) throw new Error("no value"); return this.value; },
+    // like Premiere 26.5: a Keyframe whose value is { value }
+    async getStartValue() {
+      if (this.value === undefined) throw new Error("no value");
+      return { value: { value: this.value }, position: 0 };
+    },
     createKeyframe(v) { return { v }; },
     createSetValueAction(kf) { return { apply: () => { this.value = kf.v; } }; },
   };
@@ -25,11 +29,14 @@ function makeComponent(matchName, params) {
 
 function lookMatchComponent() {
   const { FILM_DEFAULTS, P } = require("../lib/looks.js");
+  // popups are 0-based in Premiere's UXP API (FILM_DEFAULTS are 1-based like Effect Controls)
+  const zeroBased = {};
+  for (const [k, v] of Object.entries(FILM_DEFAULTS)) zeroBased[k] = [P.negative, P.print].includes(k) ? v - 1 : v;
   return makeComponent("AE.PROPLUGS LookMatch", Object.assign({
     "Look Match": undefined, Reference: undefined, [P.matchStrength]: 100, [P.regionMatching]: 100,
-    [P.autoSkin]: true, [P.skinProtect]: 30, [P.footageEncoding]: 1, [P.exposure]: 0, [P.temperature]: 0, [P.tint]: 0,
+    [P.autoSkin]: true, [P.skinProtect]: 30, [P.footageEncoding]: 0, [P.exposure]: 0, [P.temperature]: 0, [P.tint]: 0,
     [P.mix]: 100, [P.referenceSlot]: 0, [P.exportSlot]: 0, [P.captureSlot]: 0,
-  }, FILM_DEFAULTS));
+  }, zeroBased));
 }
 
 function makeItem(name, video, withLookMatch) {
