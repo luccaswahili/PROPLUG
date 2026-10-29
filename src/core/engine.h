@@ -79,6 +79,7 @@ public:
     Engine();
     void setParams(const Params& p);  // cheap when only spatial settings change
     void setMatchLut(std::shared_ptr<const Lut3D> lut);
+    bool grades() const;  // the colour chain changes the picture (deband runs only then)
     const Params& params() const { return p_; }
 
     // in and out may be the same buffer. frame drives grain, weave and flicker.

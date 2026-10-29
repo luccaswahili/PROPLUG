@@ -129,6 +129,13 @@ void Engine::setParams(const Params& p) {
     if (colour || gainChanged) directDirty_ = true;
 }
 
+// Whether the colour chain changes the picture at all: with nothing to expand, the source's steps
+// stay as invisible as they were, so deband is off and an untouched clip passes through exactly.
+bool Engine::grades() const {
+    return (match_ && p_.matchStrength > 0) || p_.filmStrength > 0 || p_.fade > 0 || p_.exposure != 0 ||
+           p_.temperature != 0 || p_.tint != 0 || p_.input != InputSpace::Rec709;
+}
+
 void Engine::setMatchLut(std::shared_ptr<const Lut3D> lut) {
     match_ = std::move(lut);
     lutDirty_ = true;
@@ -243,7 +250,7 @@ Vec3 debandAt(const float* data, int width, int height, int stride, int x, int y
 }
 
 void Engine::render(const ImageView& in, const ImageView& out, long frame) {
-    const DebandParams db = debandParams(p_.deband, in.height);
+    const DebandParams db = debandParams(grades() ? p_.deband : 0, in.height);
     auto source = [&](int x, int y) { return debandAt(in.data, in.width, in.height, in.stride, x, y, db); };
     const int w = in.width, h = in.height;
     // Fast path: with no weave, flicker or light spreading, the whole colour chain (decode, gain,
@@ -365,7 +372,7 @@ bool Engine::prepareDirect(int w, int h, long frame, FinishParams& fp) {
     fp.cy = h * 0.5f;
     fp.invDiag = 1.0f / std::sqrt(fp.cx * fp.cx + fp.cy * fp.cy);
     fp.frame = int(frame);
-    fp.deband = debandParams(p_.deband, h);
+    fp.deband = debandParams(grades() ? p_.deband : 0, h);
     return true;
 }
 
