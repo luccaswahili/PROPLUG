@@ -16,10 +16,26 @@
             my.result.message = 'LookMatch needs OS X 10.9 Mavericks or later.';
             return false;
         }
+        // Installer JavaScript can't list a folder, so probe the folder names Adobe uses:
+        // "Adobe Premiere Pro CC 2015" ... "CC 2019", then "Adobe Premiere Pro 2020" onwards.
         var names = [];
-        var apps = system.files.fileExistsAtPath('/Applications') ? system.files.directoryContentsAtPath('/Applications') : [];
-        for (var i = 0; i < apps.length; i++) {
-            if (apps[i].indexOf('Adobe Premiere Pro') == 0 || apps[i].indexOf('Adobe After Effects') == 0) names.push(apps[i]);
+        var products = ['Adobe Premiere Pro', 'Adobe After Effects'];
+        for (var p = 0; p < products.length; p++) {
+            for (var y = 2015; y <= 2032; y++) {
+                var candidates = [products[p] + ' CC ' + y, products[p] + ' ' + y];
+                for (var c = 0; c < candidates.length; c++) {
+                    var app = '/Applications/' + candidates[c] + '/' + candidates[c] + '.app';
+                    try {
+                        if (!system.files.fileExistsAtPath(app)) continue;
+                        var label = candidates[c];
+                        var b = system.files.bundleAtPath(app);
+                        if (b && b.CFBundleShortVersionString) label += ' (' + b.CFBundleShortVersionString + ')';
+                        names.push(label);
+                    } catch (e) {
+                        system.log('LookMatch: could not inspect ' + app + ': ' + e);
+                    }
+                }
+            }
         }
         if (names.length == 0) {
             my.result.type = 'Warning';
