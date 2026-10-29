@@ -67,9 +67,13 @@ private:
     Vec3 inputGain() const;
     Vec3 colorFromLinear(Vec3 lin) const;  // scene linear Rec.709 -> display
     void rebuildLut();
+    template <class ColourAt>
+    void finish(const ImageView& in, const ImageView& out, long frame, ColourAt colourAt);
 
     Params p_;
     bool lutDirty_ = true;
+    bool directDirty_ = true;  // direct_ needs rebuilding (colour or input gain changed)
+    Lut3D direct_;             // input code -> display in one lookup, for frames with no spatial effects
     std::shared_ptr<const Lut3D> match_;
     std::unique_ptr<FilmModel> film_;
     Lut3D lut_;  // log2-shaped scene linear -> display

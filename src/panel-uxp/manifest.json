@@ -1,0 +1,19 @@
+{
+  "id": "com.proplugs.lookmatch.panel",
+  "name": "LookMatch",
+  "version": "0.5.2",
+  "manifestVersion": 5,
+  "main": "index.html",
+  "host": { "app": "premierepro", "minVersion": "25.0" },
+  "requiredPermissions": { "localFileSystem": "fullAccess" },
+  "entrypoints": [
+    {
+      "type": "panel",
+      "id": "lookmatchPanel",
+      "label": { "default": "LookMatch" },
+      "minimumSize": { "width": 280, "height": 320 },
+      "preferredDockedSize": { "width": 340, "height": 620 },
+      "preferredFloatingSize": { "width": 360, "height": 640 }
+    }
+  ]
+}

@@ -83,22 +83,31 @@ Set `CODESIGN_ID` and `SIGN_ID` to your Developer ID identities for a signed rel
 ./build/lookmatch-render --list-stocks
 ```
 
+## LookMatch panel (Premiere Pro 2025+)
+
+A dockable panel drives the effect. It has a reference library with drag and drop, matching of selected clips or a
+whole sequence, hero-clip shot matching, 8 film looks plus every stock combination with previews rendered from your
+own shot, all film controls, saved looks (`.lmlook`), `.cube` export and a before/after split. See
+**[docs/PANEL.md](docs/PANEL.md)**.
+
+![LookMatch panel in Premiere](docs/panel/premiere-with-panel.png)
+
 ## Status
 
 | Part | State |
 |---|---|
-| Engine (match, film, texture) | Built and tested here: `engine_tests` passes. With everything off the output is pixel-identical. |
-| Command-line renderer | Built and tested here |
-| Premiere effect wrapper | Builds on macOS (Xcode 27, AE SDK 27.0) as a universal arm64 + x86_64 bundle. Not yet run inside Premiere. |
-| Speed | CPU only for now. 1080p with every effect on takes ≈ 0.17 s/frame on 4 cores. Colour-only takes a few ms. Real-time playback needs the GPU path (next). |
+| Engine (match, film, texture) | `engine_tests` passes: identity, film neutrality, export LUT, self-match, fast path vs full path, concurrent renders |
+| Command-line renderer | Built and tested |
+| Premiere effect | Tested in Premiere Pro 2026 (26.5) on macOS: matching, film, split view, panel link. Universal arm64 + x86_64. |
+| Panel | Tested in Premiere 26.5 through its test agent (self-test 8/8 or 9/9 with a reference); `node src/panel-uxp/test/run.js` |
+| Speed (CPU, M1 Max) | 1080p colour-only 9.6 ms, everything on 42 ms; 4K colour-only 37 ms, everything on 196 ms |
 
 ## Next steps
 
-1. **First build in Premiere** on your machine. Fix SDK compile issues and check the pixel formats (BGRA 8-bit and 32f).
-2. **GPU render path** (Premiere GPU effect API with Metal / CUDA / OpenCL kernels) for real-time 4K playback. The engine is already split into a LUT plus a few blur and noise passes, which map straight onto GPU kernels.
-3. **Editor window** with a reference drop zone, before/after split and stock thumbnails, like the QG UI.
-4. **DaVinci Resolve OFX** build, reusing the same engine.
-5. Installer, licensing, and per-stock tuning against real film scans.
+1. **GPU render path** (Premiere GPU effect API with Metal / CUDA kernels) for real-time 4K with halation, bloom and grain.
+2. **Windows build** of the effect and panel (the code is portable; untested).
+3. **DaVinci Resolve OFX** build, reusing the same engine.
+4. Signed and notarised installers, licensing, and per-stock tuning against real film scans.
 
 ## Sample renders
 

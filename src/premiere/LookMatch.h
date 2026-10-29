@@ -70,6 +70,20 @@ enum ParamId {
     P_MIX,
     P_EXPORT_LUT,
     P_MATCH_DATA,  // hidden: the computed match (see MatchData)
+    // panel link (set by the LookMatch panel; see panelReferencePath)
+    P_PANEL_TOPIC,
+    P_REF_SLOT,     // match to the reference the panel wrote for this slot
+    P_BAKE,         // button: store the panel's match in the project
+    P_EXPORT_SLOT,  // write a .cube to the path the panel wrote for this slot
+    P_CAPTURE_SLOT, // save this clip's frame as refs/capture-<slot>.png (hero clip -> reference)
+    P_THUMBS_SLOT,  // render small previews of the looks listed in refs/thumbs-<slot>.txt
+    P_PANEL_TOPIC_END,
+    // compare: before/after split wipe
+    P_COMPARE_TOPIC,
+    P_SPLIT,        // checkbox
+    P_SPLIT_POS,    // % across the frame
+    P_SPLIT_ANGLE,  // degrees, 0 = vertical line
+    P_COMPARE_TOPIC_END,
     P_NUM_PARAMS
 };
 
@@ -80,7 +94,8 @@ enum DiskId {
     D_FILM_TOPIC, D_FILM_STRENGTH, D_NEGATIVE, D_PRINT, D_PRINTER_R, D_PRINTER_G, D_PRINTER_B, D_FILM_SAT, D_FADE, D_FILM_TOPIC_END,
     D_TEXTURE_TOPIC, D_HALATION, D_HALATION_RADIUS, D_HALATION_THRESHOLD, D_BLOOM, D_BLOOM_RADIUS, D_BLOOM_THRESHOLD,
     D_GRAIN, D_GRAIN_SIZE, D_GRAIN_COLOR, D_SOFTNESS, D_VIGNETTE, D_WEAVE, D_FLICKER, D_TEXTURE_TOPIC_END,
-    D_MIX, D_EXPORT_LUT, D_MATCH_DATA
+    D_MIX, D_EXPORT_LUT, D_MATCH_DATA, D_REF_SLOT, D_PANEL_TOPIC, D_BAKE, D_EXPORT_SLOT, D_PANEL_TOPIC_END, D_CAPTURE_SLOT, D_THUMBS_SLOT,
+    D_COMPARE_TOPIC, D_SPLIT, D_SPLIT_POS, D_SPLIT_ANGLE, D_COMPARE_TOPIC_END
 };
 
 // The computed match lives in a hidden arbitrary-data parameter, not in sequence data:
@@ -96,7 +111,7 @@ struct MatchData {
     uint32_t version;
     uint64_t matchId;  // changes every time a new match is computed (engine cache key)
     int32_t hasMatch;
-    int32_t reserved;
+    int32_t panelSlot;  // Reference Slot value this match was made at (a newer panel slot wins)
     char referencePath[1024];  // UTF-8, used by Match to This Frame
     uint16_t lut[kMatchLutSize * kMatchLutSize * kMatchLutSize * 3];  // display RGB 0..1 as 0..65535
 };

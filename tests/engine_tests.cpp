@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstdio>
 #include <random>
+#include <thread>
 #include "engine.h"
 #include "matcher.h"
 
@@ -103,6 +104,55 @@ int main() {
         e.render({src.data(), w, h, w * 4}, {c.data(), w, h, w * 4}, 6);
         CHECK(a == b, "grain not deterministic");
         CHECK(a != c, "grain identical across frames");
+    }
+
+    // 7. the fast colour path (one baked LUT) matches the full scene-linear path, for log input,
+    //    film, fade, exposure and white balance; a negligible softness forces the full path.
+    //    (Rec.709 uses one baked LUT; log input decodes per pixel in the same pass.)
+    {
+        std::vector<float> src(size_t(w) * h * 4);
+        for (int i = 0; i < w * h; ++i) {
+            src[i * 4] = 0.94f * float(i % 97) / 96; src[i * 4 + 1] = 0.94f * float(i % 61) / 60;
+            src[i * 4 + 2] = 0.94f * float(i % 43) / 42; src[i * 4 + 3] = 1;
+        }
+        Params p;
+        p.input = InputSpace::SonySLog3; p.exposure = 0.4f; p.temperature = 0.2f; p.tint = -0.1f;
+        p.filmStrength = 0.8f; p.film.negative = 1; p.film.print = 2; p.fade = 0.1f; p.vignette = 0.3f;
+        Params slow = p; slow.softness = 1e-6f;
+        Engine ef, es; ef.setParams(p); es.setParams(slow);
+        std::vector<float> a(src.size()), b(src.size());
+        ef.render({src.data(), w, h, w * 4}, {a.data(), w, h, w * 4}, 0);
+        es.render({src.data(), w, h, w * 4}, {b.data(), w, h, w * 4}, 0);
+        double sum = 0; float worst = 0;
+        for (size_t i = 0; i < a.size(); ++i) { float d = std::abs(a[i] - b[i]); sum += d; worst = std::max(worst, d); }
+        CHECK(sum / a.size() * 255 < 0.5 && worst * 255 < 4, "fast path (log) differs: mean %.3f max %.3f /255", sum / a.size() * 255, worst * 255);
+        // and the baked Rec.709 path
+        Params r = p; r.input = InputSpace::Rec709;
+        Params rs = r; rs.softness = 1e-6f;
+        Engine rf, rsl; rf.setParams(r); rsl.setParams(rs);
+        rf.render({src.data(), w, h, w * 4}, {a.data(), w, h, w * 4}, 0);
+        rsl.render({src.data(), w, h, w * 4}, {b.data(), w, h, w * 4}, 0);
+        sum = 0; worst = 0;
+        for (size_t i = 0; i < a.size(); ++i) { float d = std::abs(a[i] - b[i]); sum += d; worst = std::max(worst, d); }
+        // both paths interpolate a 65^3 LUT (code space vs shaped linear), so allow a few levels at worst
+        CHECK(sum / a.size() * 255 < 0.25 && worst * 255 < 8, "fast path (709) differs: mean %.3f max %.3f /255", sum / a.size() * 255, worst * 255);
+    }
+
+    // 8. several host threads rendering at once (as Premiere does) give the same pixels as one at a time
+    {
+        Params p; p.filmStrength = 1; p.halation = 0.5f; p.bloom = 0.3f; p.grain = 0.6f; p.softness = 0.2f;
+        auto src = randomImage(w, h, 3);
+        std::vector<float> ref(src.size());
+        { Engine e; e.setParams(p); e.render({src.data(), w, h, w * 4}, {ref.data(), w, h, w * 4}, 4); }
+        std::vector<std::vector<float>> outs(6, std::vector<float>(src.size()));
+        std::vector<std::thread> threads;
+        for (int t = 0; t < 6; ++t)
+            threads.emplace_back([&, t] {
+                Engine e; e.setParams(p);
+                for (int k = 0; k < 5; ++k) e.render({src.data(), w, h, w * 4}, {outs[t].data(), w, h, w * 4}, 4);
+            });
+        for (auto& th : threads) th.join();
+        for (int t = 0; t < 6; ++t) CHECK(outs[t] == ref, "thread %d rendered different pixels", t);
     }
 
     std::printf(failures ? "%d check(s) failed\n" : "all engine tests passed\n", failures);
