@@ -38,6 +38,16 @@ async function findLookMatch(item) {
   return { chain, component: null };
 }
 
+async function isVideoItem(item) {
+  const chain = await item.getComponentChain();
+  const n = await chain.getComponentCount();
+  for (let i = 0; i < n; i++) {
+    const name = await (await chain.getComponentAtIndex(i)).getMatchName();
+    if (name === "AE.ADBE Motion" || name === "AE.ADBE Opacity") return true;
+  }
+  return false;
+}
+
 async function findParam(component, name) {
   const n = await component.getParamCount();
   for (let i = 0; i < n; i++) {
@@ -83,6 +93,8 @@ async function matchSelectedTo(refPath) {
   const { project, items } = await selectedTrackItems();
   if (!items.length) { log("select a clip on the timeline first"); return; }
   for (const item of items) {
+    // a selected clip brings its audio half along; effects only go on the video part
+    if (!(await isVideoItem(item))) continue;
     let { chain, component } = await findLookMatch(item);
     if (!component) {
       component = await ppro.VideoFilterFactory.createComponent("AE." + MATCH_NAME);

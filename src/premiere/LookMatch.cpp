@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <random>
@@ -503,48 +504,30 @@ PF_Err SequenceSetdown(PF_InData* in_data, PF_OutData* out_data) {
     return PF_Err_NONE;
 }
 
-// Compute a match from the stored reference and the input layer at the current time.
-PF_Err ComputeMatch(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], const char* refPath) {
+// Builds a match LUT from a reference still and a frame (RGBA float, as read by worldToFloat).
+// Returns false with a user-facing message if the reference can't be read or the frame is unusable.
+bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, int height, PF_ParamDef* params[],
+                lm::Lut3D& lutOut, std::string& error) {
     int rw, rh, rn;
     unsigned char* ref8 = stbi_load(refPath, &rw, &rh, &rn, 3);
     if (!ref8) {
-        setError(out_data, "LookMatch: could not read the reference image (PNG, JPEG, TGA or BMP).");
-        return PF_Err_NONE;
+        error = "LookMatch: could not read the reference image (PNG, JPEG, TGA or BMP).";
+        return false;
     }
     std::vector<lm::Vec3> refPx;
     size_t total = size_t(rw) * rh, step = std::max<size_t>(1, total / 250000);
     for (size_t i = 0; i < total; i += step) refPx.push_back({ref8[i * 3] / 255.0f, ref8[i * 3 + 1] / 255.0f, ref8[i * 3 + 2] / 255.0f});
     stbi_image_free(ref8);
-    lmLog("ComputeMatch: reference %s (%dx%d, %d channels)", refPath, rw, rh, rn);
+    lmLog("buildMatch: reference %s (%dx%d, %d channels)", refPath, rw, rh, rn);
 
-    PF_ParamDef layer;
-    AEFX_CLR_STRUCT(layer);
-    PF_Err err = PF_CHECKOUT_PARAM(in_data, P_INPUT_LAYER, in_data->current_time, in_data->time_step, in_data->time_scale, &layer);
-    if (err) return err;
-    PF_EffectWorld* world = &layer.u.ld;
     std::vector<lm::Vec3> srcPx;
-    uint32_t rawFmt = 0;
-    Fmt fmt = Fmt::Unsupported;
-    if (world->data) fmt = worldFormat(in_data, world, &rawFmt);
-    lmLog("ComputeMatch: checked-out layer data=%p %dx%d rowbytes=%d format=%s (%u)", world->data, world->width,
-          world->height, int(world->rowbytes), fourcc(rawFmt).c_str(), unsigned(fmt));
-    if (world->data && fmt != Fmt::Unsupported) {
-        std::vector<float> buf;
-        worldToFloat(world, fmt, world->width, world->height, buf);
-        lm::Engine e;
-        e.setParams(readParams(params));
-        size_t n = size_t(world->width) * world->height, st = std::max<size_t>(1, n / 250000);
-        for (size_t i = 0; i < n; i += st) srcPx.push_back(e.neutralDisplay({buf[i * 4], buf[i * 4 + 1], buf[i * 4 + 2]}));
-    }
-    PF_CHECKIN_PARAM(in_data, &layer);
+    lm::Engine e;
+    e.setParams(readParams(params));
+    size_t n = size_t(width) * height, st = std::max<size_t>(1, n / 250000);
+    for (size_t i = 0; i < n; i += st) srcPx.push_back(e.neutralDisplay({buf[i * 4], buf[i * 4 + 1], buf[i * 4 + 2]}));
     if (srcPx.empty()) {
-        if (world->data && fmt == Fmt::Unsupported) {
-            std::string msg = "LookMatch: this clip's pixel format (" + fourcc(rawFmt) + ") isn't supported yet.";
-            setError(out_data, msg.c_str());
-        } else {
-            setError(out_data, "LookMatch: no footage under the playhead to match.");
-        }
-        return PF_Err_NONE;
+        error = "LookMatch: no footage under the playhead to match.";
+        return false;
     }
     // A black, blank or unreadable frame would make the matcher stretch noise into a wild LUT
     // (posterised, oversaturated colour), so refuse to build a match from it.
@@ -554,30 +537,57 @@ PF_Err ComputeMatch(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* param
         double l = 0.2126 * v.r + 0.7152 * v.g + 0.0722 * v.b;
         sq += l * l;
     }
-    const double n = double(srcPx.size());
-    const double meanL = (0.2126 * sum[0] + 0.7152 * sum[1] + 0.0722 * sum[2]) / n;
-    const double sdL = std::sqrt(std::max(0.0, sq / n - meanL * meanL));
-    double rsum[3] = {0, 0, 0};
-    for (const lm::Vec3& v : refPx) { rsum[0] += v.r; rsum[1] += v.g; rsum[2] += v.b; }
-    lmLog("ComputeMatch: source mean RGB %.3f %.3f %.3f, luma sd %.4f (%zu px); reference mean RGB %.3f %.3f %.3f",
-          sum[0] / n, sum[1] / n, sum[2] / n, sdL, srcPx.size(), rsum[0] / refPx.size(), rsum[1] / refPx.size(),
-          rsum[2] / refPx.size());
+    const double cnt = double(srcPx.size());
+    const double meanL = (0.2126 * sum[0] + 0.7152 * sum[1] + 0.0722 * sum[2]) / cnt;
+    const double sdL = std::sqrt(std::max(0.0, sq / cnt - meanL * meanL));
+    lmLog("buildMatch: source %dx%d mean RGB %.3f %.3f %.3f, luma sd %.4f", width, height, sum[0] / cnt, sum[1] / cnt,
+          sum[2] / cnt, sdL);
     if (meanL < 0.01 || sdL < 0.01) {
-        setError(out_data, "LookMatch: the frame under the playhead is black or blank, so there is nothing to match. "
-                           "Move the playhead onto a normal frame and click Match to This Frame.");
-        return PF_Err_NONE;
+        error = "LookMatch: the frame under the playhead is black or blank, so there is nothing to match. "
+                "Move the playhead onto a normal frame and match again.";
+        return false;
     }
 
     lm::MatchOptions mo;
     mo.regionStrength = F(params, P_REGION_STRENGTH) / 100.0f;
     mo.skinProtect = params[P_SKIN_AUTO]->u.bd.value ? -1.0f : F(params, P_SKIN_PROTECT) / 100.0f;
     mo.lutSize = kMatchLutSize;
-    lm::MatchResult m = lm::matchLook(refPx, srcPx, mo);
+    lutOut = lm::matchLook(refPx, srcPx, mo).lut;
     for (float g : {0.18f, 0.5f, 1.0f}) {
-        lm::Vec3 v = m.lut.apply({g, g, g});
-        lmLog("ComputeMatch: LUT grey %.2f -> %.3f %.3f %.3f", g, v.r, v.g, v.b);
+        lm::Vec3 v = lutOut.apply({g, g, g});
+        lmLog("buildMatch: LUT grey %.2f -> %.3f %.3f %.3f", g, v.r, v.g, v.b);
     }
+    return true;
+}
 
+// Compute a match from the stored reference and the input layer at the current time.
+PF_Err ComputeMatch(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], const char* refPath) {
+    PF_ParamDef layer;
+    AEFX_CLR_STRUCT(layer);
+    PF_Err err = PF_CHECKOUT_PARAM(in_data, P_INPUT_LAYER, in_data->current_time, in_data->time_step, in_data->time_scale, &layer);
+    if (err) return err;
+    PF_EffectWorld* world = &layer.u.ld;
+    uint32_t rawFmt = 0;
+    Fmt fmt = Fmt::Unsupported;
+    if (world->data) fmt = worldFormat(in_data, world, &rawFmt);
+    lmLog("ComputeMatch: checked-out layer data=%p %dx%d rowbytes=%d format=%s (%u)", world->data, world->width,
+          world->height, int(world->rowbytes), fourcc(rawFmt).c_str(), unsigned(fmt));
+    std::vector<float> buf;
+    const int width = world->width, height = world->height;
+    if (world->data && fmt != Fmt::Unsupported) worldToFloat(world, fmt, width, height, buf);
+    PF_CHECKIN_PARAM(in_data, &layer);
+    if (buf.empty()) {
+        std::string msg = world->data ? "LookMatch: this clip's pixel format (" + fourcc(rawFmt) + ") isn't supported yet."
+                                      : "LookMatch: no footage under the playhead to match.";
+        setError(out_data, msg.c_str());
+        return PF_Err_NONE;
+    }
+    lm::Lut3D lut(kMatchLutSize);
+    std::string error;
+    if (!buildMatch(refPath, buf, width, height, params, lut, error)) {
+        setError(out_data, error.c_str());
+        return PF_Err_NONE;
+    }
     // Store the match in the hidden parameter and tell the host its value changed, so it reaches
     // every render instance and is saved in the project.
     PF_ParamDef* mp = params[P_MATCH_DATA];
@@ -594,7 +604,7 @@ PF_Err ComputeMatch(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* param
     for (int b = 0; b < kMatchLutSize; ++b)
         for (int g = 0; g < kMatchLutSize; ++g)
             for (int r = 0; r < kMatchLutSize; ++r, q += 3) {
-                const lm::Vec3& v = m.lut.at(r, g, b);
+                const lm::Vec3& v = lut.at(r, g, b);
                 q[0] = uint16_t(lm::clamp01(v.r) * 65535.0f + 0.5f);
                 q[1] = uint16_t(lm::clamp01(v.g) * 65535.0f + 0.5f);
                 q[2] = uint16_t(lm::clamp01(v.b) * 65535.0f + 0.5f);
@@ -602,6 +612,7 @@ PF_Err ComputeMatch(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* param
     std::memset(md->referencePath, 0, sizeof(md->referencePath));
     std::strncpy(md->referencePath, refPath, sizeof(md->referencePath) - 1);
     md->hasMatch = 1;
+    md->panelSlot = int32_t(F(params, P_REF_SLOT));  // this match supersedes the panel's current slot
     md->matchId = std::random_device{}() * 0x100000001ull + std::random_device{}();
     lmLog("ComputeMatch: stored match %016llx in the Match Data parameter", (unsigned long long)md->matchId);
     PF_UNLOCK_HANDLE(mp->u.arb_d.value);
@@ -612,14 +623,18 @@ PF_Err ComputeMatch(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* param
 
 // The LookMatch panel can't pass a string to an effect, so it writes the reference path to
 // <app support>/PRO PLUGS/LookMatch/refs/<slot>.txt and sets Reference Slot = <slot>.
-std::string panelReferencePath(long slot) {
+std::string refsDir() {
 #ifdef AE_OS_WIN
     const char* base = std::getenv("APPDATA");
-    std::string dir = base ? std::string(base) + "\\PRO PLUGS\\LookMatch\\refs\\" : "";
+    return base ? std::string(base) + "\\PRO PLUGS\\LookMatch\\refs\\" : "";
 #else
     const char* base = std::getenv("HOME");
-    std::string dir = base ? std::string(base) + "/Library/Application Support/PRO PLUGS/LookMatch/refs/" : "";
+    return base ? std::string(base) + "/Library/Application Support/PRO PLUGS/LookMatch/refs/" : "";
 #endif
+}
+
+std::string panelReferencePath(long slot) {
+    std::string dir = refsDir();
     if (dir.empty()) return "";
     FILE* f = std::fopen((dir + std::to_string(slot) + ".txt").c_str(), "rb");
     if (!f) return "";
@@ -629,6 +644,72 @@ std::string panelReferencePath(long slot) {
     std::string path(buf, n);
     while (!path.empty() && (path.back() == '\n' || path.back() == '\r')) path.pop_back();
     return path;
+}
+
+// Premiere does not send PF_Cmd_USER_CHANGED_PARAM when a panel sets a parameter, so a new
+// Reference Slot is noticed in Render: the first render builds the match from its own input
+// frame and every other render (any thread, any instance) reuses it via this cache, which is
+// also written to refs/<slot>.lut so other effect instances and later sessions get the same LUT.
+constexpr uint32_t kSlotLutMagic = 0x4C4D534C;  // 'LMSL'
+
+std::shared_ptr<const lm::Lut3D> readSlotLut(const std::string& file) {
+    FILE* f = std::fopen(file.c_str(), "rb");
+    if (!f) return nullptr;
+    uint32_t hdr[2] = {0, 0};
+    std::vector<float> v(size_t(kMatchLutSize) * kMatchLutSize * kMatchLutSize * 3);
+    bool ok = std::fread(hdr, sizeof hdr, 1, f) == 1 && hdr[0] == kSlotLutMagic && hdr[1] == uint32_t(kMatchLutSize) &&
+              std::fread(v.data(), sizeof(float), v.size(), f) == v.size();
+    std::fclose(f);
+    if (!ok) return nullptr;
+    auto lut = std::make_shared<lm::Lut3D>(kMatchLutSize);
+    const float* q = v.data();
+    for (int b = 0; b < kMatchLutSize; ++b)
+        for (int g = 0; g < kMatchLutSize; ++g)
+            for (int r = 0; r < kMatchLutSize; ++r, q += 3) lut->at(r, g, b) = {q[0], q[1], q[2]};
+    return lut;
+}
+
+void writeSlotLut(const std::string& file, const lm::Lut3D& lut) {
+    std::string tmp = file + ".tmp" + std::to_string(std::random_device{}());
+    FILE* f = std::fopen(tmp.c_str(), "wb");
+    if (!f) return;
+    uint32_t hdr[2] = {kSlotLutMagic, uint32_t(kMatchLutSize)};
+    std::fwrite(hdr, sizeof hdr, 1, f);
+    for (int b = 0; b < kMatchLutSize; ++b)
+        for (int g = 0; g < kMatchLutSize; ++g)
+            for (int r = 0; r < kMatchLutSize; ++r) {
+                const lm::Vec3& c = lut.at(r, g, b);
+                float q[3] = {c.r, c.g, c.b};
+                std::fwrite(q, sizeof q, 1, f);
+            }
+    std::fclose(f);
+    std::rename(tmp.c_str(), file.c_str());  // atomic: readers see the old file or the whole new one
+}
+
+std::shared_ptr<const lm::Lut3D> slotLut(long slot, const std::vector<float>& frame, int width, int height,
+                                         PF_ParamDef* params[]) {
+    static std::mutex m;
+    static std::map<long, std::shared_ptr<const lm::Lut3D>> cache;  // null entry = failed, don't retry every frame
+    std::lock_guard<std::mutex> lock(m);
+    auto it = cache.find(slot);
+    if (it != cache.end()) return it->second;
+    const std::string file = refsDir() + std::to_string(slot) + ".lut";
+    std::shared_ptr<const lm::Lut3D> lut = readSlotLut(file);
+    if (lut) {
+        lmLog("Render: slot %ld loaded from %s", slot, file.c_str());
+    } else {
+        std::string ref = panelReferencePath(slot), error;
+        auto built = std::make_shared<lm::Lut3D>(kMatchLutSize);
+        if (!ref.empty() && buildMatch(ref.c_str(), frame, width, height, params, *built, error)) {
+            writeSlotLut(file, *built);
+            lut = built;
+            lmLog("Render: slot %ld matched to %s", slot, ref.c_str());
+        } else {
+            lmLog("Render: slot %ld could not be matched: %s", slot, ref.empty() ? "no reference file" : error.c_str());
+        }
+    }
+    cache[slot] = lut;
+    return lut;
 }
 
 PF_Err UserChangedParam(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], PF_UserChangedParamExtra* extra) {
@@ -697,19 +778,25 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
 
     PoolEntry* pe = acquireEngine();
     pe->engine.setParams(readParams(params));
-    uint64_t id = 0;
+    // Which match to use: the one stored by Load Reference / Match to This Frame, unless the panel
+    // has set a newer Reference Slot since then.
+    const long slot = long(F(params, P_REF_SLOT));
     PF_Handle mh = params[P_MATCH_DATA]->u.arb_d.value;
     MatchData* md = lockMatch(in_data, mh);
-    if (md && md->hasMatch) id = md->matchId;
+    const bool slotWins = slot > 0 && !(md && md->hasMatch && md->panelSlot == slot);
+    uint64_t id = !slotWins && md && md->hasMatch ? md->matchId : 0;
+    std::shared_ptr<const lm::Lut3D> lut = id && id != pe->matchId ? lutFromMatch(md) : nullptr;
+    if (md) PF_UNLOCK_HANDLE(mh);
+    if (slotWins) {
+        constexpr uint64_t kSlotIdBase = 0x534C4F5400000000ull;  // 'SLOT'
+        lut = slotLut(slot, buf, w, h, params);
+        id = lut ? kSlotIdBase | uint64_t(slot) : 0;
+    }
     if (id != pe->matchId) {
-        pe->engine.setMatchLut(id ? lutFromMatch(md) : nullptr);
+        pe->engine.setMatchLut(id ? lut : nullptr);
         pe->matchId = id;
         lmLog("Render: now using match %016llx", (unsigned long long)id);
     }
-    if (md) PF_UNLOCK_HANDLE(mh);
-    static std::atomic<long> lastSlot{0};
-    long slot = long(F(params, P_REF_SLOT));
-    if (lastSlot.exchange(slot) != slot) lmLog("Render: sees Reference Slot = %ld", slot);
     long frame = in_data->time_step ? long(in_data->current_time / in_data->time_step) : 0;
     lm::ImageView view{buf.data(), w, h, w * 4};
     pe->engine.render(view, view, frame);
