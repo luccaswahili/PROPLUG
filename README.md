@@ -94,3 +94,9 @@ The effect shows up under **Effects > Video Effects > PRO PLUGS > LookMatch**.
 
 Sample footage is the astronaut, coffee and rocket images from scikit-image's public sample data.
 The reference grades were made with the Python prototype.
+
+## Python prototype
+
+`prototype/` holds the original Python look matcher (`lookmatch.py`, needs numpy and pillow). It
+makes a .cube LUT straight from a reference still and a footage frame, and `test_regions.py` has
+the region-matching tests. The C++ matcher in `src/core/matcher.cpp` is a port of it.
