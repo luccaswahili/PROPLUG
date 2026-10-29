@@ -57,6 +57,24 @@ struct FinishParams {
     int frame = 0;
 };
 
+// Everything the full (scene-linear) path needs per frame, so a GPU can reproduce it: decode,
+// weave and flicker, halation/bloom glow and softness, then the shaped LUT and finish().
+struct FullParams {
+    int input = 0;              // InputSpace
+    float M[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};  // camera gamut -> Rec.709, row major
+    float gain[3] = {1, 1, 1};  // exposure, white balance and this frame's flicker
+    float dx = 0, dy = 0;       // gate weave offset in pixels
+    // glow passes at 1/4 resolution (radius in 1/4-res pixels, 0 = off)
+    float halThreshold = 0, halStrength = 0, halTint[3] = {1.0f, 0.28f, 0.06f};
+    int halRadius4 = 0;
+    float bloomThreshold = 0, bloomStrength = 0;
+    int bloomRadius4 = 0;
+    // softness: full-resolution blur (2 passes) mixed in
+    int softRadius = 0;
+    float softStrength = 0;
+    float shaperOff = 0, shaperStops = 0;  // LUT shaper, see shaperEncode
+};
+
 class Engine {
 public:
     Engine();
@@ -76,6 +94,9 @@ public:
     // halation, bloom or softness), builds that LUT, fills `fp` and returns true.
     bool prepareDirect(int w, int h, long frame, FinishParams& fp);
     const Lut3D& directLut() const { return direct_; }
+    // GPU support for every other frame: builds the shaped LUT and fills both parameter sets.
+    void prepareFull(int w, int h, long frame, FullParams& full, FinishParams& fp);
+    const Lut3D& shapedLut() const { return lut_; }
 
 private:
     Vec3 inputGain() const;

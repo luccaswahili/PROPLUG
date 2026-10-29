@@ -322,6 +322,55 @@ bool Engine::prepareDirect(int w, int h, long frame, FinishParams& fp) {
     return true;
 }
 
+void Engine::prepareFull(int w, int h, long frame, FullParams& full, FinishParams& fp) {
+    if (lutDirty_) rebuildLut();
+    const float scale = h / 1080.0f;
+    const NegativeStock& stock = negativeStock(p_.film.negative);
+    const float filmMix = p_.filmStrength;
+    const float stockHal = 1 + filmMix * (stock.halation / 0.4f - 1);
+    full.input = int(p_.input);
+    const Mat3& M = gamutToRec709(p_.input);
+    for (int r = 0; r < 3; ++r)
+        for (int c = 0; c < 3; ++c) full.M[r * 3 + c] = M.m[r][c];
+    Vec3 gain = inputGain();
+    if (p_.flicker > 0) gain = gain * std::exp2(p_.flicker * 0.12f * timeNoise(frame * 0.9f, 7));
+    full.gain[0] = gain.r; full.gain[1] = gain.g; full.gain[2] = gain.b;
+    full.dx = full.dy = 0;
+    if (p_.weave > 0) {
+        full.dx = p_.weave * scale * timeNoise(frame * 0.35f, 1);
+        full.dy = p_.weave * scale * 0.6f * timeNoise(frame * 0.35f, 2);
+    }
+    full.halRadius4 = 0;
+    if (p_.halation * stockHal > 0) {
+        full.halThreshold = p_.halationThreshold;
+        full.halStrength = p_.halation * stockHal * 1.5f;
+        full.halRadius4 = std::max(1, int(18 * p_.halationRadius * scale) / 4);
+    }
+    full.bloomRadius4 = 0;
+    if (p_.bloom > 0) {
+        full.bloomThreshold = p_.bloomThreshold;
+        full.bloomStrength = p_.bloom;
+        full.bloomRadius4 = std::max(1, int(60 * p_.bloomRadius * scale) / 4);
+    }
+    full.softRadius = 0;
+    if (p_.softness > 0) {
+        full.softRadius = std::max(1, int(std::round(1.5f * scale)));
+        full.softStrength = std::min(1.0f, p_.softness);
+    }
+    full.shaperOff = kShaperOff;
+    full.shaperStops = kShaperStops;
+    // finish() constants (same as prepareDirect)
+    fp.grainAmp = p_.grain * (1 + filmMix * (stock.grain / 0.4f - 1)) * 0.09f;
+    fp.cell = std::max(0.5f, p_.grainSize * (1 + filmMix * (stock.grainSize - 1)) * scale);
+    fp.grainColor = p_.grainColor;
+    fp.vignette = p_.vignette;
+    fp.mix = p_.mix;
+    fp.cx = w * 0.5f;
+    fp.cy = h * 0.5f;
+    fp.invDiag = 1.0f / std::sqrt(fp.cx * fp.cx + fp.cy * fp.cy);
+    fp.frame = int(frame);
+}
+
 // Grain, vignette and mix on top of the graded colour `colourAt(x, y)`, written to `out`.
 template <class ColourAt>
 void Engine::finish(const ImageView& in, const ImageView& out, long frame, ColourAt colourAt) {
