@@ -138,7 +138,7 @@ throwaway virtualenv; nothing is shipped or linked.
 |---|---|---|---|---|
 | 0, thing by thing (default) | 1.48 | 2.91 | 7/8 frames, all synthetic scenes | 16 |
 | 1, HM-MKL-HM | 0.66 | 1.62 | **no**: the red stage's hues collapse | 87, and 56 greys that get darker as the input gets brighter |
-| 2, mean of 0 and 1 | about 1.0 | about 2.1 | **no** | 35 |
+| 2, mean of 0 and 1 | 0.95 | 1.94 | **no** | 35 |
 | 3, hybrid | 1.39 | 2.97 | 7/8, all synthetic scenes | 21 |
 | color-matcher HM-MVGD-HM (package) | 2.15 | 6.14 | **no**: cyan skin, posterised skies, ringed suns | (not measured) |
 
