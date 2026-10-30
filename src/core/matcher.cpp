@@ -773,7 +773,21 @@ public:
     }
 
     Vec3 apply(Vec3 lab) const {
-        const Vec3 ns = src_.neutral(lab.r), nr = ref_.neutral(lab.r);
+        Vec3 ns = src_.neutral(lab.r);
+        const Vec3 nr = ref_.neutral(lab.r);
+        {
+            // The source's "neutral" tint is only a cast when the frame has real neutrals. In a frame of
+            // skin and beige (a warm studio backdrop) the low-chroma pixels are skin-coloured, and taking
+            // their tint off would be grey-world: skin would go grey or cross to blue. So a skin-hued
+            // neutral estimate counts for less, and none moves the axis by more than 0.018.
+            const float cn = std::hypot(ns.g, ns.b);
+            if (cn > 1e-5f) {
+                const float hd = (std::atan2(ns.b, ns.g) * 57.29578f - 50.0f) / 25.0f;
+                float k = 1 - 0.6f * std::exp(-hd * hd);
+                k = std::min(k, 0.018f / (cn * k) * k);
+                ns.g *= k; ns.b *= k;
+            }
+        }
         float a = lab.g - ns.g, b = lab.b - ns.b;
         const float C = std::hypot(a, b), h = std::atan2(b, a);
         // per hue sector where both frames have it, else the overall saturation
@@ -990,7 +1004,7 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
                   : method == 1 ? stat->apply(lab)
                   : method == 2 ? lerp(grade->apply(lab), stat->apply(lab), 0.5f)
                                 : grade->apply(rgbToOklab(oklabToRgb(tc->apply(lab))));
-        return oklabToRgbCompressed(lerp(lab, look, ls));
+        return oklabToRgbCompressed(lerp(lab, look, ls), true);
     };
     res.lut = Lut3D(o.look.lutSize);
     res.lut.setShaper(frameShaper(src));

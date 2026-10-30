@@ -151,15 +151,28 @@ inline Vec3 oklabToRgb(Vec3 lab) {
             linearToSrgb(-1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s),
             linearToSrgb(-0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s)};
 }
-// The same, with out-of-gamut colours gamut-compressed rather than clipped.
-inline Vec3 oklabToRgbCompressed(Vec3 lab) {
+// The same, with out-of-gamut colours gamut-compressed rather than clipped; with pathToWhite, bright
+// near-neutral colours above white also go toward white instead of clipping one channel.
+inline Vec3 oklabToRgbCompressed(Vec3 lab, bool pathToWhite = false) {
     float l = lab.r + 0.3963377774f * lab.g + 0.2158037573f * lab.b;
     float m = lab.r - 0.1055613458f * lab.g - 0.0638541728f * lab.b;
     float s = lab.r - 0.0894841775f * lab.g - 1.2914855480f * lab.b;
     l = l * l * l; m = m * m * m; s = s * s * s;
-    const Vec3 c = gamutCompress({4.0767416621f * l - 3.3077115913f * m + 0.2309699292f * s,
-                                  -1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s,
-                                  -0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s});
+    Vec3 c = gamutCompress({4.0767416621f * l - 3.3077115913f * m + 0.2309699292f * s,
+                            -1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s,
+                            -0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s});
+    // above white: a bright, nearly neutral colour goes toward its own luminance (a path to white)
+    // rather than having one channel clip, which turns warm highlights cyan. Saturated colours (a
+    // bright blue sky) keep the plain clip, which costs them less colour.
+    const float mx = std::max({c.r, c.g, c.b});
+    if (pathToWhite && mx > 1.0f) {
+        const float y = std::min(0.9999f, 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b);
+        const float k = (1.0f - y) / std::max(1e-6f, mx - y);
+        const float t = std::clamp((y - 0.5f) / 0.35f, 0.0f, 1.0f);
+        const float u = std::clamp((std::hypot(lab.g, lab.b) - 0.03f) / 0.05f, 0.0f, 1.0f);
+        const float w = t * t * (3 - 2 * t) * (1 - u * u * (3 - 2 * u));  // near-white and near-neutral only
+        for (int i = 0; i < 3; ++i) c[i] = std::min(c[i], 1.0f) + ((y + (c[i] - y) * k) - std::min(c[i], 1.0f)) * w;
+    }
     return {linearToSrgb(c.r), linearToSrgb(c.g), linearToSrgb(c.b)};
 }
 

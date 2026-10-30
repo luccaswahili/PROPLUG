@@ -23,7 +23,9 @@ if pgrep -qx "$APP"; then
   pgrep -qx "$APP" && { echo "Premiere did not exit"; exit 1; }
   sleep 3
 fi
-ditto "$B" "$I" && codesign -v "$I"
+ditto "$B" "$I"
+codesign -v "$I" 2>/dev/null || codesign --force --deep -s - "$I"  # dev builds are unsigned: sign ad hoc
+codesign -v "$I"
 # Premiere caches plug-in info by the bundle's dates: touch it so a new build is rescanned
 touch "$I" "$I/Contents" "$I/Contents/MacOS/LookMatch"
 echo "installed $(shasum -a 256 "$I/Contents/MacOS/LookMatch" | cut -c1-16)"
