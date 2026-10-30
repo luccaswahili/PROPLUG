@@ -27,11 +27,12 @@ inline bool fileExists(const std::string& path) {
     return f != nullptr;
 }
 
-// First line of a small text file the panel wrote (a path), or "" if missing.
+// Contents of a small text file the panel wrote (a path, or several, one per line), trailing newlines
+// removed, or "" if missing.
 inline std::string fileLine(const std::string& file) {
     FILE* f = std::fopen(file.c_str(), "rb");
     if (!f) return "";
-    char buf[1024] = {0};
+    char buf[8192] = {0};
     size_t n = std::fread(buf, 1, sizeof buf - 1, f);
     std::fclose(f);
     std::string path(buf, n);

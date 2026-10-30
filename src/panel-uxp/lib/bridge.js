@@ -162,10 +162,12 @@ class Bridge {
   }
 
   // The effect can't take a string param, so the path goes in refs/<slot>.txt and the slot in a param.
+  // `path`: one reference still, or an array of up to 5 stills of one look (written one per line)
   async writeReferenceSlot(path) {
     try { await this.fs.mkdir(this.refsDir, { recursive: true }); } catch (e) { /* exists */ }
     const slot = 1 + Math.floor(Math.random() * 999998);
-    await this.fs.writeFile(joinPath(this.refsDir, `${slot}.txt`), path, { encoding: "utf-8" });
+    const text = [].concat(path).map(String).slice(0, 5).join("\n");
+    await this.fs.writeFile(joinPath(this.refsDir, `${slot}.txt`), text, { encoding: "utf-8" });
     return slot;
   }
 

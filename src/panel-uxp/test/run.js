@@ -114,6 +114,15 @@ test("bridge: applyReference writes refs/<slot>.txt and sets the slot", async ()
   assert.deepStrictEqual(res.names, ["V1"]);
 });
 
+test("bridge: a look from several stills is one path per line (at most 5)", async () => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "lm-"));
+  const v1 = makeItem("V1", true, true);
+  const b = new Bridge(makePremiere({ selected: [v1] }), fsp, dir);
+  const stills = ["/a.png", "/b.png", "/c.png", "/d.png", "/e.png", "/f.png"];
+  const res = await b.applyReference("selection", stills, {});
+  assert.strictEqual(await fsp.readFile(path.join(dir, "refs", `${res.slot}.txt`), "utf-8"), stills.slice(0, 5).join("\n"));
+});
+
 test("bridge: every clip gets its own reference slot", async () => {
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "lm-"));
   const clips = [makeItem("a", true, true), makeItem("b", true, false), makeItem("c", true, true)];

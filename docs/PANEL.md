@@ -64,6 +64,13 @@ GPU and the CPU alike, and leaves edges and texture alone. Untouched clips pass 
 A match never applies a film print: matching sets **Film Strength** to 0 (projects saved with an earlier build keep
 their film settings until a clip is matched again).
 
+**A look from several stills.** Cmd-click (or Shift-click) more references to select 2–5 stills of one look,
+for example frames from the same film or grade. Each still is read on its own, and the look's parts are combined
+by median: tone levels, neutral axis, skin treatment and hue sectors. So the match depends less on what happens
+to be in one still, and one odd still moves it little. In `reference_tests`, three stills moved the match 36% less
+than one, and an odd still of another grade moved a three-still look 1.79 ΔEok with the median combine, against
+2.28 with the stills' pixels pooled. A plain click selects a single reference again.
+
 **Shot matching.** Select your best-looking clip, park the playhead on it, and click **Use selected clip as
 reference**. Its frame (without LookMatch's grade) joins the library as "Hero: …". Then match other clips to it,
 or use **Match sequence to this clip** to do both steps at once.

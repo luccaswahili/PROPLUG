@@ -583,27 +583,40 @@ bool isMediaPending(const std::vector<float>& buf, int width, int height) {
 // Builds a match LUT from a reference still and a frame (RGBA float, as read by worldToFloat).
 // Returns false with a user-facing message if the reference can't be read or the frame is unusable.
 // `analysis` (optional) receives the source / reference / result analysis as JSON for the panel.
+// refPath: one reference still, or several (2-5 frames of one look), one path per line
 bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, int height, PF_ParamDef* params[],
                 lm::Lut3D& lutOut, std::string& error, std::string* analysis = nullptr) {
-    int rw, rh, rn;
-    unsigned char* ref8 = stbi_load(refPath, &rw, &rh, &rn, 3);
-    if (!ref8) {
-        error = "LookMatch: could not read the reference image (PNG, JPEG, TGA or BMP).";
-        return false;
-    }
     if (isMediaPending(buf, width, height)) {
-        stbi_image_free(ref8);
         error = "LookMatch: Premiere is still loading this clip (Media pending). Try again in a moment.";
         lmLog("buildMatch: frame is Premiere's Media pending card, not matching");
         return false;
     }
-    lm::Image ref;
-    ref.width = rw; ref.height = rh;
-    ref.px.resize(size_t(rw) * rh);
-    for (size_t i = 0; i < ref.px.size(); ++i) ref.px[i] = {ref8[i * 3] / 255.0f, ref8[i * 3 + 1] / 255.0f, ref8[i * 3 + 2] / 255.0f};
-    stbi_image_free(ref8);
-    ref = lm::downsample(ref, 640);
-    lmLog("buildMatch: reference %s (%dx%d, %d channels)", refPath, rw, rh, rn);
+    std::vector<lm::Image> refs;
+    {
+        std::string all(refPath), line;
+        size_t start = 0;
+        while (start <= all.size() && refs.size() < 5) {
+            size_t end = all.find('\n', start);
+            line = all.substr(start, end == std::string::npos ? std::string::npos : end - start);
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+            start = end == std::string::npos ? all.size() + 1 : end + 1;
+            if (line.empty()) continue;
+            int rw, rh, rn;
+            unsigned char* ref8 = stbi_load(line.c_str(), &rw, &rh, &rn, 3);
+            if (!ref8) { lmLog("buildMatch: could not read reference %s", line.c_str()); continue; }
+            lm::Image ref;
+            ref.width = rw; ref.height = rh;
+            ref.px.resize(size_t(rw) * rh);
+            for (size_t i = 0; i < ref.px.size(); ++i) ref.px[i] = {ref8[i * 3] / 255.0f, ref8[i * 3 + 1] / 255.0f, ref8[i * 3 + 2] / 255.0f};
+            stbi_image_free(ref8);
+            refs.push_back(lm::downsample(ref, 640));
+            lmLog("buildMatch: reference %s (%dx%d, %d channels)", line.c_str(), rw, rh, rn);
+        }
+    }
+    if (refs.empty()) {
+        error = "LookMatch: could not read the reference image (PNG, JPEG, TGA or BMP).";
+        return false;
+    }
 
     // the footage as the match sees it: Input group (encoding, exposure, temperature, tint) applied
     lm::Engine e;
@@ -654,7 +667,7 @@ bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, i
     mo.contrast = F(params, P_NORM_CONTRAST) / 100.0f;
     mo.lookStrength = F(params, P_LOOK_STRENGTH) / 100.0f;
     mo.matchContrast = F(params, P_MATCH_CONTRAST) / 100.0f;
-    lm::SceneMatch m = lm::matchScene(ref, src, mo);
+    lm::SceneMatch m = lm::matchScene(refs, src, mo);
     lutOut = std::move(m.lut);
     lmLog("buildMatch: %s", m.report.c_str());
     if (analysis)
