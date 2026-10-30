@@ -16,11 +16,23 @@ The Premiere effect calls it when it builds a match. The CPU and GPU paths both 
    A faded grade lifts blacks too, but it keeps its contrast, highlights or colour. A frame that reaches the top codes
    or true black is display-referred. Supported curves, each with its camera gamut: S-Log3 / S-Gamut3.Cine,
    LogC3 / AWG3, LogC4 / AWG4, Canon Log 3 / Cinema Gamut, V-Log / V-Gamut, F-Log and F-Log2 / F-Gamut,
-   Apple Log / Rec.2020, Blackmagic Film Gen5 / Wide Gamut, RED Log3G10 / REDWideGamutRGB and DJI D-Log / D-Gamut,
-   plus Rec.709 and sRGB. Gamut matrices are derived from the published primaries; the AWG3 one is checked against
+   Apple Log / Rec.2020, Blackmagic Film Gen5 / Wide Gamut, RED Log3G10 / REDWideGamutRGB, DJI D-Log / D-Gamut and
+   DaVinci Intermediate / DaVinci Wide Gamut, plus Rec.709 and sRGB. Gamut matrices are derived from the published primaries; the AWG3 one is checked against
    ARRI's matrix in `engine_tests`. Which log curve a frame uses can't be told from the picture: the curves differ by
-   about an exposure and contrast change. So a detected log clip is decoded with S-Log3 unless metadata or the user
-   says otherwise, and the following steps absorb most of the difference.
+   about an exposure and contrast change. So a detected log clip is decoded with S-Log3 unless metadata, the file
+   name or the user says otherwise, and the following steps absorb most of the difference. S-Log3 sits in the middle
+   of the curve family; F-Log as the fallback raised the harness mean from 1.48 to 1.92 ΔE00.
+   - **Artlist "LOG" clips** are re-exported through DaVinci Resolve as ProRes 422 HQ, tagged Rec.709, with no
+     camera make, model or log tag. On six of them, F-Log reads closest to normal exposure: mean |exposure| 0.62 stops,
+     against 0.91 for V-Log, 0.92 for S-Log3, 1.03 for LogC3 and Canon Log 3, and 1.41 for DaVinci Intermediate. That
+     matches what Lucas saw by eye. A file name with "Artlist" and "LOG" therefore picks F-Log, and the panel shows
+     "Artlist log → F-Log (best fit)". The black floors of these clips (about 0.10) also fit a curve with black at
+     0.093, not DaVinci Intermediate (black at 0).
+   - The "reaches the top codes" test is taken at the 99th percentile, so a clipped sun or speculars don't make a log
+     frame display-referred. Artlist clip 6539291 was read as Rec.709 before this.
+   - The curve's camera gamut is applied whether the curve came from metadata or was guessed. Most of the visible
+     difference between curves comes from the curve, not the gamut. With an S-Log3 curve and F-Gamut, skin comes out
+     like S-Log3/S-Gamut3.Cine; with an F-Log curve and S-Gamut3.Cine, like F-Log/F-Gamut.
 2. **White balance.** The illuminant is estimated in scene linear from the most neutral fifth of the frame. "Most
    neutral" is ranked, not a fixed distance, so a grade's contrast or saturation doesn't change which pixels are
    picked. Clipped and very dark pixels are left out. It is iterated from a white-patch / grey-edge start, and blended
@@ -42,8 +54,15 @@ The Premiere effect calls it when it builds a match. The CPU and GPU paths both 
    - The frame's 5–95% range is stretched at most 2×: a soft close-up stays soft.
    - True black meets the curve's floor continuously.
 5. **Residual colour.** In OKLab:
-   - a small ab offset (a grade's colour correction) is fitted robustly. It may vary with lightness, the most
-     colourful pixels count least, and it is bounded and scaled by the white-balance confidence;
+   - **Skin weights are taken here.** They come after the scene-linear white balance and the tone normalisation, so a
+     cast, an exposure or a curve doesn't move a face into or out of the mask. They come before the residual cast and
+     saturation steps and the look, where a face stops looking like skin. The weight is a soft prior: hue around 52°
+     (σ 22°), chroma above about 0.003–0.012 (pale skin highlights count), and not black or blown. Taken before the
+     white balance instead, a cast moved faces in and out of the mask, and the harness mean went from 1.50 to 2.34.
+   - A small ab offset (a grade's colour correction) is fitted robustly. It may vary with lightness, the most
+     colourful pixels count least, skin counts 10%, and it is bounded and scaled by the white-balance confidence. A
+     frame that is mostly skin (a close-up) has only part of it taken out, because it has no grey to judge a cast by.
+     This is what turned the 8K portrait's skin grey (chroma 0.010).
    - saturation is brought to a canonical level from the 75th percentile of chroma, within ×0.6–×1.4. Skin keeps
      most of its own saturation.
 6. **The look**, read from the reference thing by thing rather than as global statistics. Global statistics make a
@@ -53,16 +72,39 @@ The Premiere effect calls it when it builds a match. The CPU and GPU paths both 
      reference keeps a dark, moody exposure, but doesn't crush a bright day clip into mud.
    - **Neutral axis**: the tint of the reference's near-grey pixels in five lightness bands is its split tone. The
      clip's greys take exactly that, so whites get the reference's white.
-   - **Skin**: if the reference has skin, the clip's skin moves toward its hue (within ±6°) and chroma (×0.85–1.1).
-     If it has none, skin keeps its hue.
+   - **Skin** takes the reference's skin *treatment*, not the reference person's skin. Moving every face toward the
+     reference's absolute skin saturation pushed a pale subject toward a deep complexion's: orange-red arms on the
+     bedroom clip, matched to the street reference.
+     - **Saturation, relative to the frame.** Skin keeps the reference's ratio of skin chroma to frame chroma (×0.8–1.25),
+       held between 0.035 and 0.09.
+     - **Hue.** It moves at most 6° toward the reference's skin and stays within 36–64°. Stray patches are pulled a
+       quarter of the way to the face's own hue.
+     - **The neutral axis.** Skin follows the grey axis only 10%, so the reference's tint of white doesn't make skin
+       highlights pink or lavender.
+     - **Brightness.** Skin the tone curve left darker than the reference's skin sits, relative to its frame, is lifted
+       by up to 0.05. The lift applies only where the colour is clearly skin, because on near-greys it would bend the
+       grey axis.
+     - **Lips** and strong reds next to skin keep their saturation.
    - **Other colours**: six hue sectors (red, yellow, green, cyan, blue, magenta). Where both frames have a sector
      (3% or more), it takes the reference's hue shift (within ±15°) and chroma (×0.8–1.25). Elsewhere colours only
      follow the overall saturation (×0.75–1.25).
    - Colours rotate and scale about the neutral axis, so none crosses it. Hue moves fade out below chroma 0.015–0.05,
      because a nearly grey wall's hue flips with every 8-bit step.
+7. **Final tone match** (**Match Contrast**, default 100%). The graded result's lightness distribution is brought to
+   the reference's: its 1/5/25/50/75/95/99% points and everything between, so its blacks, shadows, highlights and
+   whites sit where the reference's do.
+   - It uses a smooth curve on lightness alone (OKLab L; hue and chroma untouched). The slope is held between 0.75 and
+     1.3, and no level moves more than 0.15.
+   - Around the lightness that clearly coloured skin lands at, the curve may darken by at most 0.02. The limit depends
+     on lightness only and changes slowly, so lightness stays monotonic. An earlier version shrank the darkening per
+     colour by the skin weight. Near-greys carry the reference's tint, so that weight switched on and off along the
+     grey ramp, and the ramp went darker by up to 12/255.
+   - The bedroom clip's 95/99% levels went from 0.80/0.86 to 0.83/0.89, the same as the reference's.
+   - The slope cap of 1.3 is set by banding. At 1.6, the Marsa sky's step share with the 20.12.03 reference went
+     from 6% to 22%; at 1.3 it is 14%, inside the 15% limit.
 
 Each step has an amount in **Source** (panel and Effect Controls): **Normalise Exposure**, **Normalise White
-Balance**, **Normalise Contrast** (tone and saturation) and **Look Strength**. At 0% a step keeps the clip's own
+Balance**, **Normalise Contrast** (tone and saturation), **Look Strength** and **Match Contrast**. At 0% a step keeps the clip's own
 exposure, white balance or contrast.
 
 The whole chain is baked into a 65³ LUT over the clip's code values, with a 256-point input shaper. The shaper is a

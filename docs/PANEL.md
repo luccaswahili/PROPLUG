@@ -40,6 +40,12 @@ state, so the result depends on what is in the shot, not on how it was shot or g
   tint) and contrast/saturation to even out before the look. 100% gives the most consistent matches; lower keeps
   more of the clip's own character.
 - **Look strength**: how much of the reference's look goes on top of the evened-out clip.
+- **Match contrast**: how far the graded clip's blacks, shadows, mids, highlights and whites are brought to the
+  reference's after the look, while keeping skin from being crushed. The default is 100%.
+
+Artlist "LOG" clips (the file name has "Artlist" and "LOG") are decoded as Fujifilm F-Log on **Auto**. Artlist
+re-exports them through Resolve, so the camera curve is lost, and F-Log fits them best. The analysis line says
+"Artlist log → F-Log (best fit)". Pick another format to override it.
 
 After **Match**, the panel shows each clip's analysis inline as soon as Premiere has drawn the clip once:
 

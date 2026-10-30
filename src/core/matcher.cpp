@@ -864,7 +864,7 @@ public:
         // skin is not a neutral: it keeps its own tint instead of being moved with the grey axis (a cast
         // was already taken out by the white balance, in linear light; the reference's tint of white on
         // skin highlights reads as pink or lavender skin)
-        ns.g *= 1 - 0.9f * sk; ns.b *= 1 - 0.9f * sk;
+        ns.g *= 1 - 0.5f * sk; ns.b *= 1 - 0.5f * sk;
         nr.g *= 1 - 0.9f * sk; nr.b *= 1 - 0.9f * sk;
         float a = lab.g - ns.g, b = lab.b - ns.b;
         const float C = std::hypot(a, b), h = std::atan2(b, a);
@@ -1026,7 +1026,7 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
     double skinSum = 0;
     for (size_t i = 0; i < n; ++i) { srcSkinW[i] = skinPrior(canonLab[i]); skinSum += srcSkinW[i]; }
     // a frame that is mostly skin (a close-up) has no grey to judge a residual cast by: take out only part
-    const float skinFrame = 1 - 0.7f * clamp01((float(skinSum / std::max<size_t>(1, n)) - 0.25f) / 0.4f);
+    const float skinFrame = 1 - 0.4f * clamp01((float(skinSum / std::max<size_t>(1, n)) - 0.25f) / 0.4f);
     float offA[2] = {0, 0}, offB[2] = {0, 0};  // ab offset = off[0] + off[1] * (L - 0.5)
     for (int it = 0; it < 5; ++it) {
         std::vector<float> d;
@@ -1040,7 +1040,7 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
         for (size_t i = 0; i < n; ++i) {
             const Vec3& c = canonLab[i];
             if (c.r < 0.12f || c.r > 0.95f) continue;
-            const float q = d[i] / dm, w = (1 - 0.9f * srcSkinW[i]) / (1.0f + q * q * q * q), u = c.r - 0.5f;
+            const float q = d[i] / dm, w = (1 - 0.6f * srcSkinW[i]) / (1.0f + q * q * q * q), u = c.r - 0.5f;
             w0 += w; w1 += w * u; w2 += w * u * u; sa += w * c.g; sau += w * c.g * u; sb += w * c.b; sbu += w * c.b * u;
         }
         const double ridge = w2 + 0.05 * w0, det = w0 * ridge - w1 * w1;  // ridge on the slope
