@@ -367,6 +367,7 @@ function renderFilmControls() {
     }
     box.appendChild(row);
   }
+  filmInputs.set(P.fixBanding, { get: () => !!$("fixBanding").checked, set: (v) => { $("fixBanding").checked = !!v; } });
   setFilmControls(TEXTURE_DEFAULTS);
 }
 

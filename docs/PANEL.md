@@ -57,8 +57,9 @@ After **Match**, the panel shows each clip's analysis inline as soon as Premiere
 | Contrast | stops between the 5th and 95th percentile of luminance | | |
 
 **Deband.** Compressed 8- and 10-bit log footage stores smooth gradients such as skies as fine steps, and a grade
-expands them into contour rings. So whenever the effect changes the picture, it smooths those steps first, on the
-GPU and the CPU alike, and leaves edges and texture alone. Untouched clips pass through unchanged. See
+expands them into contour rings. **Fix sky banding** on the Texture tab smooths those steps before the grade, on the
+GPU and the CPU alike. It is off by default, because it also takes some of the camera's fine texture and grain, so
+turn it on for a clip that shows rings. See
 [MATCHING.md](MATCHING.md#deband-contour-rings-in-skies).
 
 A match never applies a film print: matching sets **Film Strength** to 0 (projects saved with an earlier build keep

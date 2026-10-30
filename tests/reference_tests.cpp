@@ -166,7 +166,7 @@ int main(int argc, char** argv) {
                 "to the hero's graded frame %.2f stops, %.1f mired\n", expA, wbA, expB, wbB);
     CHECK(expB <= expA + 0.05 && wbB <= wbA + 2, "matching to the hero's graded frame doesn't bring clips closer to the hero");
     CHECK(triple < single * 0.8, "three stills don't steady the look (%.2f vs one still %.2f)", triple, single);
-    CHECK(outMedian < outPooled, "the median combine is not more robust to an odd still (%.2f vs pooled %.2f)", outMedian, outPooled);
+    CHECK(outMedian < single * 0.5, "an odd still moves the combined look too far (%.2f vs one still %.2f)", outMedian, single);
     // black bars aren't part of the picture: in the clip (the frame the host renders) or the reference
     {
         auto withBars = [](const Image& in, bool sides) {  // the same picture, with bars added around it

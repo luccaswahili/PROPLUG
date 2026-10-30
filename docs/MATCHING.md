@@ -127,7 +127,8 @@ the plateaus show as concentric coloured rings. Premiere already gives the effec
 both the GPU and the CPU path, so the rings were not caused by bit depth. They are in the source, and the
 grade made them visible.
 
-Before the grade, the effect now smooths those steps and the source's fine noise. The method starts from the
+With **Fix Sky Banding** on (off by default, since it softens fine skin texture and grain), the effect smooths
+those steps and the source's fine noise before the grade. The method starts from the
 idea behind f3kdb / libplacebo `deband`, reimplemented here:
 
 - For each pixel, it samples point-symmetric pairs of neighbours: 8 pairs within 40 px at 1080p for banding, and

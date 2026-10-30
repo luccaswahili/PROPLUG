@@ -41,8 +41,8 @@ struct Params {
     float mix = 1;
     int lutSize = 65;
     // smooth the source's quantisation steps (compressed 8/10-bit gradients such as skies) before the
-    // grade expands them into contour rings; 0 = off, 1 = on
-    float deband = 1;
+    // grade expands them into contour rings; 0 = off (the camera's own texture and grain stay), 1 = on
+    float deband = 0;
 };
 
 // Deband constants for one frame size (shared with the GPU kernel).

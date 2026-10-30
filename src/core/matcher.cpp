@@ -352,9 +352,10 @@ constexpr int kTone = 257;
 constexpr float kCanonSigma = 1.6f;     // canonical scene: log2 luminance ~ normal, sigma in stops
 constexpr float kCanonChroma = 0.07f;   // canonical RMS OKLab chroma
 constexpr float kStopFloor = 1.0f / 4096;
-// limits on the tone curve, in stops per stop: contrast at most 2.2x locally, never flattened below
-// about a third, and the frame's overall range (5th-95th percentile) stretched at most 2x
-constexpr float kMinToneSlopeStops = 0.35f, kMaxToneSlopeStops = 2.2f, kMaxStretch = 2.0f;
+// limits on the tone curve, in stops per stop. A grade that would need more stops short of the reference:
+// a steep stretch multiplies skin texture and noise by its slope, a flat one turns skin to wax.
+constexpr float kMinCurveSlope = 0.75f, kMaxCurveSlope = 1.25f;
+constexpr float kMinLightSlope = 0.85f, kMaxLightSlope = 1.15f;  // the final tone match, in lightness
 
 // Acklam's inverse normal CDF
 float invNormal(double p) {
@@ -404,17 +405,6 @@ void capSlope(Curve& c, float lo, float hi) {
     c.y = y;
 }
 
-void smooth(std::vector<float>& v, int r) {
-    std::vector<float> o(v.size());
-    for (int i = 0; i < int(v.size()); ++i) {
-        float s = 0;
-        for (int k = -r; k <= r; ++k) s += v[std::clamp(i + k, 0, int(v.size()) - 1)];
-        o[i] = s / (2 * r + 1);
-    }
-    v = o;
-}
-
-
 float trimmedMean(std::vector<float> v) {
     std::sort(v.begin(), v.end());
     size_t lo = v.size() / 20, hi = v.size() - v.size() / 20;
@@ -431,12 +421,10 @@ float moderateKey(float k) {
     return k;
 }
 
-inline float softClip(float y) {  // linear display luminance, slope 1 below 0.9, asymptote 1
-    const float k = 0.9f;
+inline float rollOff(float y) {  // linear display value, slope 1 below 0.8, asymptote 1
+    const float k = 0.8f;
     return y <= k ? y : k + (1 - k) * (1 - std::exp(-(y - k) / (1 - k)));
 }
-
-
 
 std::vector<float> lumaStops(const std::vector<Vec3>& lin) {
     std::vector<float> s;
@@ -445,17 +433,69 @@ std::vector<float> lumaStops(const std::vector<Vec3>& lin) {
     return s;
 }
 
-Curve quantileMap(const std::vector<float>& from, const std::vector<float>& to, float lo, float hi, int smoothR) {
-    Curve c;
-    c.x = from;
-    for (size_t i = 1; i < c.x.size(); ++i) c.x[i] = std::max(c.x[i], c.x[i - 1] + 1e-4f);
-    c.y = to;
-    smooth(c.y, smoothR);
-    capSlope(c, lo, hi);
-    return c;
+// Tone levels of a frame from its sorted quantiles, counted evenly across the range it occupies: a tone
+// counts once however many pixels have it. By pixel count, a plain backdrop (most of a close-up) would own
+// the curve, and skin of the same brightness would get whatever stretch the backdrop asked for.
+using ToneLevels = std::array<float, 5>;
+ToneLevels occupiedLevels(const std::vector<float>& q, float bin) {
+    const float lo = q.front(), hi = q.back();
+    const int bins = std::max(1, int(std::ceil((hi - lo) / bin)));
+    std::vector<float> w(size_t(bins), 0.0f);
+    for (float v : q) w[size_t(std::clamp(int((v - lo) / bin), 0, bins - 1))] += 1;
+    float total = 0;
+    for (float& v : w) { v = std::min(v, 1.0f); total += v; }
+    ToneLevels out;
+    const float at[5] = {0.02f, 0.25f, 0.5f, 0.75f, 0.98f};
+    float sum = 0;
+    int i = 0;
+    for (int k = 0; k < 5; ++k) {
+        const float want = at[k] * total;
+        while (i + 1 < bins && sum + w[size_t(i)] < want) sum += w[size_t(i++)];
+        out[size_t(k)] = lo + (float(i) + clamp01((want - sum) / std::max(w[size_t(i)], 1e-3f))) * bin;
+    }
+    return out;
 }
 
-// Smooth monotone curve from quantile pairs: 17 control points (every 1/16 of the ranks) joined by a
+// One smooth curve from level pairs: a quadratic (least squares through the five), so its slope changes
+// evenly and it can't kink, with its bend scaled back until the slope stays in [lo, hi] over the frame's
+// range. Past the range it carries on in a straight line. Stored as a fine polyline for Curve.
+Curve smoothCurve(const ToneLevels& from, const ToneLevels& to, float lo, float hi) {
+    const float c0 = from[2], u0 = from[0] - c0, u1 = from[4] - c0;
+    double A[3][4] = {};
+    for (int i = 0; i < 5; ++i) {
+        const double u = from[size_t(i)] - c0, B[3] = {1, u, u * u};
+        for (int r = 0; r < 3; ++r) {
+            for (int k = 0; k < 3; ++k) A[r][k] += B[r] * B[k];
+            A[r][3] += B[r] * (to[size_t(i)] - from[size_t(i)]);
+        }
+    }
+    A[1][1] += 1e-3; A[2][2] += 1e-3;  // a frame of one tone: a plain offset
+    for (int c = 0; c < 3; ++c)
+        for (int r = 0; r < 3; ++r)
+            if (r != c) {
+                const double f = A[r][c] / A[c][c];
+                for (int k = c; k < 4; ++k) A[r][k] -= f * A[c][k];
+            }
+    float a = float(A[0][3] / A[0][0]), b = float(A[1][3] / A[1][1]), c = float(A[2][3] / A[2][2]);  // y - x
+    const float s0 = b + 2 * c * u0, s1 = b + 2 * c * u1, top = std::max({s0, s1, 0.0f}), bot = std::min({s0, s1, 0.0f});
+    const float k = std::min({1.0f, (hi - 1) / std::max(top, 1e-6f), (1 - lo) / std::max(-bot, 1e-6f)});
+    b *= k; c *= k;
+    const float xa = u0 - 14, xb = u1 + 8;
+    auto y = [=](float u) {
+        const float v = std::clamp(u, u0, u1), s = b + 2 * c * v;
+        return u + a + b * v + c * v * v + (u - v) * s;
+    };
+    Curve out;
+    const int N = 1024;
+    for (int i = 0; i <= N; ++i) {
+        const float u = xa + (xb - xa) * float(i) / N;
+        out.x.push_back(u + c0);
+        out.y.push_back(y(u) + c0);
+    }
+    return out;
+}
+
+// Smooth monotone curve from quantile pairs, for the statistical benchmark methods: 17 control points (every 1/16 of the ranks) joined by a
 // monotone cubic (Fritsch-Carlson), then its slope held in [lo, hi]. A curve read straight off the
 // quantiles of an 8-bit frame is a staircase (flat where codes repeat, steep across gaps), which turns
 // into posterisation and amplified noise; this one is smooth.
@@ -831,10 +871,6 @@ public:
             float dh = refSkin_ ? std::clamp(angDiff(refSkin.hue, srcSkin.hue), -0.105f, 0.105f) : 0.0f;
             skinHue_ = std::clamp(srcSkin.hue + dh, 36.0f * 0.0174533f, 64.0f * 0.0174533f);
             skinDh_ = angDiff(skinHue_, srcSkin.hue);
-            if (refSkin_) {
-                const float target = srcSkin.frameL50 + (refSkin.L - refSkin.frameL50);
-                skinLift_ = std::clamp(target - srcSkin.L, 0.0f, 0.05f);
-            }
         }
         for (int k = 0; k < kSectors; ++k) {
             ev_[k] = std::min(1.0f, std::min(ref.secShare[k], src.secShare[k]) / 0.03f);
@@ -891,14 +927,12 @@ public:
         // skin hues held together: stray red or yellow patches pulled a quarter of the way to the face's hue
         if (sk > 0) h2 += angDiff(skinHue_, h2) * 0.25f * sk * clamp01((C - 0.015f) / 0.02f);
         const float C2 = C * cr;
-        // the lift only where the colour is clearly skin: on near-greys a varying weight would bend the grey axis
-        const float skL = sk * clamp01((C - 0.006f) / 0.012f);
-        return {lab.r + skinLift_ * skL, C2 * std::cos(h2) + nr.g, C2 * std::sin(h2) + nr.b};
+        return {lab.r, C2 * std::cos(h2) + nr.g, C2 * std::sin(h2) + nr.b};
     }
 
 private:
     const LookProfile ref_, src_;
-    float sat_ = 1, skinDh_ = 0, skinCr_ = 1, skinHue_ = 0, skinLift_ = 0;
+    float sat_ = 1, skinDh_ = 0, skinCr_ = 1, skinHue_ = 0;
     bool hasSkin_ = false;
     float ev_[kSectors] = {}, dh_[kSectors] = {}, cr_[kSectors] = {};
 };
@@ -921,6 +955,7 @@ namespace {
 struct RefLook {
     SceneAnalysis analysis;
     std::vector<float> stops;  // kTone quantiles of log2(luminance / 0.18)
+    ToneLevels toneLevels{}, lightLevels{};  // occupied levels of stops and of lightness x 10
     float key = 0;             // trimmed mean of the stops
     LookProfile profile;
     SkinStats skin;
@@ -946,6 +981,8 @@ RefLook makeRefLook(const Image& refIn) {
     for (const Vec3& c : r.lab) { w.push_back(skinPrior(c)); L.push_back(c.r * 10); }
     r.skin = skinStats(r.lab, w);
     r.lq = evenQuantiles(std::move(L), 257);
+    r.toneLevels = occupiedLevels(r.stops, 0.25f);
+    r.lightLevels = occupiedLevels(r.lq, 0.25f);
     return r;
 }
 
@@ -983,6 +1020,10 @@ RefLook combineRefLooks(const std::vector<RefLook>& rs) {
     out.key = med([](const RefLook& r) { return r.key; });
     out.stops.resize(rs[0].stops.size());
     for (size_t i = 0; i < out.stops.size(); ++i) out.stops[i] = med([i](const RefLook& r) { return r.stops[i]; });
+    for (size_t i = 0; i < out.toneLevels.size(); ++i) {
+        out.toneLevels[i] = med([i](const RefLook& r) { return r.toneLevels[i]; });
+        out.lightLevels[i] = med([i](const RefLook& r) { return r.lightLevels[i]; });
+    }
     out.lq.resize(rs[0].lq.size());
     for (size_t i = 0; i < out.lq.size(); ++i) out.lq[i] = med([i](const RefLook& r) { return r.lq[i]; });
     for (const RefLook& r : rs) out.lab.insert(out.lab.end(), r.lab.begin(), r.lab.end());
@@ -1081,11 +1122,10 @@ SceneMatch matchSceneLook(const RefLook& rl, const Image& srcIn, const SceneMatc
     std::vector<Vec3> lin0(n);
     for (size_t i = 0; i < n; ++i) lin0[i] = linear(src.px[i]);
 
-    // ---- 2. canonical tone: the luminance distribution mapped by rank to a fixed one, the same curve
-    // for R, G and B as a luminance ratio (colour and hue are the frame's own). Any curve a grade or a
-    // transfer applied keeps the order of the pixels' brightness, so this undoes it. ----
+    // ---- 2. tone: the camera's decode, then one smooth curve on luminance, the same for R, G and B as a
+    // ratio (colour and hue are the frame's own). It is fitted to the tones the frame occupies, so it takes
+    // out a grade's or a transfer's curve without reshaping the picture level by level. ----
     std::vector<float> st0 = lumaStops(lin0);
-    const float key0 = trimmedMean(st0);
     std::vector<float> s0 = evenQuantiles(std::move(st0), kTone);
     // A sliver of pure black the bar detection can't catch (a logo plate, a burnt-in border) must not read
     // as stops of real shadow: nothing further than 6 stops below the median counts as tone.
@@ -1101,44 +1141,35 @@ SceneMatch matchSceneLook(const RefLook& rl, const Image& srcIn, const SceneMatc
 
     // ---- 3. where the tone lands: the reference's distribution, its key moderated ----
     const float mr = rl.key, mr2 = moderateKey(mr);
-    std::vector<float> r = rl.stops;
+    ToneLevels refLevels = rl.toneLevels;
     if (mr2 > mr) {  // lift a dark reference: keep its highlights, open its shadows
-        const float top = r[kTone * 99 / 100], k = std::clamp((top - mr2) / std::max(1e-3f, top - mr), 0.3f, 1.0f);
-        for (float& v : r) v = top - (top - v) * k;
+        const float top = rl.stops[kTone * 99 / 100], k = std::clamp((top - mr2) / std::max(1e-3f, top - mr), 0.3f, 1.0f);
+        for (float& v : refLevels) v = top - (top - v) * k;
     } else if (mr2 < mr) {  // tame a bright reference: keep its blacks
-        const float bot = r[kTone / 100], k = std::clamp((mr2 - bot) / std::max(1e-3f, mr - bot), 0.3f, 1.0f);
-        for (float& v : r) v = bot + (v - bot) * k;
+        const float bot = rl.stops[kTone / 100], k = std::clamp((mr2 - bot) / std::max(1e-3f, mr - bot), 0.3f, 1.0f);
+        for (float& v : refLevels) v = bot + (v - bot) * k;
     }
-    for (int i = 1; i < kTone; ++i) r[i] = std::max(r[i], r[i - 1]);
-    const Curve look = quantileMap(canon, r, 0.35f, 2.5f, 3);  // canonical -> reference
 
-    // target per quantile: canonical (or the source's own shape, by `contrast`), exposure kept by
-    // (1 - `exposure`), then the look on top by `lookStrength`
-    const float keep = (1 - ce) * key0;
-    std::vector<float> t(kTone);
-    for (int i = 0; i < kTone; ++i) {
-        float q = (s0[i] - ce * key0) + (canon[i] + keep - (s0[i] - ce * key0)) * cc;
-        t[i] = q + (look(q - keep) + keep - q) * ls;
+    // target levels: canonical (or the source's own shape, by `contrast`), exposure kept by (1 - `exposure`),
+    // then the reference's on top by `lookStrength`
+    const ToneLevels srcLevels = occupiedLevels(s0, 0.25f), canonLevels = occupiedLevels(canon, 0.25f);
+    const float keep = (1 - ce) * srcLevels[2];
+    ToneLevels t;
+    for (size_t i = 0; i < t.size(); ++i) {
+        const float q = (srcLevels[i] - ce * srcLevels[2]) + (canonLevels[i] + keep - (srcLevels[i] - ce * srcLevels[2])) * cc;
+        t[i] = q + (refLevels[i] + keep - q) * ls;
     }
-    // Don't stretch a legitimately soft frame (a close-up face, haze) far past its own range: an 8-bit
-    // source has only so many steps to give.
-    {
-        const int lo = kTone * 5 / 100, hi = kTone * 95 / 100, mid = kTone / 2;
-        const float spreadS = s0[hi] - s0[lo], spreadT = t[hi] - t[lo];
-        const float k = spreadT > kMaxStretch * spreadS && spreadT > 1e-3f ? kMaxStretch * spreadS / spreadT : 1.0f;
-        const float tm = t[mid];
-        for (float& v : t) v = tm + (v - tm) * k;
-    }
-    const Curve g1 = smoothMap(s0, t, kMinToneSlopeStops, kMaxToneSlopeStops);
+    const Curve g1 = smoothCurve(srcLevels, t, kMinCurveSlope, kMaxCurveSlope);
 
     auto canonicalDisplay = [linear, byLuminance, g1](Vec3 code) {
         Vec3 lc = byLuminance(g1, linear(code));
-        // highlights: roll luminance off toward white, and bring an out-of-range colour back toward its
-        // luminance rather than clipping one channel
-        const float y = std::max(luma709(lc), kStopFloor), y2 = softClip(y);
-        lc = lc * (y2 / y);
-        const float mx = std::max({lc.r, lc.g, lc.b});
-        if (mx > 1.0f) lc = Vec3(y2, y2, y2) + (lc - Vec3(y2, y2, y2)) * ((1.0f - y2) / std::max(1e-6f, mx - y2));
+        // highlights: roll the largest channel off and scale the others with it, so warm skin keeps its colour
+        // up to the top (rolling luminance off would leave its red over range, and pulling that back toward
+        // grey would hand the highlight to the neutral axis). Only what is far over range goes to white.
+        const float mx = std::max({lc.r, lc.g, lc.b, kStopFloor}), m2 = rollOff(mx);
+        lc = lc * (m2 / mx);
+        const float w = clamp01((mx - 1) / 2), toWhite = w * w * (3 - 2 * w);
+        lc = lc + (Vec3(m2, m2, m2) - lc) * toWhite;
         return Vec3(rec709Encode(clamp01(lc.r)), rec709Encode(clamp01(lc.g)), rec709Encode(clamp01(lc.b)));
     };
 
@@ -1238,10 +1269,9 @@ SceneMatch matchSceneLook(const RefLook& rl, const Image& srcIn, const SceneMatc
         return lerp(lab, look, ls);
     };
 
-    // ---- 6. final tone match: the graded result's levels (1/5/25/50/75/95/99% and everything between)
-    // brought to the reference's with a smooth, slope-limited curve on lightness alone (hues and chroma
-    // untouched), so its blacks, shadows, highlights and whites sit where the reference's do. Skin is
-    // never darkened by more than a third of what the curve asks, and no level moves more than 0.15. ----
+    // ---- 6. final tone match: the graded result's occupied levels brought to the reference's with the same
+    // kind of smooth curve, on lightness alone (hues and chroma untouched). Skin is never darkened by more
+    // than a third of what the curve asks, and no level moves more than 0.15; both limits are smooth. ----
     const float mc = clamp01(o.matchContrast) * ls;
     Curve tone;
     float skinL = -1;  // lightness skin lands at after the look (-1: no skin)
@@ -1254,20 +1284,20 @@ SceneMatch matchSceneLook(const RefLook& rl, const Image& srcIn, const SceneMatc
             // clearly coloured skin only: warm whites (walls, sheets) share skin's hue
             if (srcSkinW[i] > 0.3f && std::hypot(g.g, g.b) > 0.025f) sl.push_back({g.r, srcSkinW[i]});
         }
-        tone = smoothMap(evenQuantiles(a, 257), rl.lq, 0.75f, 1.3f);
+        tone = smoothCurve(occupiedLevels(evenQuantiles(a, 257), 0.25f), rl.lightLevels, kMinLightSlope, kMaxLightSlope);
         if (srcSkin.share >= 0.003f && sl.size() > n / 200) skinL = weightedMedian(sl);
     }
     auto full = [graded, preSkin, tone, mc, skinL](Vec3 code) {
         const float sk = preSkin(code);
         Vec3 lab = graded(code, sk);
         if (mc > 0) {
-            float d = std::clamp(tone(lab.r * 10) / 10 - lab.r, -0.15f, 0.15f);
+            float d = 0.15f * std::tanh((tone(lab.r * 10) / 10 - lab.r) / 0.15f);
             // Skin is not crushed: around the lightness skin sits at, the curve may darken by at most 0.02.
-            // The limit is a function of lightness alone and changes slowly enough (slope < 0.95) that
-            // lightness stays monotonic: a per-colour skin weight here would bend the grey axis.
+            // The limit is a function of lightness alone, joined softly, so lightness stays smooth:
+            // a per-colour skin weight here would bend the grey axis.
             if (skinL >= 0) {
-                const float u = (lab.r - skinL) / 0.12f;
-                d = std::max(d, -(0.15f - 0.13f * std::exp(-u * u)));
+                const float u = (lab.r - skinL) / 0.12f, lim = -(0.15f - 0.13f * std::exp(-u * u)), g = d - lim;
+                d = lim + 0.5f * (g + std::sqrt(g * g + 1e-4f));
             }
             lab.r += d * mc;
         }
