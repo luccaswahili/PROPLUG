@@ -123,6 +123,16 @@ test("bridge: a look from several stills is one path per line (at most 5)", asyn
   assert.strictEqual(await fsp.readFile(path.join(dir, "refs", `${res.slot}.txt`), "utf-8"), stills.slice(0, 5).join("\n"));
 });
 
+test("bridge: scope \"others\" is the sequence without the selected hero clip", async () => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "lm-"));
+  const clips = [makeItem("hero", true, true), makeItem("b", true, false), makeItem("c", true, true)];
+  const b = new Bridge(makePremiere({ selected: [clips[0]], tracks: [clips] }), fsp, dir);
+  const { items } = await b.items("others");
+  assert.deepStrictEqual(await Promise.all(items.map((i) => i.getName())), ["b", "c"]);
+  const res = await b.applyReference("others", "/hero.png", {});
+  assert.deepStrictEqual(res.names, ["b", "c"]);
+});
+
 test("bridge: every clip gets its own reference slot", async () => {
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "lm-"));
   const clips = [makeItem("a", true, true), makeItem("b", true, false), makeItem("c", true, true)];
@@ -186,6 +196,9 @@ test("bridge: captureFrame sets the capture slot and returns the PNG the effect 
     await fsp.writeFile(path.join(dir, "refs", `capture-${slot}.done`), "could not read the frame");
   };
   await assert.rejects(b.captureFrame({ sleep: failing, pollMs: 1, timeoutMs: 50 }), /could not read/);
+  // graded: the request file asks the effect for the frame as it renders it
+  const g = await b.captureFrame({ sleep, pollMs: 1, timeoutMs: 50, graded: true });
+  assert.strictEqual(await fsp.readFile(path.join(dir, "refs", `capture-${g.slot}.txt`), "utf-8"), "graded");
 });
 
 test("bridge: per-clip match params, analysis file, colour hints", async () => {

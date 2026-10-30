@@ -279,10 +279,13 @@ async function matchClips(scope) {
 }
 
 // Shot matching: grab the selected (hero) clip's frame through the effect, add it to the library.
+// With "Match to its graded look", the frame as LookMatch renders it (its match included), so the other
+// clips take the hero's finished look; otherwise the clip as shot.
 async function captureHero() {
-  const res = await bridge.captureFrame();
+  const graded = !!$("heroGraded").checked;
+  const res = await bridge.captureFrame({ graded });
   selectedRef = library.addReference(res.path);
-  selectedRef.name = `Hero: ${res.clip}`;
+  selectedRef.name = `Hero${graded ? " (graded)" : ""}: ${res.clip}`;
   selectedRefs = [selectedRef];
   await library.save();
   await renderRefs();
@@ -296,7 +299,8 @@ $("heroRef").addEventListener("click", () => run("Capture hero", async () => {
 }));
 $("heroMatchSeq").addEventListener("click", () => run("Match sequence to hero", async () => {
   const res = await captureHero();
-  const msg = await matchClips("sequence");
+  // every clip but the hero: the hero keeps its own grade
+  const msg = await matchClips("others");
   return `${msg} (hero: ${res.clip})`;
 }));
 
@@ -515,7 +519,7 @@ $("selfTest").addEventListener("click", () => run("Self-test", async () => {
     require("./lib/agent.js").startAgent(fs, DATA_DIR, bridge, log, {
       // UI driving for tests: only these elements, only set value / click
       fields: ["refPath", "lookName", "lookFile", "cubePath", "normExposure", "normWhite", "normContrast", "lookStrength", "matchContrast"],  // plus tab switching (uiTab)
-      buttons: ["addRef", "matchSel", "matchSeq", "applyStrength", "beforeAfter", "heroRef", "readFilm", "resetFilm",
+      buttons: ["addRef", "matchSel", "matchSeq", "applyStrength", "beforeAfter", "heroRef", "heroMatchSeq", "readFilm", "resetFilm",
                 "applyFilm", "saveLook", "importLook", "exportCube", "selfTest", "probe", "showLog"],
       status: () => ({ text: $("status").textContent, kind: $("status").className }),
       savedLooks: () => library.looks.map((l) => l.name),

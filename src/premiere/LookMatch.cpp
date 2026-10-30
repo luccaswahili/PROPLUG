@@ -994,8 +994,11 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
             lmLog("Render: export slot %ld -> %s (%s)", exportSlot, target.c_str(), result.c_str());
         }
     }
-    // Panel "hero clip": a new Capture Slot means save this clip's (ungraded) frame as a PNG the
-    // panel then uses as the reference for other clips. Once per slot.
+    // Panel "hero clip": a new Capture Slot means save this clip's frame as a PNG the panel then uses
+    // as the reference for other clips. Once per slot. Ungraded by default; with "graded" in
+    // refs/capture-<slot>.txt, the frame as LookMatch renders it (after the render below), so other
+    // clips match the hero's finished look (shot-to-shot matching).
+    std::string gradedCapture;  // base path of a graded capture to write after the render
     const long captureSlot = long(F(params, P_CAPTURE_SLOT));
     if (captureSlot > 0) {
         static std::mutex cm;
@@ -1006,6 +1009,9 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
             std::string result = "ok";
             if (isMediaPending(buf, w, h)) {
                 captured.erase(captureSlot);  // footage still loading: try again on the next render
+                result.clear();
+            } else if (fileLine(base + ".txt") == "graded") {
+                gradedCapture = base;
                 result.clear();
             } else if (!stbi_write_png((base + ".png").c_str(), w, h, 3, to8bitRGB(buf, w, h).data(), w * 3)) {
                 result = "could not write " + base + ".png";
@@ -1022,6 +1028,12 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
     if (split) before = buf;
     lm::ImageView view{buf.data(), w, h, w * 4};
     pe->engine.render(view, view, frame);
+    if (!gradedCapture.empty()) {
+        const std::string result = stbi_write_png((gradedCapture + ".png").c_str(), w, h, 3, to8bitRGB(buf, w, h).data(), w * 3)
+                                       ? "ok" : "could not write " + gradedCapture + ".png";
+        if (FILE* df = std::fopen((gradedCapture + ".done").c_str(), "wb")) { std::fputs(result.c_str(), df); std::fclose(df); }
+        lmLog("Render: graded capture -> %s.png (%s)", gradedCapture.c_str(), result.c_str());
+    }
     if (split) applySplit(buf, before, w, h, F(params, P_SPLIT_POS) / 100.0f, F(params, P_SPLIT_ANGLE));
     releaseEngine(pe);
 

@@ -7,6 +7,8 @@
 //              disjoint sets of three. Three stills must move the match at least 20% less.
 //   outlier:   one still of a different grade joins three: how far the match moves with the median
 //              combine, against pooling all the stills' pixels into one reference.
+//   shot-to-shot: clips matched to the hero clip's graded frame land closer to the hero in exposure and
+//              white balance than clips matched to the look on their own.
 //   reference_tests [--frames DIR]
 #include <algorithm>
 #include <cmath>
@@ -135,8 +137,33 @@ int main(int argc, char** argv) {
         outPooled += dE(matched({pooled(base)}, src), matched({pooled(withOdd)}, src));
     }
     single /= ns; triple /= nt; outMedian /= 4; outPooled /= 4;
+
+    // shot-to-shot: frame 6 is the hero, matched to the look; frames 7-9 matched (a) each to the look on
+    // its own, (b) to the hero's graded frame. How far each lands from the hero in exposure (stops) and
+    // white balance (mired: 1e6/K), from the match's own analysis of its result.
+    double expA = 0, expB = 0, wbA = 0, wbB = 0;
+    {
+        SceneMatchOptions o;
+        o.look.lutSize = 33;
+        const std::vector<Image> look = {stills[0], stills[1], stills[2]};
+        const SceneMatch hero = matchScene(look, frames[6], o);
+        Image heroOut = frames[6];
+        for (Vec3& v : heroOut.px) v = hero.lut.apply(v);
+        auto mired = [](float k) { return 1e6 / std::max(1000.0f, k); };
+        for (int s = 7; s < 10; ++s) {
+            const SceneMatch a = matchScene(look, frames[s], o), b = matchScene(heroOut, frames[s], o);
+            expA += std::abs(a.result.exposure - hero.result.exposure);
+            expB += std::abs(b.result.exposure - hero.result.exposure);
+            wbA += std::abs(mired(a.result.cct) - mired(hero.result.cct));
+            wbB += std::abs(mired(b.result.cct) - mired(hero.result.cct));
+        }
+        expA /= 3; expB /= 3; wbA /= 3; wbB /= 3;
+    }
     std::printf("match moves with the choice of stills (mean ΔEok): one still %.2f, three stills %.2f\n", single, triple);
     std::printf("an odd still joining three moves the match: median combine %.2f, pooled pixels %.2f\n", outMedian, outPooled);
+    std::printf("clips vs the hero after matching: to the look alone exposure %.2f stops, white balance %.1f mired; "
+                "to the hero's graded frame %.2f stops, %.1f mired\n", expA, wbA, expB, wbB);
+    CHECK(expB <= expA + 0.05 && wbB <= wbA + 2, "matching to the hero's graded frame doesn't bring clips closer to the hero");
     CHECK(triple < single * 0.8, "three stills don't steady the look (%.2f vs one still %.2f)", triple, single);
     CHECK(outMedian < outPooled, "the median combine is not more robust to an odd still (%.2f vs pooled %.2f)", outMedian, outPooled);
     if (failures) std::printf("%d check(s) failed\n", failures);

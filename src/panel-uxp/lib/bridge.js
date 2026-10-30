@@ -54,8 +54,30 @@ class Bridge {
     return { project, sequence, items };
   }
 
+  // "sequence": every video clip; "others": every video clip except the selected ones (shot matching:
+  // the hero is the reference, the rest follow); otherwise the selection.
   async items(scope) {
+    if (scope === "others") {
+      const all = await this.allVideoItems();
+      const sel = await this.selectedVideoItems();
+      const skip = new Set(await Promise.all(sel.items.map((it) => this.itemKey(it))));
+      const keep = [];
+      for (const it of all.items) if (!skip.has(await this.itemKey(it))) keep.push(it);
+      return Object.assign({}, all, { items: keep });
+    }
     return scope === "sequence" ? this.allVideoItems() : this.selectedVideoItems();
+  }
+
+  // A clip's identity across API calls (the objects themselves aren't stable): name and start time.
+  async itemKey(item) {
+    let start = "";
+    try {
+      if (typeof item.getStartTime === "function") {
+        const t = await item.getStartTime();
+        start = t && (t.ticks !== undefined ? t.ticks : t.seconds !== undefined ? t.seconds : JSON.stringify(t));
+      }
+    } catch (e) { /* no start time */ }
+    return `${await item.getName()}@${start}`;
   }
 
   async findLookMatch(item) {
@@ -177,7 +199,8 @@ class Bridge {
   // A match never applies film print emulation: Film Strength goes to 0 (older projects may have it on).
   async applyReference(scope, path, extraParams) {
     const { items } = await this.items(scope);
-    if (!items.length) throw new Error(scope === "sequence" ? "The sequence has no video clips." : "Select a video clip on the timeline.");
+    if (!items.length) throw new Error(scope === "sequence" ? "The sequence has no video clips." :
+      scope === "others" ? "The sequence has no other video clips." : "Select a video clip on the timeline.");
     const slots = [];
     for (let i = 0; i < items.length; i++) slots.push(await this.writeReferenceSlot(path));
     const extra = typeof extraParams === "function" ? extraParams : () => extraParams || {};
@@ -258,8 +281,9 @@ class Bridge {
   }
 
   // Saves the first selected clip's ungraded frame (at the playhead) as a PNG to use as a reference.
+  // The first selected clip's frame as a PNG: ungraded, or with `opts.graded` as LookMatch renders it.
   async captureFrame(opts) {
-    const res = await this.effectRequest("capture", P.captureSlot, null, opts);
+    const res = await this.effectRequest("capture", P.captureSlot, opts && opts.graded ? "graded" : null, opts);
     return { slot: res.slot, path: `${res.base}.png`, clip: res.clip };
   }
 

@@ -72,8 +72,12 @@ than one, and an odd still of another grade moved a three-still look 1.79 ΔEok 
 2.28 with the stills' pixels pooled. A plain click selects a single reference again.
 
 **Shot matching.** Select your best-looking clip, park the playhead on it, and click **Use selected clip as
-reference**. Its frame (without LookMatch's grade) joins the library as "Hero: …". Then match other clips to it,
-or use **Match sequence to this clip** to do both steps at once.
+reference**. Its frame joins the library as "Hero: …". Then match other clips to it, or use **Match sequence to
+this clip** to do both steps at once: every clip except the hero is matched, and the hero keeps its own grade.
+With **Match to its graded look** (on by default), the hero's frame is captured as LookMatch renders it, match
+included. The other clips then take the hero's finished look, so exposure, white balance and skin agree across
+cuts. This matters most when the hero was matched with its own settings or references. Turn it off to use the
+hero's frame as shot.
 
 A match made from the panel is kept on this Mac (in the LookMatch data folder). To store it inside the project,
 for example to open the project on another Mac, click **Effect Controls > LookMatch > Panel Link > Save into Project**.
