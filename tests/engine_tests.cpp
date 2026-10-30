@@ -5,6 +5,7 @@
 #include <thread>
 #include "engine.h"
 #include "matcher.h"
+#include "scene.h"
 
 using namespace lm;
 
@@ -153,6 +154,53 @@ int main() {
             });
         for (auto& th : threads) th.join();
         for (int t = 0; t < 6; ++t) CHECK(outs[t] == ref, "thread %d rendered different pixels", t);
+    }
+
+    // 9. source analysis: every transfer curve round-trips, CCT/tint invert, gamut matrices are sane
+    for (int t = 0; t < kTransferCount; ++t) {
+        float worst = 0;
+        for (float x : {0.0f, 0.001f, 0.01f, 0.05f, 0.18f, 0.5f, 1.0f, 4.0f}) {
+            if (!isLog(Transfer(t)) && x > 1) continue;
+            float back = transferDecode(Transfer(t), transferEncode(Transfer(t), x));
+            worst = std::max(worst, std::abs(back - x) / std::max(x, 0.01f));
+        }
+        CHECK(worst < 1e-3f, "%s does not round-trip (%.5f)", transferName(Transfer(t)), worst);
+        Vec3 w = gamutToRec709(Transfer(t)) * Vec3(1, 1, 1);
+        CHECK(std::abs(w.r - 1) < 2e-3f && std::abs(w.g - 1) < 2e-3f && std::abs(w.b - 1) < 2e-3f,
+              "%s gamut doesn't keep white (%.4f %.4f %.4f)", transferName(Transfer(t)), w.r, w.g, w.b);
+    }
+    {
+        Mat3 awg = gamutToRec709(Transfer::LogC3);  // against ARRI's published AWG3 -> Rec.709 matrix
+        CHECK(std::abs(awg.m[0][0] - 1.617523f) < 2e-3f && std::abs(awg.m[1][1] - 1.334613f) < 2e-3f, "AWG3 matrix off (%.4f %.4f)",
+              awg.m[0][0], awg.m[1][1]);
+        float cct, tint, x, y;
+        xyToCctTint(kD65x, kD65y, cct, tint);
+        CHECK(std::abs(cct - 6504) < 15 && std::abs(tint) < 0.05f, "D65 reads %.0f K / %.2f", cct, tint);
+        for (float k : {3200.0f, 4300.0f, 5600.0f, 7500.0f})
+            for (float tn : {-20.0f, 0.0f, 20.0f}) {
+                cctTintToXy(k, tn, x, y);
+                xyToCctTint(x, y, cct, tint);
+                CHECK(std::abs(cct - k) < k * 0.003f && std::abs(tint - tn) < 0.1f, "%.0f K / %.0f reads back %.0f / %.1f", k, tn, cct, tint);
+            }
+        // a scene with a cast: the analysis finds the cast
+        Image img;
+        img.width = 160; img.height = 90;
+        std::mt19937 rng(5);
+        std::uniform_real_distribution<float> u(0, 1);
+        cctTintToXy(4000, 0, x, y);
+        Mat3 cast = adaptation(kD65x, kD65y, x, y);
+        for (int i = 0; i < img.width * img.height; ++i) {
+            float l = 0.02f + 0.6f * u(rng) * u(rng);
+            Vec3 c = i % 3 ? Vec3(l, l, l) : Vec3(l * 1.2f, l * 0.9f, l * 0.5f);  // greys and some warm surfaces
+            Vec3 lin = cast * c;
+            img.px.push_back({rec709Encode(lin.r), rec709Encode(lin.g), rec709Encode(lin.b)});
+        }
+        SceneAnalysis a = analyseScene(img);
+        CHECK(a.transfer == Transfer::Rec709 && std::abs(a.cct - 4000) < 250, "cast scene reads %s %.0f K", transferShortName(a.transfer), a.cct);
+        // the same scene encoded in S-Log3 is detected as log
+        Image logImg = img;
+        for (Vec3& c : logImg.px) c = encodeFromRec709(Transfer::SLog3, Vec3(rec709Decode(c.r), rec709Decode(c.g), rec709Decode(c.b)));
+        CHECK(isLog(detectTransfer(logImg).transfer), "S-Log3 frame not detected as log (%s)", detectTransfer(logImg).why.c_str());
     }
 
     std::printf(failures ? "%d check(s) failed\n" : "all engine tests passed\n", failures);

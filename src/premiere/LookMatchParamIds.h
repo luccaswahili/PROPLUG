@@ -65,6 +65,16 @@ enum ParamId {
     P_SPLIT_POS,    // % across the frame
     P_SPLIT_ANGLE,  // degrees, 0 = vertical line
     P_COMPARE_TOPIC_END,
+    // source-aware match: how the clip is read and normalised before the reference's look
+    P_SOURCE_TOPIC,
+    P_SOURCE_FORMAT,    // popup: Auto, then lm::Transfer order
+    P_NORM_EXPOSURE,    // %
+    P_NORM_WB,          // %
+    P_NORM_CONTRAST,    // %
+    P_LOOK_STRENGTH,    // %
+    P_SOURCE_TOPIC_END,
+    // after the source group (appended, so projects saved before it keep their parameter layout)
+    P_MATCH_CONTRAST,   // %: final tone match of the graded result to the reference's levels
     P_NUM_PARAMS
 };
 
@@ -76,5 +86,7 @@ enum DiskId {
     D_TEXTURE_TOPIC, D_HALATION, D_HALATION_RADIUS, D_HALATION_THRESHOLD, D_BLOOM, D_BLOOM_RADIUS, D_BLOOM_THRESHOLD,
     D_GRAIN, D_GRAIN_SIZE, D_GRAIN_COLOR, D_SOFTNESS, D_VIGNETTE, D_WEAVE, D_FLICKER, D_TEXTURE_TOPIC_END,
     D_MIX, D_EXPORT_LUT, D_MATCH_DATA, D_REF_SLOT, D_PANEL_TOPIC, D_BAKE, D_EXPORT_SLOT, D_PANEL_TOPIC_END, D_CAPTURE_SLOT, D_THUMBS_SLOT,
-    D_COMPARE_TOPIC, D_SPLIT, D_SPLIT_POS, D_SPLIT_ANGLE, D_COMPARE_TOPIC_END
+    D_COMPARE_TOPIC, D_SPLIT, D_SPLIT_POS, D_SPLIT_ANGLE, D_COMPARE_TOPIC_END,
+    D_SOURCE_TOPIC, D_SOURCE_FORMAT, D_NORM_EXPOSURE, D_NORM_WB, D_NORM_CONTRAST, D_LOOK_STRENGTH, D_SOURCE_TOPIC_END,
+    D_MATCH_CONTRAST
 };

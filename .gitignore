@@ -3,3 +3,7 @@ build-*/
 *.aex
 *.plugin/
 .DS_Store
+tests/frames/
+tests/frames-log/
+tests/frames-pr/
+tests/frames-sky/

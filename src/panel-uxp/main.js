@@ -1,16 +1,16 @@
-// LookMatch panel for Premiere Pro (UXP). Drives the LookMatch effect: reference matching,
-// film looks, film controls and saved looks. All Premiere access goes through lib/bridge.js.
+// LookMatch panel for Premiere Pro (UXP). Drives the LookMatch effect: source-aware reference
+// matching, texture controls and saved looks. All Premiere access goes through lib/bridge.js.
 
 const ppro = require("premierepro");
 const uxp = require("uxp");
 const fs = require("fs");
 const os = require("os");
-const { P, NEGATIVES, PRINTS, FILM_DEFAULTS, FILM_LOOKS, lookParams, stockCombos, guessEncoding } = require("./lib/looks.js");
+const { P, SOURCE_FORMATS, TEXTURE_DEFAULTS, guessSourceFormat, sourceFormatReason } = require("./lib/params.js");
 const { Library, joinPath, baseName } = require("./lib/library.js");
 const { Bridge } = require("./lib/bridge.js");
 const { runSelfTest } = require("./lib/selftest.js");
 
-const VERSION = "0.5.3";  // kept equal to manifest.json by build_panel.sh
+const VERSION = "0.6.0";  // kept equal to manifest.json by build_panel.sh
 const DATA_DIR = os.platform() === "win32"
   ? joinPath(process.env.APPDATA || "", "PRO PLUGS\\LookMatch")
   : joinPath(os.homedir(), "Library/Application Support/PRO PLUGS/LookMatch");
@@ -158,26 +158,106 @@ function bindSlider(id, labelId) {
 bindSlider("strength", "strengthV");
 bindSlider("region", "regionV");
 
+bindSlider("normExposure", "normExposureV");
+bindSlider("normWhite", "normWhiteV");
+bindSlider("normContrast", "normContrastV");
+bindSlider("lookStrength", "lookStrengthV");
+bindSlider("matchContrast", "matchContrastV");
+
+// Source Format picker: 1 = Auto, then the effect's popup order
+const sourceMenu = $("sourceMenu");
+SOURCE_FORMATS.forEach((name, i) => {
+  const item = document.createElement("sp-menu-item");
+  item.textContent = name;
+  item.value = String(i + 1);
+  sourceMenu.appendChild(item);
+});
+$("sourceFormat").selectedIndex = 0;
+const sourceFormat = () => Math.max(1, ($("sourceFormat").selectedIndex | 0) + 1);
+
 function matchSettings() {
   return {
     [P.matchStrength]: Number($("strength").value),
     [P.regionMatching]: Number($("region").value),
     [P.autoSkin]: !!$("autoSkin").checked,
+    [P.normExposure]: Number($("normExposure").value),
+    [P.normWhite]: Number($("normWhite").value),
+    [P.normContrast]: Number($("normContrast").value),
+    [P.lookStrength]: Number($("lookStrength").value),
+    [P.matchContrast]: Number($("matchContrast").value),
   };
+}
+
+// ---------- source analysis (inline, per clip) ----------
+
+const fmtStops = (v) => (v >= 0 ? "+" : "") + v.toFixed(2);
+const fmtTint = (v) => (v >= 0 ? "+" : "") + v.toFixed(1);
+function analysisTable(a) {
+  const col = (x) => x ? [x.transfer + (x.log ? " (log)" : ""), fmtStops(x.exposure), `${Math.round(x.cct)} K`, fmtTint(x.tint),
+                          `${x.contrast.toFixed(1)} st`] : ["", "", "", "", ""];
+  const rows = ["Format", "Exposure", "Temperature", "Tint", "Contrast"];
+  const s = col(a.source), r = col(a.result), f = col(a.reference);
+  let html = "<table><tr><th></th><th>Before</th><th>After</th><th>Reference</th></tr>";
+  rows.forEach((name, i) => { html += `<tr><td>${name}</td><td>${s[i]}</td><td>${r[i]}</td><td>${i ? f[i] : ""}</td></tr>`; });
+  return html + "</table>";
+}
+
+const analysisBox = $("analysis");
+function showClipAnalysis(entries) {
+  analysisBox.innerHTML = "";
+  for (const e of entries) {
+    const div = document.createElement("div");
+    div.className = "clip";
+    const title = document.createElement("div");
+    title.className = "title";
+    title.textContent = e.name + (e.how ? `  ·  ${e.how}` : "");
+    div.appendChild(title);
+    const body = document.createElement("div");
+    if (!e.analysis) body.innerHTML = '<span class="pending">Measuring… (Premiere builds the match the first time it draws the clip: park the playhead on it)</span>';
+    else if (e.analysis.error) { body.className = "err"; body.textContent = e.analysis.error; }
+    else body.innerHTML = analysisTable(e.analysis);
+    div.appendChild(body);
+    analysisBox.appendChild(div);
+  }
+}
+
+// Polls each clip's analysis until all arrived (or ~60 s), redrawing as they come in.
+async function followAnalysis(entries) {
+  showClipAnalysis(entries);
+  for (let t = 0; t < 200 && entries.some((e) => !e.analysis); t++) {
+    await new Promise((r) => setTimeout(r, 300));
+    let changed = false;
+    for (const e of entries) {
+      if (e.analysis) continue;
+      e.analysis = await bridge.readAnalysis(e.slot);
+      if (e.analysis) {
+        changed = true;
+        if (e.analysis.source) log(`analysis ${e.name}: ${JSON.stringify(e.analysis.source)} -> ${JSON.stringify(e.analysis.result)}`);
+      }
+    }
+    if (changed) showClipAnalysis(entries);
+  }
 }
 
 async function matchClips(scope) {
   if (!selectedRef) throw new Error("Pick a reference first (add one above and click it).");
   const params = matchSettings();
-  if ($("detectLog").checked) {
-    // one encoding for all clips in the operation: take it from the first clip's name
-    const names = await bridge.clipNames(scope);
-    const enc = guessEncoding(names[0]);
-    if (enc !== 1) { params[P.footageEncoding] = enc; log(`detected log footage in "${names[0]}" (encoding ${enc})`); }
+  // The match decodes the footage itself, so the Input group passes code values straight through.
+  params[P.footageEncoding] = 1;
+  const chosen = sourceFormat();
+  let formats = null, how = [];
+  if (chosen === 1) {
+    // Auto: clip metadata (colour space, input LUT, file name) first; the effect detects the rest from the picture
+    const hints = await bridge.clipColourHints(scope);
+    formats = hints.map((h) => guessSourceFormat(h));
+    how = formats.map((f, i) => sourceFormatReason(hints[i], f));
   }
-  const res = await bridge.applyReference(scope, selectedRef.path, params);
+  const res = await bridge.applyReference(scope, selectedRef.path, (i) => Object.assign({}, params,
+    { [P.sourceFormat]: formats ? (formats[i] || 1) : chosen }));
   log(`matched ${res.clips} clip(s) to ${selectedRef.name} (slot ${res.slot}${res.added ? `, added LookMatch to ${res.added}` : ""})`);
   log("tip: to keep this match inside the project (for other Macs), click LookMatch > Panel Link > Save into Project in Effect Controls");
+  const entries = res.slots.map((slot, i) => ({ slot, name: res.names[i], how: chosen === 1 ? how[i] : SOURCE_FORMATS[chosen - 1], analysis: null }));
+  followAnalysis(entries).catch((e) => log(`analysis: ${e.message}`));
   return `Matched ${res.clips} clip(s) to ${selectedRef.name}`;
 }
 
@@ -222,74 +302,10 @@ $("splitPos").addEventListener("change", () => run("Split position", async () =>
   return `Split at ${Math.round($("splitPos").value)}%`;
 }));
 
-// ---------- looks ----------
-
-// A rough swatch per look so cards are recognisable without rendering thumbnails.
-function swatchFor(params) {
-  const neg = params[P.negative] || 2, print = params[P.print] || 2;
-  const warm = [0, 18, 6, -6, 10, 0, -14, 0][neg] + [0, 0, 14, -16, 4, 8][print];
-  const sat = neg === 7 ? 0 : 0.45 + (params[P.filmSaturation] === undefined ? 0.2 : (params[P.filmSaturation] - 80) / 300);
-  const fade = (params[P.fade] || 0) / 100;
-  const hue = 200 - warm * 4;
-  const l1 = 18 + fade * 20, l2 = 62 - fade * 10;
-  return `linear-gradient(90deg, hsl(${hue + 160},${sat * 100}%,${l1}%), hsl(${hue + 120},${sat * 70}%,${(l1 + l2) / 2}%), hsl(${hue},${sat * 90}%,${l2}%))`;
-}
-
-function lookCard(look, onClick) {
-  const card = document.createElement("div");
-  card.className = "card";
-  card.dataset.look = look.id;
-  card.innerHTML = `<div class="swatch"></div><div class="name"></div>`;
-  card.querySelector(".swatch").style.background = swatchFor(look.params);
-  card.querySelector(".name").textContent = look.name;
-  card.title = `Apply "${look.name}" to the selected clips`;
-  card.addEventListener("click", onClick);
-  return card;
-}
-
-const intensity = () => Number($("intensity").value) / 100;
-bindSlider("intensity", "intensityV");
-
-function applyLook(look) {
-  return run(`Apply ${look.name}`, async () => {
-    const params = lookParams(look, intensity());
-    setFilmControls(params);
-    const res = await bridge.applyParams("selection", params);
-    return `${look.name} on ${res.clips} clip(s)`;
-  });
-}
-
-function renderLooks() {
-  const grid = $("lookGrid");
-  for (const look of FILM_LOOKS) grid.appendChild(lookCard(look, () => applyLook(look)));
-  const combos = $("comboGrid");
-  for (const look of stockCombos()) combos.appendChild(lookCard(look, () => applyLook(look)));
-}
-
-// Real previews: the effect renders the selected clip's frame through every look.
-$("previewLooks").addEventListener("click", () => run("Preview looks", async () => {
-  const looks = FILM_LOOKS.concat(stockCombos()).map((l) => ({ id: l.id, params: lookParams(l, intensity()) }));
-  const paths = await bridge.lookThumbnails(looks, { timeoutMs: 30000 });
-  let shown = 0;
-  for (const card of document.querySelectorAll(".card[data-look]")) {
-    const url = await thumbnailUrl(paths[card.dataset.look]);
-    if (!url) continue;
-    const sw = card.querySelector(".swatch");
-    let img = sw.querySelector("img");
-    if (!img) { img = document.createElement("img"); sw.appendChild(img); }
-    img.src = url;
-    sw.classList.add("preview");
-    shown++;
-  }
-  return `Previewed ${shown} looks on the selected clip`;
-}));
-
-// ---------- film controls ----------
+// ---------- texture controls ----------
 
 const FILM_CONTROLS = [
-  [P.filmStrength, 0, 100, 1, "%"], [P.negative, NEGATIVES], [P.print, PRINTS],
-  [P.printerR, -12, 12, 0.5, ""], [P.printerG, -12, 12, 0.5, ""], [P.printerB, -12, 12, 0.5, ""],
-  [P.filmSaturation, 0, 200, 1, "%"], [P.fade, 0, 100, 1, "%"],
+  [P.fade, 0, 100, 1, "%"],
   [P.halation, 0, 200, 1, "%"], [P.halationSize, 0.25, 3, 0.05, ""], [P.halationThreshold, 0.1, 2, 0.05, ""],
   [P.bloom, 0, 200, 1, "%"], [P.bloomSize, 0.25, 3, 0.05, ""], [P.bloomThreshold, 0.1, 2, 0.05, ""],
   [P.grain, 0, 200, 1, "%"], [P.grainSize, 0.5, 4, 0.05, ""], [P.grainColour, 0, 100, 1, "%"],
@@ -309,22 +325,7 @@ function renderFilmControls() {
     const label = document.createElement("sp-detail");
     label.textContent = name.toUpperCase();
     row.appendChild(label);
-    if (Array.isArray(a)) {
-      const picker = document.createElement("sp-picker");
-      picker.setAttribute("size", "s");
-      const menu = document.createElement("sp-menu");
-      menu.setAttribute("slot", "options");
-      a.forEach((opt, i) => {
-        const item = document.createElement("sp-menu-item");
-        item.textContent = opt;
-        item.value = String(i + 1);
-        menu.appendChild(item);
-      });
-      picker.appendChild(menu);
-      row.appendChild(picker);
-      filmInputs.set(name, { get: () => (picker.selectedIndex >= 0 ? picker.selectedIndex + 1 : FILM_DEFAULTS[name]),
-                             set: (v) => { picker.selectedIndex = Math.max(0, Math.round(v) - 1); } });
-    } else {
+    {
       const s = document.createElement("sp-slider");
       s.setAttribute("min", a); s.setAttribute("max", b); s.setAttribute("step", step);
       const val = document.createElement("span");
@@ -335,7 +336,7 @@ function renderFilmControls() {
     }
     box.appendChild(row);
   }
-  setFilmControls(FILM_DEFAULTS);
+  setFilmControls(TEXTURE_DEFAULTS);
 }
 
 function setFilmControls(params) {
@@ -353,16 +354,19 @@ $("readFilm").addEventListener("click", () => run("Read clip", async () => {
   if (!cur) throw new Error("Select a clip with LookMatch.");
   setFilmControls(cur.params);
   if (cur.params[P.matchStrength] !== undefined) $("strength").value = cur.params[P.matchStrength];
+  for (const [id, name] of [["normExposure", P.normExposure], ["normWhite", P.normWhite], ["normContrast", P.normContrast], ["lookStrength", P.lookStrength], ["matchContrast", P.matchContrast]])
+    if (cur.params[name] !== undefined) { $(id).value = cur.params[name]; $(`${id}V`).textContent = `${Math.round(cur.params[name])}%`; }
+  if (cur.params[P.sourceFormat] !== undefined) $("sourceFormat").selectedIndex = Math.max(0, cur.params[P.sourceFormat] - 1);
   return `Read ${cur.name}`;
 }));
-$("resetFilm").addEventListener("click", () => setFilmControls(FILM_DEFAULTS));
-$("applyFilm").addEventListener("click", () => run("Apply film", async () => {
+$("resetFilm").addEventListener("click", () => setFilmControls(TEXTURE_DEFAULTS));
+$("applyFilm").addEventListener("click", () => run("Apply texture", async () => {
   const res = await bridge.applyParams("selection", filmParams());
-  return `Film settings on ${res.clips} clip(s)`;
+  return `Texture on ${res.clips} clip(s)`;
 }));
-$("applyFilmSeq").addEventListener("click", () => run("Apply film to sequence", async () => {
+$("applyFilmSeq").addEventListener("click", () => run("Apply texture to sequence", async () => {
   const res = await bridge.applyParams("sequence", filmParams());
-  return `Film settings on ${res.clips} clip(s)`;
+  return `Texture on ${res.clips} clip(s)`;
 }));
 
 // ---------- saved looks ----------
@@ -396,10 +400,15 @@ function applySavedLook(look) {
   return run(`Apply ${look.name}`, async () => {
     setFilmControls(look.params);
     if (look.reference) {
-      const res = await bridge.applyReference("selection", look.reference, look.params);
+      const params = Object.assign({}, look.params);
+      // looks saved by 0.5 kept film print settings: matching no longer applies a print
+      for (const k of ["Film Strength", "Negative Stock", "Print Stock", "Printer Light R", "Printer Light G", "Printer Light B", "Film Saturation"]) delete params[k];
+      const res = await bridge.applyReference("selection", look.reference, params);
       return `${look.name} (matched to ${baseName(look.reference)}) on ${res.clips} clip(s)`;
     }
-    const res = await bridge.applyParams("selection", look.params);
+    const params = Object.assign({}, look.params);
+    for (const k of ["Negative Stock", "Print Stock", "Printer Light R", "Printer Light G", "Printer Light B", "Film Saturation"]) delete params[k];
+    const res = await bridge.applyParams("selection", params);
     return `${look.name} on ${res.clips} clip(s)`;
   });
 }
@@ -419,7 +428,7 @@ function exportLook(look) {
 }
 
 $("saveLook").addEventListener("click", () => run("Save look", async () => {
-  const params = Object.assign({}, filmParams(), matchSettings());
+  const params = Object.assign({}, filmParams(), matchSettings(), { [P.sourceFormat]: sourceFormat() });
   const look = library.saveLook($("lookName").value, params, selectedRef ? selectedRef.path : null);
   await library.save();
   renderSaved();
@@ -476,7 +485,6 @@ $("selfTest").addEventListener("click", () => run("Self-test", async () => {
 // ---------- start ----------
 
 (async () => {
-  renderLooks();
   renderFilmControls();
   await library.load();
   selectedRef = library.refs[0] || null;
@@ -487,12 +495,13 @@ $("selfTest").addEventListener("click", () => run("Self-test", async () => {
     // dev builds only: lib/agent.js is left out of release packages
     require("./lib/agent.js").startAgent(fs, DATA_DIR, bridge, log, {
       // UI driving for tests: only these elements, only set value / click
-      fields: ["refPath", "lookName", "lookFile", "cubePath"],  // plus tab switching (uiTab)
+      fields: ["refPath", "lookName", "lookFile", "cubePath", "normExposure", "normWhite", "normContrast", "lookStrength", "matchContrast"],  // plus tab switching (uiTab)
       buttons: ["addRef", "matchSel", "matchSeq", "applyStrength", "beforeAfter", "heroRef", "readFilm", "resetFilm",
-                "applyFilm", "saveLook", "importLook", "exportCube", "selfTest", "previewLooks", "probe", "showLog"],
+                "applyFilm", "saveLook", "importLook", "exportCube", "selfTest", "probe", "showLog"],
       status: () => ({ text: $("status").textContent, kind: $("status").className }),
       savedLooks: () => library.looks.map((l) => l.name),
       element: (id) => document.getElementById(id),
+      analysis: () => analysisBox.textContent,
     });
   } catch (e) { /* release build */ }
 })();

@@ -3,7 +3,7 @@ const assert = require("assert");
 const os = require("os");
 const path = require("path");
 const fsp = require("fs").promises;
-const { P, FILM_LOOKS, FILM_DEFAULTS, NEGATIVES, PRINTS, lookParams, stockCombos, guessEncoding } = require("../lib/looks.js");
+const { P, SOURCE_FORMATS, TEXTURE_DEFAULTS, guessSourceFormat, sourceFormatReason } = require("../lib/params.js");
 const { Library } = require("../lib/library.js");
 const { Bridge, isLookMatch } = require("../lib/bridge.js");
 const { COMMANDS } = require("../lib/agent.js");
@@ -12,23 +12,22 @@ const { makePremiere, makeItem } = require("./mock-premiere.js");
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
 
-test("looks: every look sets valid popup values and known params", () => {
-  for (const look of FILM_LOOKS.concat(stockCombos())) {
-    const p = lookParams(look);
-    for (const k of Object.keys(p)) assert(Object.values(P).includes(k), `${look.name}: unknown param ${k}`);
-    assert(p[P.negative] >= 1 && p[P.negative] <= NEGATIVES.length, `${look.name}: negative ${p[P.negative]}`);
-    assert(p[P.print] >= 1 && p[P.print] <= PRINTS.length, `${look.name}: print ${p[P.print]}`);
-  }
-  assert.strictEqual(stockCombos().length, NEGATIVES.length * PRINTS.length);
-  assert.deepStrictEqual(lookParams(FILM_LOOKS[0]), FILM_DEFAULTS);
-});
-
-test("looks: log footage detection from names", () => {
-  assert.strictEqual(guessEncoding("A001_C002_SLOG3.mov"), 3);
-  assert.strictEqual(guessEncoding("ALEXA_LogC_clip.mxf"), 2);
-  assert.strictEqual(guessEncoding("GH5 V-Log 0003.mp4"), 4);
-  assert.strictEqual(guessEncoding("Sample Media Clip 2.mp4"), 1);
-  assert.strictEqual(guessEncoding(undefined), 1);
+test("params: source format from metadata and names", () => {
+  assert.strictEqual(SOURCE_FORMATS.length, 15, "Auto + the 14 transfers of lm::Transfer");
+  assert.strictEqual(guessSourceFormat("A001_C002_SLOG3.mov"), 4);
+  assert.strictEqual(guessSourceFormat(["clip", "ARRI LogC4"]), 6);
+  assert.strictEqual(guessSourceFormat("ALEXA_LogC_clip.mxf"), 5);
+  assert.strictEqual(guessSourceFormat("GH5 V-Log 0003.mp4"), 8);
+  assert.strictEqual(guessSourceFormat("X-H2S F-Log2"), 10);
+  assert.strictEqual(guessSourceFormat("iPhone Apple Log"), 11);
+  assert.strictEqual(guessSourceFormat("Sample Media Clip 2.mp4"), 0);
+  assert.strictEqual(guessSourceFormat("DaVinci Intermediate DWG export"), 15);
+  const artlist = "6274378_Beach Workout Talking Women_By_Andrii_Nekrasov_Artlist_LOG_4K.mov";
+  assert.strictEqual(guessSourceFormat(artlist), 9);
+  assert.strictEqual(sourceFormatReason([artlist], 9), "Artlist log → F-Log (best fit)");
+  assert.strictEqual(sourceFormatReason(["x"], 0), "detected from the picture");
+  assert.strictEqual(guessSourceFormat(undefined), 0);
+  for (const k of Object.keys(TEXTURE_DEFAULTS)) assert(Object.values(P).includes(k), `unknown texture param ${k}`);
 });
 
 test("library: references, looks, persistence and .lmlook files", async () => {
@@ -80,14 +79,13 @@ test("bridge: popups are 1-based in the panel, 0-based in Premiere", async () =>
   const v1 = makeItem("V1", true, true);
   const b = new Bridge(makePremiere({ selected: [v1] }), fsp, os.tmpdir());
   const { component } = await b.findLookMatch(v1);
-  assert.strictEqual((await b.readParams(component))[P.negative], FILM_DEFAULTS[P.negative], "default reads back 1-based");
-  await b.applyParams("selection", { [P.negative]: 7, [P.print]: 1, [P.footageEncoding]: 3 });
+  assert.strictEqual((await b.readParams(component))[P.sourceFormat], 1, "default reads back 1-based");
+  await b.applyParams("selection", { [P.sourceFormat]: 5, [P.footageEncoding]: 3 });
   const raw = Object.fromEntries(component.list.map((p) => [p.displayName, p.value]));
-  assert.strictEqual(raw[P.negative], 6);
-  assert.strictEqual(raw[P.print], 0);
+  assert.strictEqual(raw[P.sourceFormat], 4);
   assert.strictEqual(raw[P.footageEncoding], 2);
   const back = await b.readParams(component);
-  assert.strictEqual(back[P.negative], 7);
+  assert.strictEqual(back[P.sourceFormat], 5);
   assert.strictEqual(back[P.footageEncoding], 3);
 });
 
@@ -104,13 +102,16 @@ test("bridge: applyReference writes refs/<slot>.txt and sets the slot", async ()
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "lm-"));
   const v1 = makeItem("V1", true, true);
   const b = new Bridge(makePremiere({ selected: [v1] }), fsp, dir);
+  const { component } = await b.findLookMatch(v1);
+  await b.applyParams("selection", { [P.filmStrength]: 80 });
   const res = await b.applyReference("selection", "/refs/look.png", { [P.matchStrength]: 70 });
   assert(res.slot >= 1 && res.slot <= 999999);
   assert.strictEqual(await fsp.readFile(path.join(dir, "refs", `${res.slot}.txt`), "utf-8"), "/refs/look.png");
-  const { component } = await b.findLookMatch(v1);
   const params = await b.readParams(component);
   assert.strictEqual(params[P.referenceSlot], res.slot);
   assert.strictEqual(params[P.matchStrength], 70);
+  assert.strictEqual(params[P.filmStrength], 0, "a match never applies a film print");
+  assert.deepStrictEqual(res.names, ["V1"]);
 });
 
 test("bridge: every clip gets its own reference slot", async () => {
@@ -178,6 +179,24 @@ test("bridge: captureFrame sets the capture slot and returns the PNG the effect 
   await assert.rejects(b.captureFrame({ sleep: failing, pollMs: 1, timeoutMs: 50 }), /could not read/);
 });
 
+test("bridge: per-clip match params, analysis file, colour hints", async () => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "lm-"));
+  const clips = [makeItem("A001_SLOG3", true, true), makeItem("Sample 2", true, true)];
+  const b = new Bridge(makePremiere({ selected: clips }), fsp, dir);
+  const hints = await b.clipColourHints("selection");
+  assert.deepStrictEqual(hints.map(guessSourceFormat), [4, 0]);
+  const res = await b.applyReference("selection", "/r.png", (i) => ({ [P.sourceFormat]: i ? 1 : 4 }));
+  for (const [i, c] of clips.entries()) {
+    const { component } = await b.findLookMatch(c);
+    assert.strictEqual((await b.readParams(component))[P.sourceFormat], i ? 1 : 4);
+  }
+  assert.strictEqual(await b.readAnalysis(res.slots[0]), null, "nothing until the effect writes it");
+  const a = { source: { transfer: "S-Log3", log: true, exposure: -1.2, cct: 4300, tint: 2, contrast: 6 } };
+  setTimeout(() => fsp.writeFile(path.join(dir, "refs", `${res.slots[0]}.json`), JSON.stringify(a)), 20);
+  const got = await b.readAnalysis(res.slots[0], { timeoutMs: 2000, pollMs: 10 });
+  assert.strictEqual(got.source.transfer, "S-Log3");
+});
+
 test("self-test passes against the mock and restores the clip", async () => {
   const { runSelfTest } = require("../lib/selftest.js");
   const v1 = makeItem("V1", true, true);
@@ -192,7 +211,7 @@ test("self-test passes against the mock and restores the clip", async () => {
 
 test("agent: whitelist only, values sanitised", async () => {
   assert.deepStrictEqual(Object.keys(COMMANDS).sort(),
-    ["applyParams", "applyReference", "captureFrame", "clipNames", "exportCube", "inspectParams", "ping", "previewLooks", "readSelected", "saveProject", "selectClip", "selfTest", "setPlayhead", "timeline"]);
+    ["applyParams", "applyReference", "captureFrame", "clipNames", "exportCube", "inspectParams", "ping", "readAnalysis", "readSelected", "saveProject", "selectClip", "selfTest", "setPlayhead", "timeline"]);
   const v1 = makeItem("V1", true, true);
   const ppro = makePremiere({ selected: [v1] });
   const b = new Bridge(ppro, fsp, os.tmpdir());

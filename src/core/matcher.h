@@ -1,9 +1,11 @@
 // Look matcher: learns the look of a reference still relative to a frame of the footage and
 // bakes it into a display-referred 3D LUT. C++ port of the Python prototype (lookmatch.py).
 #pragma once
+#include <functional>
 #include <string>
 #include <vector>
 #include "lut3d.h"
+#include "scene.h"
 
 namespace lm {
 
@@ -12,6 +14,12 @@ struct MatchOptions {
     float skinProtect = -1.0f;    // 0..1, negative = auto (0.3, or 0.8 when the reference has no skin)
     float balance = 0.5f;         // fallback content balancing when the images share few regions
     int lutSize = 33;
+    bool matchTone = true;        // histogram-match lightness (off when the tone is handled elsewhere)
+    float maxColourShift = 1.0f;  // cap on region / split-toning colour offsets (OKLab ab)
+    float autoSkinProtect = 0.3f; // skin protect used by "auto" when the reference has skin
+    float maxChromaGain = 2.0f;       // cap on the chroma transfer's gain along any axis
+    float hueFloor = 0.0f;            // hue-region offsets fade in above this chroma (0 = always)
+    bool chromaAboutNeutral = false;  // chroma transfer about neutral (white balanced sources) rather than the mean
 };
 
 struct MatchResult {
@@ -21,5 +29,40 @@ struct MatchResult {
 
 // Both inputs are display-referred RGB in 0..1. Subsample large images before calling (~250k px is plenty).
 MatchResult matchLook(const std::vector<Vec3>& reference, const std::vector<Vec3>& source, const MatchOptions& opt);
+
+// Source-aware match. The source frame is analysed (log or display, exposure, white balance, tone
+// curve), brought to a canonical state, and the reference's look is applied to that canonical
+// state, so the result depends on what is in the shot rather than on how it was shot or graded.
+struct SceneMatchOptions {
+    MatchOptions look;   // region strength, skin protect, balance, LUT size
+    int transfer = -1;   // source encoding (Transfer index), -1 = detect
+    float exposure = 1;      // 0..1: how much to normalise exposure
+    float whiteBalance = 1;  // 0..1: how much to neutralise the source's white balance
+    float contrast = 1;      // 0..1: how much to undo the source's tone curve and saturation
+    float lookStrength = 1;  // 0..1: how much of the reference's look to apply on top
+    float matchContrast = 1; // 0..1: how far the graded result's blacks, shadows, mids, highlights and
+                             // whites are brought to the reference's (final tone match)
+    // how the look is carried over (internal; for the benchmark in tests/consistency_tests.cpp):
+    // 0 = thing by thing (neutral axis, skin, hue sectors), 1 = statistical HM-MKL-HM transfer
+    // (histogram match on lightness, Monge-Kantorovich linear map of the OKLab distribution, histogram
+    // match again), 2 = the mean of the two, 3 = hybrid: gentle lightness histogram match and the
+    // chroma scaled to the reference's spread (isotropic MKL), then the thing-by-thing grade
+    int method = 0;
+};
+
+struct SceneMatch {
+    Lut3D lut;               // source code values -> matched display RGB
+    std::function<Vec3(Vec3)> exact;  // the same transform, evaluated directly (tests)
+    SceneAnalysis source;    // the source frame as it came in
+    SceneAnalysis reference; // the reference still
+    SceneAnalysis result;    // the source frame after the match
+    std::string report;
+};
+
+// What a still's look is made of: neutral-axis tint per lightness band, skin, saturation, hue sectors.
+std::string describeLook(const Image& displayRgb);
+
+// `source` holds the frame's code values (what the effect receives); `reference` is display RGB.
+SceneMatch matchScene(const Image& reference, const Image& source, const SceneMatchOptions& opt);
 
 }  // namespace lm

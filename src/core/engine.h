@@ -40,7 +40,23 @@ struct Params {
     // output
     float mix = 1;
     int lutSize = 65;
+    // smooth the source's quantisation steps (compressed 8/10-bit gradients such as skies) before the
+    // grade expands them into contour rings; 0 = off, 1 = on
+    float deband = 1;
 };
+
+// Deband constants for one frame size (shared with the GPU kernel).
+constexpr int kDebandPairs = 8;  // neighbours are sampled in point-symmetric pairs
+struct DebandParams {
+    int radius = 0;         // sample radius in pixels, 0 = off
+    float threshold = 0;    // code-value difference above which a neighbour is real detail
+    float dither = 0;       // triangular dither amplitude (code values) where the pixel was smoothed
+};
+DebandParams debandParams(float amount, int height);
+// The debanded code value of pixel (x, y): the mean of the pixel and 2 x kDebandPairs pseudo-random
+// neighbours within the radius, each weighted by how close it is to the centre (neighbours across an
+// edge or in texture differ by more than the threshold and don't count), plus a little dither.
+Vec3 debandAt(const float* data, int width, int height, int stride, int x, int y, const DebandParams& d);
 
 struct ImageView {  // interleaved float RGBA, rows may be padded
     float* data;
@@ -55,6 +71,7 @@ struct FinishParams {
     float vignette = 0, mix = 1;
     float cx = 0, cy = 0, invDiag = 0;
     int frame = 0;
+    DebandParams deband;
 };
 
 class Engine {
@@ -62,6 +79,7 @@ public:
     Engine();
     void setParams(const Params& p);  // cheap when only spatial settings change
     void setMatchLut(std::shared_ptr<const Lut3D> lut);
+    bool grades() const;  // the colour chain changes the picture (deband runs only then)
     const Params& params() const { return p_; }
 
     // in and out may be the same buffer. frame drives grain, weave and flicker.
@@ -69,7 +87,7 @@ public:
 
     // Neutral display version of an input pixel: what the matcher sees as "the footage".
     Vec3 neutralDisplay(Vec3 inputCode) const;
-    // Colour-only transform from input code values to display, for .cube export.
+    // Colour-only transform from input code values to display, for .cube export (no shaper).
     Lut3D bakeExportLut(int size) const;
 
     // GPU support: if this frame can use the single-LUT fast path (Rec.709 input, no weave, flicker,
@@ -79,6 +97,7 @@ public:
 
 private:
     Vec3 inputGain() const;
+    Lut3D bakeLut(int size, bool shaped) const;
     Vec3 colorFromLinear(Vec3 lin) const;  // scene linear Rec.709 -> display
     void rebuildLut();
     template <class ColourAt>

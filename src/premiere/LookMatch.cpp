@@ -43,7 +43,7 @@ using lmpanel::fileLine;
 using lmpanel::lutFromMatch;
 using lmpanel::readSlotLut;
 using lmpanel::refsDir;
-using lmpanel::kSlotLutMagic;
+using lmpanel::kSlotLutMagic2;
 
 // ---------- engine pool ----------
 // Hosts render frames on several threads at once. Each engine caches its baked colour LUT,
@@ -84,6 +84,13 @@ std::string stockChoices(bool negatives) {
     return s;
 }
 
+// "Auto|Rec.709|sRGB|S-Log3|..." for the Source Format popup (value 1 = detect, 2.. = lm::Transfer + 2)
+std::string sourceChoices() {
+    std::string s = "Auto (detect)";
+    for (int i = 0; i < lm::kTransferCount; ++i) s += std::string("|") + lm::transferName(lm::Transfer(i));
+    return s;
+}
+
 float F(PF_ParamDef* params[], int i) { return float(params[i]->u.fs_d.value); }
 
 lm::Params readParams(PF_ParamDef* params[]) {
@@ -116,44 +123,6 @@ lm::Params readParams(PF_ParamDef* params[]) {
     p.flicker = F(params, P_FLICKER) / 100.0f;
     p.mix = F(params, P_MIX) / 100.0f;
     return p;
-}
-
-// Applies one control by its Effect Controls name and value (Effect Controls units: percentages,
-// 1-based popups), mirroring readParams. Used for look previews requested by the panel.
-bool applyNamedValue(lm::Params& p, const std::string& name, float v) {
-    static const std::map<std::string, std::function<void(lm::Params&, float)>> setters = {
-        {"Footage Encoding", [](lm::Params& q, float x) { q.input = lm::InputSpace(std::max(0, int(x) - 1)); }},
-        {"Exposure", [](lm::Params& q, float x) { q.exposure = x; }},
-        {"Temperature", [](lm::Params& q, float x) { q.temperature = x / 100.0f; }},
-        {"Tint", [](lm::Params& q, float x) { q.tint = x / 100.0f; }},
-        {"Match Strength", [](lm::Params& q, float x) { q.matchStrength = x / 100.0f; }},
-        {"Film Strength", [](lm::Params& q, float x) { q.filmStrength = x / 100.0f; }},
-        {"Negative Stock", [](lm::Params& q, float x) { q.film.negative = std::max(0, int(x) - 1); }},
-        {"Print Stock", [](lm::Params& q, float x) { q.film.print = std::max(0, int(x) - 1); }},
-        {"Printer Light R", [](lm::Params& q, float x) { q.film.printerPoints[0] = x; }},
-        {"Printer Light G", [](lm::Params& q, float x) { q.film.printerPoints[1] = x; }},
-        {"Printer Light B", [](lm::Params& q, float x) { q.film.printerPoints[2] = x; }},
-        {"Film Saturation", [](lm::Params& q, float x) { q.film.saturation = x / 100.0f; }},
-        {"Fade", [](lm::Params& q, float x) { q.fade = x / 100.0f; }},
-        {"Halation", [](lm::Params& q, float x) { q.halation = x / 100.0f; }},
-        {"Halation Size", [](lm::Params& q, float x) { q.halationRadius = x; }},
-        {"Halation Threshold", [](lm::Params& q, float x) { q.halationThreshold = x; }},
-        {"Bloom", [](lm::Params& q, float x) { q.bloom = x / 100.0f; }},
-        {"Bloom Size", [](lm::Params& q, float x) { q.bloomRadius = x; }},
-        {"Bloom Threshold", [](lm::Params& q, float x) { q.bloomThreshold = x; }},
-        {"Grain", [](lm::Params& q, float x) { q.grain = x / 100.0f; }},
-        {"Grain Size", [](lm::Params& q, float x) { q.grainSize = x; }},
-        {"Grain Colour", [](lm::Params& q, float x) { q.grainColor = x / 100.0f; }},
-        {"Softness", [](lm::Params& q, float x) { q.softness = x / 100.0f; }},
-        {"Vignette", [](lm::Params& q, float x) { q.vignette = x / 100.0f; }},
-        {"Gate Weave", [](lm::Params& q, float x) { q.weave = x; }},
-        {"Flicker", [](lm::Params& q, float x) { q.flicker = x / 100.0f; }},
-        {"Mix", [](lm::Params& q, float x) { q.mix = x / 100.0f; }},
-    };
-    auto it = setters.find(name);
-    if (it == setters.end()) return false;
-    it->second(p, v);
-    return true;
 }
 
 void setError(PF_OutData* out_data, const char* msg) {
@@ -381,6 +350,13 @@ PF_Err ArbitraryCallback(PF_InData* in_data, PF_ArbParamsExtra* extra) {
             if (u.buf_sizeLu >= sizeof(MatchData) && src->magic == kMatchMagic && src->version == kMatchVersion) {
                 std::memcpy(PF_LOCK_HANDLE(h), src, sizeof(MatchData));
                 PF_UNLOCK_HANDLE(h);
+            } else if (u.buf_sizeLu >= sizeof(MatchDataV1) && src->magic == kMatchMagic && src->version == 1) {
+                // a project saved by a 1.0 build: same LUT, no shaper
+                auto* d = reinterpret_cast<MatchData*>(PF_LOCK_HANDLE(h));
+                std::memcpy(static_cast<MatchDataV1*>(d), src, sizeof(MatchDataV1));
+                d->version = kMatchVersion;
+                d->shaperSize = 0;
+                PF_UNLOCK_HANDLE(h);
             }
             *u.arbPH = h;
             return PF_Err_NONE;
@@ -438,7 +414,7 @@ PF_Err GlobalSetup(PF_InData* in_data, PF_OutData* out_data) {
 PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     PF_Err err = PF_Err_NONE;
     PF_ParamDef def;
-    static std::string negs = stockChoices(true), prints = stockChoices(false);
+    static std::string negs = stockChoices(true), prints = stockChoices(false), sources = sourceChoices();
 
     AEFX_CLR_STRUCT(def);
     PF_ADD_TOPIC("Look Match", D_MATCH_TOPIC);
@@ -563,6 +539,24 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     AEFX_CLR_STRUCT(def);
     PF_END_TOPIC(D_COMPARE_TOPIC_END);
 
+    // Appended after the older groups so projects saved with earlier builds keep their values.
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_TOPIC("Source", D_SOURCE_TOPIC);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_POPUP("Source Format", lm::kTransferCount + 1, 1, sources.c_str(), D_SOURCE_FORMAT);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Normalise Exposure", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_NORM_EXPOSURE);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Normalise White Balance", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_NORM_WB);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Normalise Contrast", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_NORM_CONTRAST);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Look Strength", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_LOOK_STRENGTH);
+    AEFX_CLR_STRUCT(def);
+    PF_END_TOPIC(D_SOURCE_TOPIC_END);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Match Contrast", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_MATCH_CONTRAST);
+
     out_data->num_params = P_NUM_PARAMS;
     return err;
 }
@@ -588,8 +582,9 @@ bool isMediaPending(const std::vector<float>& buf, int width, int height) {
 
 // Builds a match LUT from a reference still and a frame (RGBA float, as read by worldToFloat).
 // Returns false with a user-facing message if the reference can't be read or the frame is unusable.
+// `analysis` (optional) receives the source / reference / result analysis as JSON for the panel.
 bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, int height, PF_ParamDef* params[],
-                lm::Lut3D& lutOut, std::string& error) {
+                lm::Lut3D& lutOut, std::string& error, std::string* analysis = nullptr) {
     int rw, rh, rn;
     unsigned char* ref8 = stbi_load(refPath, &rw, &rh, &rn, 3);
     if (!ref8) {
@@ -602,30 +597,40 @@ bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, i
         lmLog("buildMatch: frame is Premiere's Media pending card, not matching");
         return false;
     }
-    std::vector<lm::Vec3> refPx;
-    size_t total = size_t(rw) * rh, step = std::max<size_t>(1, total / 250000);
-    for (size_t i = 0; i < total; i += step) refPx.push_back({ref8[i * 3] / 255.0f, ref8[i * 3 + 1] / 255.0f, ref8[i * 3 + 2] / 255.0f});
+    lm::Image ref;
+    ref.width = rw; ref.height = rh;
+    ref.px.resize(size_t(rw) * rh);
+    for (size_t i = 0; i < ref.px.size(); ++i) ref.px[i] = {ref8[i * 3] / 255.0f, ref8[i * 3 + 1] / 255.0f, ref8[i * 3 + 2] / 255.0f};
     stbi_image_free(ref8);
+    ref = lm::downsample(ref, 640);
     lmLog("buildMatch: reference %s (%dx%d, %d channels)", refPath, rw, rh, rn);
 
-    std::vector<lm::Vec3> srcPx;
+    // the footage as the match sees it: Input group (encoding, exposure, temperature, tint) applied
     lm::Engine e;
     e.setParams(readParams(params));
-    size_t n = size_t(width) * height, st = std::max<size_t>(1, n / 250000);
-    for (size_t i = 0; i < n; i += st) srcPx.push_back(e.neutralDisplay({buf[i * 4], buf[i * 4 + 1], buf[i * 4 + 2]}));
-    if (srcPx.empty()) {
+    lm::Image src;
+    src.width = width; src.height = height;
+    src.px.resize(size_t(width) * height);
+    lm::parallelFor(0, height, [&](int y) {
+        for (int x = 0; x < width; ++x) {
+            const float* p = &buf[(size_t(y) * width + x) * 4];
+            src.px[size_t(y) * width + x] = e.neutralDisplay({p[0], p[1], p[2]});
+        }
+    });
+    src = lm::downsample(src, 640);
+    if (src.px.empty()) {
         error = "LookMatch: no footage under the playhead to match.";
         return false;
     }
     // A black, blank or unreadable frame would make the matcher stretch noise into a wild LUT
     // (posterised, oversaturated colour), so refuse to build a match from it.
     double sum[3] = {0, 0, 0}, sq = 0;
-    for (const lm::Vec3& v : srcPx) {
+    for (const lm::Vec3& v : src.px) {
         sum[0] += v.r; sum[1] += v.g; sum[2] += v.b;
         double l = 0.2126 * v.r + 0.7152 * v.g + 0.0722 * v.b;
         sq += l * l;
     }
-    const double cnt = double(srcPx.size());
+    const double cnt = double(src.px.size());
     const double meanL = (0.2126 * sum[0] + 0.7152 * sum[1] + 0.0722 * sum[2]) / cnt;
     const double sdL = std::sqrt(std::max(0.0, sq / cnt - meanL * meanL));
     lmLog("buildMatch: source %dx%d mean RGB %.3f %.3f %.3f, luma sd %.4f", width, height, sum[0] / cnt, sum[1] / cnt,
@@ -636,11 +641,27 @@ bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, i
         return false;
     }
 
-    lm::MatchOptions mo;
-    mo.regionStrength = F(params, P_REGION_STRENGTH) / 100.0f;
-    mo.skinProtect = params[P_SKIN_AUTO]->u.bd.value ? -1.0f : F(params, P_SKIN_PROTECT) / 100.0f;
-    mo.lutSize = kMatchLutSize;
-    lutOut = lm::matchLook(refPx, srcPx, mo).lut;
+    lm::SceneMatchOptions mo;
+    mo.look.regionStrength = F(params, P_REGION_STRENGTH) / 100.0f;
+    mo.look.skinProtect = params[P_SKIN_AUTO]->u.bd.value ? -1.0f : F(params, P_SKIN_PROTECT) / 100.0f;
+    mo.look.lutSize = kSlotLutSize;
+    // Footage Encoding set to a log curve: the Input group already decoded it, so the match sees display
+    const bool decoded = params[P_INPUT_SPACE]->u.pd.value > 1;
+    const int format = params[P_SOURCE_FORMAT]->u.pd.value - 2;  // -1 = Auto
+    mo.transfer = decoded ? int(lm::Transfer::Rec709) : format;
+    mo.exposure = F(params, P_NORM_EXPOSURE) / 100.0f;
+    mo.whiteBalance = F(params, P_NORM_WB) / 100.0f;
+    mo.contrast = F(params, P_NORM_CONTRAST) / 100.0f;
+    mo.lookStrength = F(params, P_LOOK_STRENGTH) / 100.0f;
+    mo.matchContrast = F(params, P_MATCH_CONTRAST) / 100.0f;
+    lm::SceneMatch m = lm::matchScene(ref, src, mo);
+    lutOut = std::move(m.lut);
+    lmLog("buildMatch: %s", m.report.c_str());
+    if (analysis)
+        *analysis = "{\"source\":" + m.source.json() + ",\"reference\":" + m.reference.json() + ",\"result\":" + m.result.json() +
+                    ",\"settings\":{\"exposure\":" + std::to_string(mo.exposure) + ",\"whiteBalance\":" +
+                    std::to_string(mo.whiteBalance) + ",\"contrast\":" + std::to_string(mo.contrast) + ",\"lookStrength\":" +
+                    std::to_string(mo.lookStrength) + ",\"matchContrast\":" + std::to_string(mo.matchContrast) + "}}";
     for (float g : {0.18f, 0.5f, 1.0f}) {
         lm::Vec3 v = lutOut.apply({g, g, g});
         lmLog("buildMatch: LUT grey %.2f -> %.3f %.3f %.3f", g, v.r, v.g, v.b);
@@ -673,7 +694,7 @@ PF_Err ComputeMatch(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* param
         setError(out_data, msg.c_str());
         return PF_Err_NONE;
     }
-    lm::Lut3D lut(kMatchLutSize);
+    lm::Lut3D lut(kSlotLutSize);
     std::string error;
     if (!buildMatch(refPath, buf, width, height, params, lut, error)) {
         setError(out_data, error.c_str());
@@ -696,15 +717,27 @@ PF_Err storeMatch(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[
         md = lockMatch(in_data, mp->u.arb_d.value);
         if (!md) return PF_Err_OUT_OF_MEMORY;
     }
+    // the project copy is 33^3: resample a finer match on the same shaper
+    lm::Lut3D small(kMatchLutSize);
+    if (lut.size() != kMatchLutSize) {
+        small.setShaper(lut.shaper());
+        small.fill([&](lm::Vec3 c) { return lut.apply(c); });
+    }
+    const lm::Lut3D& src = lut.size() == kMatchLutSize ? lut : small;
     uint16_t* q = md->lut;
     for (int b = 0; b < kMatchLutSize; ++b)
         for (int g = 0; g < kMatchLutSize; ++g)
             for (int r = 0; r < kMatchLutSize; ++r, q += 3) {
-                const lm::Vec3& v = lut.at(r, g, b);
+                const lm::Vec3& v = src.at(r, g, b);
                 q[0] = uint16_t(lm::clamp01(v.r) * 65535.0f + 0.5f);
                 q[1] = uint16_t(lm::clamp01(v.g) * 65535.0f + 0.5f);
                 q[2] = uint16_t(lm::clamp01(v.b) * 65535.0f + 0.5f);
             }
+    md->shaperSize = 0;
+    if (int(src.shaper().size()) == kMatchShaperSize) {
+        md->shaperSize = kMatchShaperSize;
+        for (int i = 0; i < kMatchShaperSize; ++i) md->shaper[i] = uint16_t(lm::clamp01(src.shaper()[i]) * 65535.0f + 0.5f);
+    }
     std::memset(md->referencePath, 0, sizeof(md->referencePath));
     std::strncpy(md->referencePath, refPath, sizeof(md->referencePath) - 1);
     md->hasMatch = 1;
@@ -729,72 +762,6 @@ std::vector<unsigned char> to8bitRGB(const std::vector<float>& buf, int width, i
 
 void dumpFrame(const std::string& file, const std::vector<float>& buf, int width, int height) {
     stbi_write_png(file.c_str(), width, height, 3, to8bitRGB(buf, width, height).data(), width * 3);
-}
-
-// Box-filters an RGBA float frame down to at most `tw` pixels wide (tw/th return the size).
-std::vector<float> downscale(const std::vector<float>& src, int w, int h, int& tw, int& th) {
-    tw = std::min(tw, w);
-    th = std::max(1, int(std::lround(double(h) * tw / w)));
-    std::vector<float> out(size_t(tw) * th * 4, 0.0f);
-    for (int y = 0; y < th; ++y) {
-        int y0 = y * h / th, y1 = std::max(y0 + 1, (y + 1) * h / th);
-        for (int x = 0; x < tw; ++x) {
-            int x0 = x * w / tw, x1 = std::max(x0 + 1, (x + 1) * w / tw);
-            float acc[4] = {0, 0, 0, 0};
-            for (int yy = y0; yy < y1; ++yy)
-                for (int xx = x0; xx < x1; ++xx)
-                    for (int c = 0; c < 4; ++c) acc[c] += src[(size_t(yy) * w + xx) * 4 + c];
-            float n = float((y1 - y0) * (x1 - x0));
-            for (int c = 0; c < 4; ++c) out[(size_t(y) * tw + x) * 4 + c] = acc[c] / n;
-        }
-    }
-    return out;
-}
-
-// Renders the look previews the panel asked for (see the Thumbs Slot block in Render).
-void renderThumbnails(const std::string& base, const std::vector<float>& frame, int w, int h, const lm::Params& clip,
-                      std::shared_ptr<const lm::Lut3D> matchLut) {
-    std::string request = base + ".txt", result = "ok";
-    FILE* f = std::fopen(request.c_str(), "rb");
-    if (!f) result = "no request";
-    int tw = 320, th = 0;
-    std::vector<float> small = f ? downscale(frame, w, h, tw, th) : std::vector<float>();
-    int count = 0;
-    char line[4096];
-    while (f && std::fgets(line, sizeof line, f)) {
-        std::string s(line);
-        while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
-        size_t tab = s.find('\t');
-        if (tab == std::string::npos || tab == 0) continue;
-        std::string id = s.substr(0, tab);
-        if (id.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789-_") != std::string::npos) continue;
-        lm::Params p = clip;
-        p.lutSize = 33;  // previews: a smaller colour LUT is plenty and much faster to build
-        size_t pos = tab + 1;
-        while (pos < s.size()) {
-            size_t end = s.find(';', pos);
-            std::string kv = s.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
-            size_t eq = kv.find('=');
-            if (eq != std::string::npos) applyNamedValue(p, kv.substr(0, eq), std::strtof(kv.c_str() + eq + 1, nullptr));
-            if (end == std::string::npos) break;
-            pos = end + 1;
-        }
-        // Grain and weave are per pixel: at full size, shrinking the frame averages grain away by about
-        // the scale factor, so scale them to look like a downsized full-resolution render.
-        const float scale = float(tw) / float(w);
-        p.grain *= scale;
-        p.weave *= scale;
-        lm::Engine e;
-        e.setParams(p);
-        e.setMatchLut(matchLut);
-        std::vector<float> img = small;
-        lm::ImageView v{img.data(), tw, th, tw * 4};
-        e.render(v, v, 0);
-        if (stbi_write_png((base + "-" + id + ".png").c_str(), tw, th, 3, to8bitRGB(img, tw, th).data(), tw * 3)) ++count;
-    }
-    if (f) std::fclose(f);
-    if (FILE* df = std::fopen((base + ".done").c_str(), "wb")) { std::fputs(result.c_str(), df); std::fclose(df); }
-    lmLog("renderThumbnails: %s -> %d previews (%s)", base.c_str(), count, result.c_str());
 }
 
 // Before/after wipe: pixels left of (or above) the split line show the original, with a thin line.
@@ -825,17 +792,29 @@ void writeSlotLut(const std::string& file, const lm::Lut3D& lut) {
     std::string tmp = file + ".tmp" + std::to_string(std::random_device{}());
     FILE* f = std::fopen(tmp.c_str(), "wb");
     if (!f) return;
-    uint32_t hdr[2] = {kSlotLutMagic, uint32_t(kMatchLutSize)};
+    const int n = lut.size();
+    uint32_t hdr[3] = {kSlotLutMagic2, uint32_t(n), uint32_t(lut.shaper().size())};
     std::fwrite(hdr, sizeof hdr, 1, f);
-    for (int b = 0; b < kMatchLutSize; ++b)
-        for (int g = 0; g < kMatchLutSize; ++g)
-            for (int r = 0; r < kMatchLutSize; ++r) {
+    if (!lut.shaper().empty()) std::fwrite(lut.shaper().data(), sizeof(float), lut.shaper().size(), f);
+    for (int b = 0; b < n; ++b)
+        for (int g = 0; g < n; ++g)
+            for (int r = 0; r < n; ++r) {
                 const lm::Vec3& c = lut.at(r, g, b);
                 float q[3] = {c.r, c.g, c.b};
                 std::fwrite(q, sizeof q, 1, f);
             }
     std::fclose(f);
     std::rename(tmp.c_str(), file.c_str());  // atomic: readers see the old file or the whole new one
+}
+
+// Small text file, written atomically (the panel polls for it).
+void writeTextFile(const std::string& file, const std::string& text) {
+    std::string tmp = file + ".tmp" + std::to_string(std::random_device{}());
+    if (FILE* f = std::fopen(tmp.c_str(), "wb")) {
+        std::fwrite(text.data(), 1, text.size(), f);
+        std::fclose(f);
+        std::rename(tmp.c_str(), file.c_str());
+    }
 }
 
 // Reads the frame to match into buf (RGBA float); returns false if there is none.
@@ -853,7 +832,7 @@ std::shared_ptr<const lm::Lut3D> slotLut(long slot, const FrameSource& getFrame,
         lmLog("Render: slot %ld loaded from %s", slot, file.c_str());
     } else {
         std::string ref = panelReferencePath(slot), error;
-        auto built = std::make_shared<lm::Lut3D>(kMatchLutSize);
+        auto built = std::make_shared<lm::Lut3D>(kSlotLutSize);
         std::vector<float> frame;
         int width = 0, height = 0;
         if (!ref.empty() && !getFrame(frame, width, height)) error = "could not read the frame";
@@ -862,12 +841,15 @@ std::shared_ptr<const lm::Lut3D> slotLut(long slot, const FrameSource& getFrame,
             return nullptr;  // not cached: try again on the next render
         }
         else if (logEnabled() && !ref.empty()) dumpFrame(refsDir() + std::to_string(slot) + "-source.png", frame, width, height);
-        if (!ref.empty() && error.empty() && buildMatch(ref.c_str(), frame, width, height, params, *built, error)) {
+        std::string analysis;
+        if (!ref.empty() && error.empty() && buildMatch(ref.c_str(), frame, width, height, params, *built, error, &analysis)) {
             writeSlotLut(file, *built);
+            writeTextFile(refsDir() + std::to_string(slot) + ".json", analysis);
             lut = built;
             lmLog("Render: slot %ld matched to %s", slot, ref.c_str());
         } else {
             lmLog("Render: slot %ld could not be matched: %s", slot, ref.empty() ? "no reference file" : error.c_str());
+            if (!ref.empty()) writeTextFile(refsDir() + std::to_string(slot) + ".json", "{\"error\":\"" + error + "\"}");
         }
     }
     cache[slot] = lut;
@@ -999,18 +981,6 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
             lmLog("Render: export slot %ld -> %s (%s)", exportSlot, target.c_str(), result.c_str());
         }
     }
-    // Panel look previews: a new Thumbs Slot means render this frame (small, with this clip's match)
-    // through each look listed in refs/thumbs-<slot>.txt ("id<TAB>Name=value;Name=value") and write
-    // refs/thumbs-<slot>-<id>.png. Once per slot.
-    const long thumbsSlot = long(F(params, P_THUMBS_SLOT));
-    if (thumbsSlot > 0 && !isMediaPending(buf, w, h)) {
-        static std::mutex tm;
-        static std::set<long> rendered;
-        std::lock_guard<std::mutex> lock(tm);
-        if (rendered.insert(thumbsSlot).second)
-            renderThumbnails(refsDir() + "thumbs-" + std::to_string(thumbsSlot), buf, w, h, readParams(params), pe->lut);
-    }
-
     // Panel "hero clip": a new Capture Slot means save this clip's (ungraded) frame as a PNG the
     // panel then uses as the reference for other clips. Once per slot.
     const long captureSlot = long(F(params, P_CAPTURE_SLOT));

@@ -1,7 +1,9 @@
 # LookMatch (native)
 
-A native effect for Premiere Pro (and After Effects). It matches the look of any reference still
-and finishes the shot with film print emulation, halation, bloom and grain. The C++ engine renders
+A native effect for Premiere Pro (and After Effects). It matches the look of any reference still,
+source-aware: each clip's format (log or display), exposure, white balance and contrast are evened out
+first, so the match depends on what is in the shot, not on how it was shot or graded. It finishes the
+shot with halation, bloom, grain and (in Effect Controls) film print emulation. The C++ engine renders
 every frame itself, like QG PrintGrade does. It is not a pack of Lumetri presets. An **Export .cube**
 button also bakes the colour part into a LUT for Lumetri.
 
@@ -14,6 +16,7 @@ button also bakes the colour part into a LUT for Lumetri.
 | Film Print | Film Strength, Negative Stock (7), Print Stock (5), Printer Lights R/G/B, Film Saturation, Fade |
 | Film Texture | Halation (+ size, threshold), Bloom (+ size, threshold), Grain (+ size, colour), Softness, Vignette, Gate Weave, Flicker |
 | Output | Mix, Export .cube... |
+| Source | Source Format (Auto, Rec.709, sRGB, S-Log3, LogC3, LogC4, Canon Log 3, V-Log, F-Log, F-Log2, Apple Log, BMD Film Gen5, RED Log3G10, DJI D-Log), Normalise Exposure / White Balance / Contrast, Look Strength |
 
 **Negative stocks:** Tungsten 500T, Daylight 250D, Fine Grain 50D, Portrait 400, Low-Con Neutral,
 Night 800T (heavy halation), Black & White 400.
@@ -35,8 +38,14 @@ negative→print model, and fade. The film model is a two-stage density model: p
 with interlayer coupling on the negative, printed through printer lights onto a print stock with
 dye crosstalk. That gives film's toe, shoulder and colour crossover, and printer-point grading.
 
-The look match is the region-aware matcher from the Python prototype, ported to C++. It matches
-skin to skin, sky to sky and foliage to foliage, with skin protection.
+The look match is source-aware (`src/core/scene.*`, `matchScene` in `src/core/matcher.cpp`). The clip
+is decoded (its log curve and gamut, detected or named), white balanced in scene linear, its tone curve
+undone by rank to a canonical distribution, and its saturation evened out. Then the reference's look is
+applied: its tone distribution (with its key moderated, so a night reference doesn't crush a day clip)
+and the region-aware colour transfer from the Python prototype, which matches skin to skin, sky to sky
+and foliage to foliage, with skin protection. The whole chain is baked into a 65³ LUT with a 1D input
+shaper fitted to the frame, so the CPU and GPU paths share it. How it works and how consistent it is:
+**[docs/MATCHING.md](docs/MATCHING.md)**.
 
 ## Build
 
@@ -46,6 +55,19 @@ Requirements: CMake 3.16+, a C++17 compiler.
 # engine, command-line renderer and tests (any OS)
 cmake -S . -B build && cmake --build build -j
 ./build/engine_tests
+(cd build && ctest)   # engine, consistency, banding and GPU tests
+
+# consistency test on real frames: grab a few frames per clip, then point it at a reference still
+swift tools/extract_frames.swift tests/frames 640 2 clip1.mov clip2.mp4
+cmake -S . -B build -DLOOKMATCH_TEST_REF=/path/to/reference.png
+./build/consistency_tests --old      # --old adds the previous matcher's numbers
+
+# sky banding: 16-bit frames of a log clip, named NAME-sky<W>x<H>.png (the sky's extent), then
+swift tools/extract_frame16.swift clip.mov 61.0 tests/frames-sky/beach-sky1100x440.png 1920
+./build/banding_tests
+
+# ground truth for the camera curves and gamuts (test-only: pip install colour-science)
+python tests/check_transfers.py build/lookmatch-render
 
 # Premiere effect (Windows: Visual Studio 2022; macOS: Xcode 15+)
 # Download the After Effects SDK from Adobe's developer site (free Adobe account), then:
@@ -98,8 +120,9 @@ Otherwise the builds are ad-hoc signed and the pkg is unsigned.
 ## LookMatch panel (Premiere Pro 2025+)
 
 A dockable panel drives the effect. It has a reference library with drag and drop, matching of selected clips or a
-whole sequence, hero-clip shot matching, 8 film looks plus every stock combination with previews rendered from your
-own shot, all film controls, saved looks (`.lmlook`), `.cube` export and a before/after split. See
+whole sequence, hero-clip shot matching, the source format (from clip metadata, detected, or chosen) and how much to
+normalise, each clip's analysis before and after the match (format, exposure, temperature, tint, contrast), the
+texture controls, saved looks (`.lmlook`), `.cube` export and a before/after split. See
 **[docs/PANEL.md](docs/PANEL.md)**.
 
 ![LookMatch panel in Premiere](docs/panel/premiere-with-panel.png)
@@ -113,13 +136,18 @@ cmake -S . -B build -DLOOKMATCH_BUILD_PLUGIN=ON -DAE_SDK_DIR=<AE SDK>/Examples \
       -DLOOKMATCH_PR_SDK_DIR="<Premiere Pro SDK>/Examples"   # any SDK from CC 2017 on
 ```
 
-- **On the GPU:** colour (match, film, fade, via one baked LUT), grain, vignette, mix and split view, for Rec.709 footage.
+- **On the GPU:** colour (match, film, fade, via one baked LUT and its input shaper), grain, vignette, mix and split view,
+  for footage the effect reads as Rec.709. Log footage matched through **Source Format** renders on the GPU too, as the
+  match LUT decodes it.
   The Metal kernel mirrors the CPU fast path. `gpu_tests` checks GPU against CPU (max 0/255). In Premiere 26.5 the
   Program monitor differed by a mean of 0.2/255 between the two paths.
-- **On the CPU:** clips with halation, bloom, softness, gate weave, flicker or log footage, and clips with a panel
+- **On the CPU:** clips with halation, bloom, softness, gate weave, flicker or a log **Footage Encoding**, and clips with a panel
   request still waiting. The GPU filter declines those, and Premiere renders them with the CPU effect.
-- **Speed (M1 Max, colour + grain + vignette):** 1080p is 10.3 ms on the CPU and 0.97 ms on the GPU (11×). 4K is
-  40.6 ms vs 1.8 ms (23×). Measured with `gpu_bench`.
+- **Deband:** before the grade, both paths smooth the source's quantisation steps, which would otherwise show as
+  contour rings in compressed log skies (see docs/MATCHING.md). The GPU filter grades from a copy of the frame for
+  this.
+- **Speed (M1 Max, colour + deband, worst case):** 1080p is 53 ms on the CPU and 2.9 ms on the GPU. 4K is 326 ms vs
+  9.6 ms (34×). Without deband, 4K was 40.6 ms on the CPU and 1.8 ms on the GPU. Measured with `gpu_bench`.
 - `LOOKMATCH_NO_GPU=1` turns the GPU path off.
 - The GPU filter API returns popups 0-based, while the AE API and Effect Controls are 1-based. The code accounts for this.
 
@@ -127,18 +155,22 @@ cmake -S . -B build -DLOOKMATCH_BUILD_PLUGIN=ON -DAE_SDK_DIR=<AE SDK>/Examples \
 
 | Part | State |
 |---|---|
-| Engine (match, film, texture) | `engine_tests` passes: identity, film neutrality, export LUT, self-match, fast path vs full path, concurrent renders |
+| Engine (match, film, texture) | `engine_tests` passes: identity, film neutrality, export LUT, self-match, fast path vs full path, concurrent renders, transfer curves, CCT/tint, cast and log detection |
+| Source-aware match | `consistency_tests`: real frames under exposure, white balance, curve, saturation and log perturbations, CIEDE2000 against the untouched match. See [docs/MATCHING.md](docs/MATCHING.md) |
+| Banding | `banding_tests`: compressed 8/10-bit log skies (synthetic and real) show no contour steps after the grade, and deband keeps at least 93% of the texture detail |
+| Camera curves | `tests/check_transfers.py`: 11 log curves and their gamuts match colour-science |
 | Command-line renderer | Built and tested |
 | Premiere effect | Tested in Premiere Pro 2026 (26.5) on macOS: matching, film, split view, panel link. Universal arm64 + x86_64. |
 | Panel | Tested in Premiere 26.5 through its test agent (self-test 8/8 or 9/9 with a reference); `node src/panel-uxp/test/run.js` |
-| Speed (M1 Max) | CPU: 1080p colour-only 9.6 ms, everything on 42 ms; 4K colour-only 37 ms, everything on 196 ms. GPU (colour path): 1080p 0.97 ms, 4K 1.8 ms |
+| Speed (M1 Max) | GPU (colour + deband): 1080p 2.9 ms, 4K 9.6 ms. CPU colour + deband: 1080p 53 ms, 4K 326 ms (without deband 9.6 / 37 ms) |
 
 ## Next steps
 
-1. **GPU versions of halation, bloom and softness, and log decoding**, so every look renders on the GPU (CUDA/OpenCL for Windows).
-2. **Windows build** of the effect and panel (the code is portable; untested).
-3. **DaVinci Resolve OFX** build, reusing the same engine.
-4. Signed and notarised installers, licensing, and per-stock tuning against real film scans.
+1. **GPU versions of halation, bloom and softness**, so every look renders on the GPU (CUDA/OpenCL for Windows).
+2. **Consistency under strong per-channel curves** (S-curves, per-channel lift/gamma/gain): see the open cases in docs/MATCHING.md.
+3. **Windows build** of the effect and panel (the code is portable; untested).
+4. **DaVinci Resolve OFX** build, reusing the same engine.
+5. Signed and notarised installers, licensing, and per-stock tuning against real film scans.
 
 ## Sample renders
 

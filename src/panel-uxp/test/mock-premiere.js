@@ -28,15 +28,15 @@ function makeComponent(matchName, params) {
 }
 
 function lookMatchComponent() {
-  const { FILM_DEFAULTS, P } = require("../lib/looks.js");
-  // popups are 0-based in Premiere's UXP API (FILM_DEFAULTS are 1-based like Effect Controls)
-  const zeroBased = {};
-  for (const [k, v] of Object.entries(FILM_DEFAULTS)) zeroBased[k] = [P.negative, P.print].includes(k) ? v - 1 : v;
+  const { TEXTURE_DEFAULTS, P } = require("../lib/params.js");
+  // popups are 0-based in Premiere's UXP API (Effect Controls shows them 1-based)
   return makeComponent("AE.PROPLUGS LookMatch", Object.assign({
     "Look Match": undefined, Reference: undefined, [P.matchStrength]: 100, [P.regionMatching]: 100,
     [P.autoSkin]: true, [P.skinProtect]: 30, [P.footageEncoding]: 0, [P.exposure]: 0, [P.temperature]: 0, [P.tint]: 0,
-    [P.mix]: 100, [P.referenceSlot]: 0, [P.exportSlot]: 0, [P.captureSlot]: 0, [P.thumbsSlot]: 0, [P.split]: false, [P.splitPos]: 50, [P.splitAngle]: 0,
-  }, zeroBased));
+    [P.filmStrength]: 0, "Negative Stock": 1, "Print Stock": 1, "Film Saturation": 100,
+    [P.mix]: 100, [P.referenceSlot]: 0, [P.exportSlot]: 0, [P.captureSlot]: 0, "Thumbs Slot": 0, [P.split]: false, [P.splitPos]: 50, [P.splitAngle]: 0,
+    [P.sourceFormat]: 0, [P.normExposure]: 100, [P.normWhite]: 100, [P.normContrast]: 100, [P.lookStrength]: 100, [P.matchContrast]: 100,
+  }, TEXTURE_DEFAULTS));
 }
 
 function makeItem(name, video, withLookMatch) {
@@ -49,7 +49,10 @@ function makeItem(name, video, withLookMatch) {
     async getComponentAtIndex(i) { return comps[i]; },
     createAppendComponentAction(c) { return { apply: () => comps.push(c) }; },
   };
-  return { name, chain, async getName() { return name; }, async getComponentChain() { return chain; } };
+  return {
+    name, chain, async getName() { return name; }, async getComponentChain() { return chain; },
+    async getProjectItem() { return { async getMediaFilePath() { return `/media/${name}.mov`; } }; },
+  };
 }
 
 function makePremiere({ selected = [], tracks = [[]] } = {}) {

@@ -9,8 +9,7 @@
     <sp-heading size="XS">LookMatch</sp-heading>
     <div class="tabs" id="tabs">
       <sp-action-button data-tab="match" selected>Match</sp-action-button>
-      <sp-action-button data-tab="looks">Looks</sp-action-button>
-      <sp-action-button data-tab="film">Film</sp-action-button>
+      <sp-action-button data-tab="texture">Texture</sp-action-button>
       <sp-action-button data-tab="saved">Saved</sp-action-button>
       <sp-action-button data-tab="tools">Tools</sp-action-button>
     </div>
@@ -40,8 +39,18 @@
     <div class="slider-row"><sp-detail>REGION MATCHING</sp-detail><sp-slider id="region" min="0" max="100" value="100"></sp-slider><span id="regionV">100%</span></div>
     <div class="row">
       <sp-checkbox id="autoSkin" checked>Auto skin protect</sp-checkbox>
-      <sp-checkbox id="detectLog" checked>Detect log footage</sp-checkbox>
     </div>
+    <sp-divider size="S"></sp-divider>
+    <sp-detail>SOURCE</sp-detail>
+    <div class="slider-row"><sp-detail>FORMAT</sp-detail><sp-picker id="sourceFormat" size="s"><sp-menu id="sourceMenu" slot="options"></sp-menu></sp-picker></div>
+    <sp-body size="XS" class="hint" id="sourceHint">Auto reads the clip's colour metadata, then the picture itself.</sp-body>
+    <div class="slider-row"><sp-detail>EXPOSURE</sp-detail><sp-slider id="normExposure" min="0" max="100" value="100"></sp-slider><span id="normExposureV">100%</span></div>
+    <div class="slider-row"><sp-detail>WHITE BALANCE</sp-detail><sp-slider id="normWhite" min="0" max="100" value="100"></sp-slider><span id="normWhiteV">100%</span></div>
+    <div class="slider-row"><sp-detail>CONTRAST</sp-detail><sp-slider id="normContrast" min="0" max="100" value="100"></sp-slider><span id="normContrastV">100%</span></div>
+    <div class="slider-row"><sp-detail>LOOK STRENGTH</sp-detail><sp-slider id="lookStrength" min="0" max="100" value="100"></sp-slider><span id="lookStrengthV">100%</span></div>
+    <div class="slider-row"><sp-detail>MATCH CONTRAST</sp-detail><sp-slider id="matchContrast" min="0" max="100" value="100"></sp-slider><span id="matchContrastV">100%</span></div>
+    <sp-body size="XS" class="hint">How much of the clip's own exposure, white balance and contrast to even out before the reference's look goes on.</sp-body>
+    <div id="analysis" class="analysis"></div>
     <div class="row">
       <sp-action-button id="applyStrength">Apply strength only</sp-action-button>
     </div>
@@ -55,20 +64,8 @@
     </div>
   </section>
 
-  <!-- LOOKS: one-click film looks and every stock combination -->
-  <section data-panel="looks" hidden>
-    <div class="slider-row"><sp-detail>LOOK INTENSITY</sp-detail><sp-slider id="intensity" min="0" max="150" value="100"></sp-slider><span id="intensityV">100%</span></div>
-    <div class="row">
-      <sp-action-button id="previewLooks">Preview looks on selected clip</sp-action-button>
-    </div>
-    <sp-detail>FILM LOOKS</sp-detail>
-    <div id="lookGrid" class="grid cards"></div>
-    <sp-detail>EVERY STOCK COMBINATION</sp-detail>
-    <div id="comboGrid" class="grid cards small"></div>
-  </section>
-
-  <!-- FILM: every film / texture control -->
-  <section data-panel="film" hidden>
+  <!-- TEXTURE: film texture controls -->
+  <section data-panel="texture" hidden>
     <div class="row">
       <sp-action-button id="readFilm">Read from selected clip</sp-action-button>
       <sp-action-button id="resetFilm">Reset</sp-action-button>
@@ -86,7 +83,7 @@
       <sp-textfield id="lookName" placeholder="Look name" class="grow"></sp-textfield>
       <sp-button id="saveLook" variant="cta">Save current look</sp-button>
     </div>
-    <sp-body size="XS" class="hint">Saves the Film tab, the match settings and the selected reference.</sp-body>
+    <sp-body size="XS" class="hint">Saves the Texture tab, the match and source settings and the selected reference.</sp-body>
     <div id="savedList" class="list"></div>
     <sp-divider size="S"></sp-divider>
     <sp-detail>EXPORT .CUBE (FOR LUMETRI / OTHER APPS)</sp-detail>
@@ -94,7 +91,7 @@
       <sp-textfield id="cubePath" placeholder="/path/to/MyLook.cube" class="grow"></sp-textfield>
       <sp-action-button id="exportCube">Export LUT</sp-action-button>
     </div>
-    <sp-body size="XS" class="hint">Exports the selected clip's colour (input, match, film, fade). Grain and other texture can't go in a LUT.</sp-body>
+    <sp-body size="XS" class="hint">Exports the selected clip's colour (input, match, fade). Grain and other texture can't go in a LUT.</sp-body>
     <sp-divider size="S"></sp-divider>
     <sp-detail>IMPORT / EXPORT (.lmlook)</sp-detail>
     <div class="row">

@@ -18,7 +18,8 @@ add_library(lookmatch_core STATIC
   src/core/lut3d.cpp
   src/core/matcher.cpp
   src/core/film.cpp
-  src/core/engine.cpp)
+  src/core/engine.cpp
+  src/core/scene.cpp)
 target_include_directories(lookmatch_core PUBLIC src/core)
 target_link_libraries(lookmatch_core PUBLIC Threads::Threads)
 if(MSVC)
@@ -42,6 +43,23 @@ enable_testing()
 add_executable(engine_tests tests/engine_tests.cpp)
 target_link_libraries(engine_tests PRIVATE lookmatch_core)
 add_test(NAME engine_tests COMMAND engine_tests)
+
+# Source-aware match consistency: real frames from tests/frames (tools/extract_frames.swift) matched to
+# LOOKMATCH_TEST_REF under exposure / white balance / curve / log perturbations. Synthetic without them.
+set(LOOKMATCH_TEST_REF "$ENV{HOME}/Desktop/Screenshot 2026-10-29 at 15.38.33.png" CACHE FILEPATH "Reference still for consistency_tests")
+add_executable(consistency_tests tests/consistency_tests.cpp)
+target_include_directories(consistency_tests PRIVATE third_party)
+target_compile_definitions(consistency_tests PRIVATE LOOKMATCH_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+                                                     LOOKMATCH_DEFAULT_REF="${LOOKMATCH_TEST_REF}")
+target_link_libraries(consistency_tests PRIVATE lookmatch_core)
+add_test(NAME consistency_tests COMMAND consistency_tests)
+set_tests_properties(consistency_tests PROPERTIES TIMEOUT 1800)
+add_executable(banding_tests tests/banding_tests.cpp)
+target_include_directories(banding_tests PRIVATE third_party)
+target_compile_definitions(banding_tests PRIVATE LOOKMATCH_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+                                                 LOOKMATCH_TEST_REF="${LOOKMATCH_TEST_REF}")
+target_link_libraries(banding_tests PRIVATE lookmatch_core)
+add_test(NAME banding_tests COMMAND banding_tests)
 
 # GPU kernel (Premiere GPU render) vs CPU engine, and a timing benchmark. macOS / Metal only.
 if(APPLE)

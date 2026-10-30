@@ -25,13 +25,18 @@ int main() {
             FinishParams fp; e.prepareDirect(w, h, 1, fp);
             const Lut3D& lut = e.directLut();
             id<MTLBuffer> io = [dev newBufferWithLength:src.size() * 4 options:MTLResourceStorageModePrivate];
+            id<MTLBuffer> srcCopy = [dev newBufferWithLength:src.size() * 4 options:MTLResourceStorageModePrivate];
             id<MTLBuffer> lb = [dev newBufferWithBytes:lut.data() length:size_t(lut.size()) * lut.size() * lut.size() * 12 options:MTLResourceStorageModeShared];
             LookMatchGPUParams gp = makeGPUParams(fp, w, w, h, lut.size(), false, 0.5f, 0);
             auto run = [&] {
                 id<MTLCommandBuffer> cb = [q commandBuffer];
+                id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];  // as the GPU filter: deband reads a copy
+                [blit copyFromBuffer:io sourceOffset:0 toBuffer:srcCopy destinationOffset:0 size:src.size() * 4];
+                [blit endEncoding];
                 id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
                 [enc setComputePipelineState:pso]; [enc setBuffer:io offset:0 atIndex:0];
                 [enc setBytes:&gp length:sizeof gp atIndex:1]; [enc setBuffer:lb offset:0 atIndex:2];
+                [enc setBuffer:srcCopy offset:0 atIndex:3];
                 [enc dispatchThreads:MTLSizeMake(w, h, 1) threadsPerThreadgroup:MTLSizeMake(pso.threadExecutionWidth, 16, 1)];
                 [enc endEncoding]; [cb commit]; [cb waitUntilCompleted];
             };

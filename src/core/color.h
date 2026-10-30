@@ -122,6 +122,26 @@ inline Vec3 rgbToOklab(Vec3 rgb) {
             1.9779984951f * l - 2.4285922050f * m + 0.4505937099f * s,
             0.0259040371f * l + 0.7827717662f * m - 0.8086757660f * s};
 }
+// ACES Reference Gamut Compression (Academy RGC specification, S-2021-001): out-of-gamut colours are
+// pulled toward the achromatic axis smoothly instead of being clipped channel by channel, which shifts
+// hue and leaves flat blotches. Per channel, the distance d = (A - c) / |A| from the achromatic A =
+// max(R, G, B) is compressed beyond a threshold t so that the limit l maps to 1 (the gamut boundary).
+inline Vec3 gamutCompress(Vec3 c) {
+    const float A = std::max({c.r, c.g, c.b});
+    if (A <= 0) return c;
+    constexpr float t[3] = {0.815f, 0.803f, 0.880f}, lim[3] = {1.147f, 1.264f, 1.312f}, p = 1.2f;
+    Vec3 o = c;
+    for (int i = 0; i < 3; ++i) {
+        const float d = (A - c[i]) / A;
+        if (d < t[i]) continue;
+        const float s = (lim[i] - t[i]) / std::pow(std::pow((1 - t[i]) / (lim[i] - t[i]), -p) - 1, 1 / p);
+        const float x = (d - t[i]) / s;
+        const float dc = t[i] + s * x / std::pow(1 + std::pow(x, p), 1 / p);
+        o[i] = A - dc * A;
+    }
+    return o;
+}
+
 inline Vec3 oklabToRgb(Vec3 lab) {
     float l = lab.r + 0.3963377774f * lab.g + 0.2158037573f * lab.b;
     float m = lab.r - 0.1055613458f * lab.g - 0.0638541728f * lab.b;
@@ -130,6 +150,30 @@ inline Vec3 oklabToRgb(Vec3 lab) {
     return {linearToSrgb(4.0767416621f * l - 3.3077115913f * m + 0.2309699292f * s),
             linearToSrgb(-1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s),
             linearToSrgb(-0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s)};
+}
+// The same, with out-of-gamut colours gamut-compressed rather than clipped; with pathToWhite, bright
+// near-neutral colours above white also go toward white instead of clipping one channel.
+inline Vec3 oklabToRgbCompressed(Vec3 lab, bool pathToWhite = false) {
+    float l = lab.r + 0.3963377774f * lab.g + 0.2158037573f * lab.b;
+    float m = lab.r - 0.1055613458f * lab.g - 0.0638541728f * lab.b;
+    float s = lab.r - 0.0894841775f * lab.g - 1.2914855480f * lab.b;
+    l = l * l * l; m = m * m * m; s = s * s * s;
+    Vec3 c = gamutCompress({4.0767416621f * l - 3.3077115913f * m + 0.2309699292f * s,
+                            -1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s,
+                            -0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s});
+    // above white: a bright, nearly neutral colour goes toward its own luminance (a path to white)
+    // rather than having one channel clip, which turns warm highlights cyan. Saturated colours (a
+    // bright blue sky) keep the plain clip, which costs them less colour.
+    const float mx = std::max({c.r, c.g, c.b});
+    if (pathToWhite && mx > 1.0f) {
+        const float y = std::min(0.9999f, 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b);
+        const float k = (1.0f - y) / std::max(1e-6f, mx - y);
+        const float t = std::clamp((y - 0.5f) / 0.35f, 0.0f, 1.0f);
+        const float u = std::clamp((std::hypot(lab.g, lab.b) - 0.03f) / 0.05f, 0.0f, 1.0f);
+        const float w = t * t * (3 - 2 * t) * (1 - u * u * (3 - 2 * u));  // near-white and near-neutral only
+        for (int i = 0; i < 3; ++i) c[i] = std::min(c[i], 1.0f) + ((y + (c[i] - y) * k) - std::min(c[i], 1.0f)) * w;
+    }
+    return {linearToSrgb(c.r), linearToSrgb(c.g), linearToSrgb(c.b)};
 }
 
 inline float luma709(Vec3 c) { return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b; }

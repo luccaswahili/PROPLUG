@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <vector>
 #include "engine.h"
+#include "matcher.h"
 #include "../src/premiere/LookMatchKernel.h"
 
 using namespace lm;
@@ -43,15 +44,30 @@ int main() {
                 p[0] = float(x) / (w - 1); p[1] = float(y) / (h - 1); p[2] = 0.5f + 0.5f * std::sin(x * 0.05f + y * 0.03f); p[3] = 1;
             }
 
-        struct Case { const char* name; Params p; bool split; } cases[] = {
+        // a source-aware match (shaped LUT), built from the test image against a warm, contrasty variant of it
+        std::shared_ptr<const Lut3D> sceneLut;
+        {
+            Image a, b;
+            a.width = b.width = w; a.height = b.height = h;
+            for (size_t i = 0; i < size_t(w) * h; ++i) {
+                Vec3 c(src[i * 4], src[i * 4 + 1], src[i * 4 + 2]);
+                a.px.push_back(c * 0.8f);
+                b.px.push_back(clamp01(Vec3(c.r * 1.1f, c.g * 0.95f, c.b * 0.8f)));
+            }
+            sceneLut = std::make_shared<Lut3D>(matchScene(b, a, SceneMatchOptions{}).lut);
+        }
+        struct Case { const char* name; Params p; bool split; bool scene; } cases[] = {
             {"colour only", [] { Params p; p.filmStrength = 0.8f; p.film.negative = 1; p.film.print = 1; return p; }(), false},
             {"grain + vignette + mix", [] { Params p; p.filmStrength = 0.6f; p.grain = 0.7f; p.grainColor = 0.4f; p.vignette = 0.4f; p.mix = 0.8f; return p; }(), false},
             {"exposure, white balance, fade", [] { Params p; p.exposure = 0.5f; p.temperature = 0.3f; p.tint = -0.2f; p.fade = 0.15f; p.filmStrength = 1; p.film.negative = 6; p.film.print = 4; return p; }(), false},
             {"split view", [] { Params p; p.filmStrength = 1; p.grain = 0.3f; return p; }(), true},
+            {"source-aware match (shaped LUT)", [] { Params p; p.grain = 0.2f; return p; }(), false, true},
+            {"source-aware match, strength 60%", [] { Params p; p.matchStrength = 0.6f; p.vignette = 0.3f; return p; }(), false, true},
         };
         for (auto& tc : cases) {
             Engine e;
             e.setParams(tc.p);
+            if (tc.scene) e.setMatchLut(sceneLut);
             FinishParams fp;
             CHECK(e.prepareDirect(w, h, 7, fp), "%s: not a fast-path frame", tc.name);
             // CPU
@@ -65,14 +81,21 @@ int main() {
             }
             const Lut3D& lut = e.directLut();
             id<MTLBuffer> io = [device newBufferWithBytes:bgra.data() length:bgra.size() * 4 options:MTLResourceStorageModeShared];
-            id<MTLBuffer> lb = [device newBufferWithBytes:lut.data() length:size_t(lut.size()) * lut.size() * lut.size() * 12 options:MTLResourceStorageModeShared];
+            id<MTLBuffer> srcCopy = [device newBufferWithBytes:bgra.data() length:bgra.size() * 4 options:MTLResourceStorageModeShared];
+            std::vector<float> lutData(reinterpret_cast<const float*>(lut.data()),
+                                       reinterpret_cast<const float*>(lut.data()) + size_t(lut.size()) * lut.size() * lut.size() * 3);
+            lutData.insert(lutData.end(), lut.shaper().begin(), lut.shaper().end());
+            id<MTLBuffer> lb = [device newBufferWithBytes:lutData.data() length:lutData.size() * 4 options:MTLResourceStorageModeShared];
             LookMatchGPUParams gp = makeGPUParams(fp, w, w, h, lut.size(), tc.split, 0.4f, 15.0f);
+            gp.shaperSize = int(lut.shaper().size());
+            if (tc.scene) CHECK(gp.shaperSize > 0, "%s: the direct LUT should carry the match's shaper", tc.name);
             id<MTLCommandBuffer> cb = [queue commandBuffer];
             id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
             [enc setComputePipelineState:pso];
             [enc setBuffer:io offset:0 atIndex:0];
             [enc setBytes:&gp length:sizeof gp atIndex:1];
             [enc setBuffer:lb offset:0 atIndex:2];
+            [enc setBuffer:srcCopy offset:0 atIndex:3];
             [enc dispatchThreads:MTLSizeMake(w, h, 1) threadsPerThreadgroup:MTLSizeMake(16, 16, 1)];
             [enc endEncoding];
             [cb commit];
