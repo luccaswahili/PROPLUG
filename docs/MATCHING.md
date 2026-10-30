@@ -55,10 +55,14 @@ The Premiere effect calls it when it builds a match. The CPU and GPU paths both 
      By pixel count, a plain backdrop filling most of a close-up owned the curve: on portrait 6439240, 66 % of the frame
      sat in a 0.75-stop band, its slope went from 2.7 to 0.36 within a quarter stop, and shaded skin got about 3×
      contrast next to flat lit skin.
-   - The curve is a quadratic, so its slope changes evenly and it can't kink. Its bend is scaled back until the slope
-     stays between 0.75 and 1.25: a match that would need more stops short of the reference.
-   - The cost: a capped curve can't fully undo a strong curve baked into display-referred footage, and clips with a
-     large bright area land darker than the reference's median.
+   - The curve is a cubic, so it can make a gentle S with a toe and shoulder, its slope changes evenly and it can't
+     kink. Its bend is scaled back until the slope stays between 0.6 and 1.6, and at most 1.05 across the skin in the
+     frame: a slope above 1 on skin reads as crunch, so contrast comes from around the skin, not from steepening it.
+     A match that would need more stops short of the reference.
+   - **Exposure** is one global gain on top: skin lands at the reference's skin level (or 0.5 stop above its mid grey
+     if it shows no skin); a frame without skin puts its mid grey on the reference's. The gain only lifts, by at most
+     2 stops, because the fit is never too bright on its own.
+   - The cost: a limited curve can't fully undo a strong curve baked into display-referred footage.
 5. **Residual colour.** In OKLab:
    - **Skin weights are taken here.** They come after the scene-linear white balance and the tone normalisation, so a
      cast, an exposure or a curve doesn't move a face into or out of the mask. They come before the residual cast and
@@ -94,8 +98,9 @@ The Premiere effect calls it when it builds a match. The CPU and GPU paths both 
    - Colours rotate and scale about the neutral axis, so none crosses it. Hue moves fade out below chroma 0.015–0.05,
      because a nearly grey wall's hue flips with every 8-bit step.
 7. **Final tone match** (**Match Contrast**, default 100%). The graded result's occupied lightness levels are brought
-   toward the reference's with the same kind of curve as step 4: one quadratic on lightness alone (OKLab L; hue and
-   chroma untouched). The slope is held between 0.85 and 1.15, and no level moves more than 0.15.
+   toward the reference's with the same kind of curve as step 4, on lightness alone (OKLab L; hue and chroma
+   untouched). The slope is held between 0.85 and 1.15, and at most 1.03 around skin. Only the shape applies: where
+   the anchor sits stays exposure's. No level moves more than 0.15.
    - Around the lightness that clearly coloured skin lands at, the curve may darken by at most 0.02. The limit depends
      on lightness only and changes slowly, so lightness stays monotonic. An earlier version shrank the darkening per
      colour by the skin weight. Near-greys carry the reference's tint, so that weight switched on and off along the
