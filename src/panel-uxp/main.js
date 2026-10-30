@@ -162,6 +162,7 @@ bindSlider("normExposure", "normExposureV");
 bindSlider("normWhite", "normWhiteV");
 bindSlider("normContrast", "normContrastV");
 bindSlider("lookStrength", "lookStrengthV");
+bindSlider("matchContrast", "matchContrastV");
 
 // Source Format picker: 1 = Auto, then the effect's popup order
 const sourceMenu = $("sourceMenu");
@@ -183,6 +184,7 @@ function matchSettings() {
     [P.normWhite]: Number($("normWhite").value),
     [P.normContrast]: Number($("normContrast").value),
     [P.lookStrength]: Number($("lookStrength").value),
+    [P.matchContrast]: Number($("matchContrast").value),
   };
 }
 
@@ -352,7 +354,7 @@ $("readFilm").addEventListener("click", () => run("Read clip", async () => {
   if (!cur) throw new Error("Select a clip with LookMatch.");
   setFilmControls(cur.params);
   if (cur.params[P.matchStrength] !== undefined) $("strength").value = cur.params[P.matchStrength];
-  for (const [id, name] of [["normExposure", P.normExposure], ["normWhite", P.normWhite], ["normContrast", P.normContrast], ["lookStrength", P.lookStrength]])
+  for (const [id, name] of [["normExposure", P.normExposure], ["normWhite", P.normWhite], ["normContrast", P.normContrast], ["lookStrength", P.lookStrength], ["matchContrast", P.matchContrast]])
     if (cur.params[name] !== undefined) { $(id).value = cur.params[name]; $(`${id}V`).textContent = `${Math.round(cur.params[name])}%`; }
   if (cur.params[P.sourceFormat] !== undefined) $("sourceFormat").selectedIndex = Math.max(0, cur.params[P.sourceFormat] - 1);
   return `Read ${cur.name}`;
@@ -493,7 +495,7 @@ $("selfTest").addEventListener("click", () => run("Self-test", async () => {
     // dev builds only: lib/agent.js is left out of release packages
     require("./lib/agent.js").startAgent(fs, DATA_DIR, bridge, log, {
       // UI driving for tests: only these elements, only set value / click
-      fields: ["refPath", "lookName", "lookFile", "cubePath", "normExposure", "normWhite", "normContrast", "lookStrength"],  // plus tab switching (uiTab)
+      fields: ["refPath", "lookName", "lookFile", "cubePath", "normExposure", "normWhite", "normContrast", "lookStrength", "matchContrast"],  // plus tab switching (uiTab)
       buttons: ["addRef", "matchSel", "matchSeq", "applyStrength", "beforeAfter", "heroRef", "readFilm", "resetFilm",
                 "applyFilm", "saveLook", "importLook", "exportCube", "selfTest", "probe", "showLog"],
       status: () => ({ text: $("status").textContent, kind: $("status").className }),

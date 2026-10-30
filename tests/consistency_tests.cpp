@@ -125,6 +125,49 @@ static DE compare(const Image& a, const Image& b) {
     return {s / n, d[d.size() * 95 / 100], d.back(), sl / n, sc / n, sh / n};
 }
 
+// ---------- skin ----------
+// Soft skin mask of an untouched (display-referred) frame: warm hues around 52 deg in OKLab with some
+// chroma, not black or blown (the same prior as the matcher's skinPrior).
+static float skinPriorT(const Vec3& lab) {
+    const float C = std::hypot(lab.g, lab.b), h = std::atan2(lab.b, lab.g) * 57.29578f;
+    const float d = (std::fmod(h - 52.0f + 540.0f, 360.0f) - 180.0f) / 22.0f;
+    auto ss = [](float a, float b, float v) { const float t = clamp01((v - a) / (b - a)); return t * t * (3 - 2 * t); };
+    return std::exp(-d * d) * ss(0.006f, 0.02f, C) * (1 - ss(0.15f, 0.22f, C)) * ss(0.15f, 0.28f, lab.r) *
+           (1 - ss(0.95f, 0.99f, lab.r));
+}
+struct SkinLook { double share = 0, L50 = 0, C50 = 0, h10 = 0, h50 = 0, h90 = 0; };
+// skin of `img` where `mask` (weights) says skin: medians and the 10/90% hue spread, in OKLab
+static SkinLook skinLook(const Image& img, const std::vector<float>& mask) {
+    std::vector<std::pair<double, double>> L, C, H;
+    double sw = 0;
+    for (size_t i = 0; i < img.px.size(); ++i) {
+        if (mask[i] < 0.3f) continue;
+        const Vec3 lab = rgbToOklab(clamp01(img.px[i]));
+        L.push_back({lab.r, mask[i]}); C.push_back({std::hypot(lab.g, lab.b), mask[i]});
+        H.push_back({std::atan2(lab.b, lab.g) * 57.29578, mask[i]});
+        sw += mask[i];
+    }
+    auto q = [](std::vector<std::pair<double, double>> v, double f) {
+        if (v.empty()) return 0.0;
+        std::sort(v.begin(), v.end());
+        double t = 0, a = 0;
+        for (auto& p : v) t += p.second;
+        for (auto& p : v) { a += p.second; if (a >= t * f) return p.first; }
+        return v.back().first;
+    };
+    SkinLook s;
+    s.share = sw / std::max<size_t>(1, img.px.size());
+    s.L50 = q(L, 0.5); s.C50 = q(C, 0.5); s.h10 = q(H, 0.1); s.h50 = q(H, 0.5); s.h90 = q(H, 0.9);
+    return s;
+}
+// mean CIEDE2000 over skin pixels
+static double skinDE(const Image& a, const Image& b, const std::vector<float>& mask) {
+    double s = 0, w = 0;
+    for (size_t i = 0; i < a.px.size(); ++i)
+        if (mask[i] >= 0.3f) { s += mask[i] * deltaE00(displayToLab(a.px[i]), displayToLab(b.px[i])); w += mask[i]; }
+    return w > 0 ? s / w : 0;
+}
+
 // ---------- perturbations (pixelwise, on Rec.709 display code values) ----------
 
 using PixelFn = std::function<Vec3(Vec3)>;
@@ -378,6 +421,7 @@ int main(int argc, char** argv) {
     int maxFrames = 1000;
     int method = 0;
     std::string dumpDir;
+    float matchContrast = 1;
     float amounts[4] = {1, 1, 1, 1};
     if (const char* e = std::getenv("LOOKMATCH_REF")) refPath = e;
 #ifdef LOOKMATCH_DEFAULT_REF
@@ -397,6 +441,7 @@ int main(int argc, char** argv) {
             amounts[2] = float(std::atof(argv[i + 3])); amounts[3] = float(std::atof(argv[i + 4])); i += 4;
         }
         else if (!std::strcmp(argv[i], "--max") && i + 1 < argc) maxFrames = std::atoi(argv[++i]);
+        else if (!std::strcmp(argv[i], "--match-contrast") && i + 1 < argc) matchContrast = float(std::atof(argv[++i]));
         else if (!std::strcmp(argv[i], "--dump") && i + 1 < argc) dumpDir = argv[++i];  // frames for an external matcher
         else if (!std::strcmp(argv[i], "--method") && i + 1 < argc) method = std::atoi(argv[++i]);  // SceneMatchOptions::method
         else if (!std::strcmp(argv[i], "--sheet") && i + 1 < argc) sheet = argv[++i];
@@ -477,6 +522,7 @@ int main(int argc, char** argv) {
     }
     SceneMatchOptions so;
     so.method = method;
+    so.matchContrast = matchContrast;
     so.look.lutSize = 65;  // as the effect builds panel matches (kSlotLutSize)
     so.exposure = amounts[0]; so.whiteBalance = amounts[1]; so.contrast = amounts[2]; so.lookStrength = amounts[3];
     auto applyMatch = [&](const Image& in, const SceneMatch& m) {
@@ -497,9 +543,33 @@ int main(int argc, char** argv) {
             if (!c.ok) ++contentFails;
         }
     }
+    std::map<std::string, std::vector<double>> skinByGroup;
+    int skinFrames = 0, skinFlags = 0;
     for (auto& [fname, F] : frames) {
         SceneMatch base = matchScene(ref, F, so);
         Image outBase = applyMatch(F, base);
+        std::vector<float> skinMask(F.px.size());
+        for (size_t i = 0; i < F.px.size(); ++i) skinMask[i] = skinPriorT(rgbToOklab(clamp01(F.px[i])));
+        const SkinLook skIn = skinLook(F, skinMask), skOut = skinLook(outBase, skinMask);
+        // more than 40% "skin" is a warm scene (sunlit concrete, sand), not a face: the hue prior can't
+        // tell them apart, so such frames are reported but not judged as skin
+        const bool hasSkin = skIn.share >= 0.03 && skIn.share <= 0.4;
+        if (skIn.share > 0.4)
+            std::printf("  skin %-42s %4.0f%%  warm scene, not judged (out C %.3f h %.0f)\n", fname.c_str(), skIn.share * 100, skOut.C50, skOut.h50);
+        if (hasSkin) {
+            ++skinFrames;
+            // flags: ashy (too little chroma for skin), orange (too much, or pushed past red-orange),
+            // split (one face spread over more than 35 deg of hue)
+            std::string flags;
+            if (skOut.C50 < 0.028) flags += " ashy";
+            if (skOut.C50 > 0.10 || skOut.h50 < 30) flags += " orange";
+            if (skOut.h90 - skOut.h10 > 35 && skOut.h90 - skOut.h10 > (skIn.h90 - skIn.h10) + 10) flags += " split";
+            std::printf("  skin %-42s %4.0f%%  in L %.2f C %.3f h %3.0f (%3.0f..%3.0f)  out L %.2f C %.3f h %3.0f (%3.0f..%3.0f)%s\n",
+                        fname.c_str(), skIn.share * 100, skIn.L50, skIn.C50, skIn.h50, skIn.h10, skIn.h90, skOut.L50, skOut.C50,
+                        skOut.h50, skOut.h10, skOut.h90, flags.c_str());
+            if (!flags.empty()) ++skinFlags;
+            CHECK(flags.empty(), "%s: skin after the match is%s", fname.c_str(), flags.c_str());
+        }
         checkLut(base.lut, fname + " (untouched)", worstJump);
         {
             Content c = checkContent(F, outBase);
@@ -568,6 +638,7 @@ int main(int argc, char** argv) {
             DE de = compare(out, outBase);
             bool clipped = clippedShare(Fp) > baseClip + 0.01f;
             byName[p.name].means.push_back(de.mean);
+            if (hasSkin && !clipped) skinByGroup[p.group].push_back(skinDE(out, outBase, skinMask));
             byName[p.name].p95s.push_back(de.p95);
             byName[p.name].clipped.push_back(clipped);
             if (p.group == "log") { ++logCases; if (isLog(m.source.transfer)) ++detectedLog; }
@@ -639,6 +710,13 @@ int main(int argc, char** argv) {
     std::printf("\ncolour relationships kept in %d of %d frames (hue sectors keep their order and colour)\n",
                 contentChecked - contentFails, contentChecked);
     std::printf("log detected in %d of %d log-encoded frames; display frames taken for log: %d\n", detectedLog, logCases, falseLog);
+    std::printf("skin: %d frame(s) with skin, %d flagged (ashy / orange / split); mean skin ΔE00 vs the untouched match:", skinFrames, skinFlags);
+    for (auto& [g, v] : skinByGroup) {
+        double m = 0;
+        for (double x : v) m += x;
+        std::printf(" %s %.2f", g.c_str(), v.empty() ? 0.0 : m / v.size());
+    }
+    std::printf("\n");
     std::printf("largest step along the grey axis: %.2f/255 per 1/1024; largest LUT / exact local gain on smooth gradients: %.2f\n",
                 worstJump, worstGain);
     CHECK(falseLog == 0, "display-referred frames were taken for log %d time(s)", falseLog);

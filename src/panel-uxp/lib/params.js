@@ -37,6 +37,7 @@ const P = {
   normWhite: "Normalise White Balance",
   normContrast: "Normalise Contrast",
   lookStrength: "Look Strength",
+  matchContrast: "Match Contrast",
 };
 
 // Popup controls. The panel uses 1-based values like Effect Controls; Premiere's UXP API reads

@@ -554,6 +554,8 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     PF_ADD_FLOAT_SLIDERX("Look Strength", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_LOOK_STRENGTH);
     AEFX_CLR_STRUCT(def);
     PF_END_TOPIC(D_SOURCE_TOPIC_END);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Match Contrast", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_MATCH_CONTRAST);
 
     out_data->num_params = P_NUM_PARAMS;
     return err;
@@ -651,6 +653,7 @@ bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, i
     mo.whiteBalance = F(params, P_NORM_WB) / 100.0f;
     mo.contrast = F(params, P_NORM_CONTRAST) / 100.0f;
     mo.lookStrength = F(params, P_LOOK_STRENGTH) / 100.0f;
+    mo.matchContrast = F(params, P_MATCH_CONTRAST) / 100.0f;
     lm::SceneMatch m = lm::matchScene(ref, src, mo);
     lutOut = std::move(m.lut);
     lmLog("buildMatch: %s", m.report.c_str());
@@ -658,7 +661,7 @@ bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, i
         *analysis = "{\"source\":" + m.source.json() + ",\"reference\":" + m.reference.json() + ",\"result\":" + m.result.json() +
                     ",\"settings\":{\"exposure\":" + std::to_string(mo.exposure) + ",\"whiteBalance\":" +
                     std::to_string(mo.whiteBalance) + ",\"contrast\":" + std::to_string(mo.contrast) + ",\"lookStrength\":" +
-                    std::to_string(mo.lookStrength) + "}}";
+                    std::to_string(mo.lookStrength) + ",\"matchContrast\":" + std::to_string(mo.matchContrast) + "}}";
     for (float g : {0.18f, 0.5f, 1.0f}) {
         lm::Vec3 v = lutOut.apply({g, g, g});
         lmLog("buildMatch: LUT grey %.2f -> %.3f %.3f %.3f", g, v.r, v.g, v.b);

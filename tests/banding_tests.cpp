@@ -11,7 +11,7 @@
 // Frames: a synthetic S-Log3 sky quantised to 10 and 8 bits, plus any 16-bit PNG in tests/frames-sky
 // (local only, git-ignored), whose top `sky` rows/columns are given in the file name: NAME-sky<W>x<H>.png.
 //
-//   banding_tests [--ref IMAGE] [--save DIR] [--no-deband]
+//   banding_tests [--ref IMAGE] [--save DIR] [--no-deband] [--match-contrast F]
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -124,10 +124,12 @@ int main(int argc, char** argv) {
     refPath = LOOKMATCH_TEST_REF;
 #endif
     bool deband = true;
+    float matchContrast = 1;
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--ref") && i + 1 < argc) refPath = argv[++i];
         else if (!std::strcmp(argv[i], "--save") && i + 1 < argc) saveDir = argv[++i];
         else if (!std::strcmp(argv[i], "--no-deband")) deband = false;
+        else if (!std::strcmp(argv[i], "--match-contrast") && i + 1 < argc) matchContrast = float(std::atof(argv[++i]));
     }
     Image ref;
     {
@@ -163,7 +165,9 @@ int main(int argc, char** argv) {
 
     std::printf("%-58s %12s %12s\n", "frame", "step share", "largest");
     for (const Frame& f : frames) {
-        SceneMatch m = matchScene(ref, toImage(f, 480), SceneMatchOptions{});
+        SceneMatchOptions so;
+        so.matchContrast = matchContrast;
+        SceneMatch m = matchScene(ref, toImage(f, 480), so);
         Engine e;
         Params p;
         p.deband = deband ? 1.0f : 0.0f;

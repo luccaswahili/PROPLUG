@@ -754,16 +754,86 @@ struct LookProfile {
     }
 };
 
+// ---------- skin, judged before anything is neutralised ----------
+// Skin is recognised on the frame as decoded (no white balance, tone or saturation change yet), with a
+// soft weight: warm hues around 52 deg, enough chroma to be a colour, not black or blown. After the
+// clip has been neutralised and its saturation evened out, a face no longer looks like skin, so a
+// mask taken there turned on and off from one version of a clip to the next.
+float skinPrior(const Vec3& lab) {
+    const float C = std::hypot(lab.g, lab.b), h = std::atan2(lab.b, lab.g) * 57.29578f;
+    const float d = (std::fmod(h - 52.0f + 540.0f, 360.0f) - 180.0f) / 22.0f;
+    auto ss = [](float a, float b, float v) { const float t = clamp01((v - a) / (b - a)); return t * t * (3 - 2 * t); };
+    return std::exp(-d * d) * ss(0.006f, 0.02f, C) * (1 - ss(0.15f, 0.22f, C)) * ss(0.15f, 0.28f, lab.r) *
+           (1 - ss(0.95f, 0.99f, lab.r));
+}
+
+struct SkinStats {
+    float share = 0, L = 0, C = 0, hue = 0;  // weighted medians (hue: circular mean), radians
+    float frameSat = 0, frameL50 = 0;         // the frame's median chroma (colourful pixels) and lightness
+};
+
+// weighted median of v (weights w)
+float weightedMedian(std::vector<std::pair<float, float>> v) {
+    if (v.empty()) return 0;
+    std::sort(v.begin(), v.end());
+    double total = 0, acc = 0;
+    for (auto& p : v) total += p.second;
+    for (auto& p : v) { acc += p.second; if (acc >= total / 2) return p.first; }
+    return v.back().first;
+}
+
+SkinStats skinStats(const std::vector<Vec3>& lab, const std::vector<float>& w) {
+    SkinStats st;
+    std::vector<std::pair<float, float>> L, C;
+    std::vector<float> sat, all;
+    double sx = 0, sy = 0, sw = 0;
+    for (size_t i = 0; i < lab.size(); ++i) {
+        const Vec3& c = lab[i];
+        const float ch = std::hypot(c.g, c.b);
+        all.push_back(c.r);
+        if (c.r > 0.12f && ch > 0.02f) sat.push_back(ch);
+        if (w[i] < 0.05f) continue;
+        L.push_back({c.r, w[i]});
+        C.push_back({ch, w[i]});
+        const float h = std::atan2(c.b, c.g);
+        sx += w[i] * std::cos(h); sy += w[i] * std::sin(h); sw += w[i];
+    }
+    st.share = float(sw / std::max<size_t>(1, lab.size()));
+    st.L = weightedMedian(L); st.C = weightedMedian(C);
+    st.hue = sw > 0 ? float(std::atan2(sy, sx)) : 0.0f;
+    st.frameSat = sat.empty() ? 0.0f : evenQuantiles(sat, 3)[1];
+    st.frameL50 = all.empty() ? 0.5f : evenQuantiles(all, 3)[1];
+    return st;
+}
+
 class Grade {
 public:
-    Grade(const LookProfile& ref, const LookProfile& src) : ref_(ref), src_(src) {
+    Grade(const LookProfile& ref, const LookProfile& src, const SkinStats& refSkin = {}, const SkinStats& srcSkin = {})
+        : ref_(ref), src_(src) {
         sat_ = src.sat > 1e-4f ? std::clamp(ref.sat / src.sat, 0.75f, 1.25f) : 1.0f;
-        hasSkin_ = ref.skinShare >= 0.02f && src.skinShare >= 0.005f;
+        // Skin takes the reference's skin *treatment*, not the reference person's skin: how saturated
+        // skin is relative to the rest of the frame (so a pale face stays pale and a deep complexion
+        // deep), its hue moved at most 6 deg toward the reference's (and kept within natural skin hues),
+        // and never ashy or orange (chroma held in [0.035, 0.09]). Where the tone curve left skin darker,
+        // relative to the frame, than the reference's skin sits, it is lifted back (never darkened).
+        hasSkin_ = srcSkin.share >= 0.003f && srcSkin.C > 1e-3f;
         if (hasSkin_) {
-            skinDh_ = std::clamp(angDiff(ref.skinHue, src.skinHue), -0.105f, 0.105f);  // 6 deg
-            skinCr_ = src.skinC > 1e-4f ? std::clamp(ref.skinC / src.skinC, 0.85f, 1.1f) : 1.0f;
-        } else {
-            skinCr_ = std::clamp(std::sqrt(sat_), 0.9f, 1.1f);
+            const bool refSkin_ = refSkin.share >= 0.02f;
+            float k = std::clamp(std::sqrt(sat_), 0.9f, 1.1f);
+            if (refSkin_) {
+                const float relR = refSkin.C / std::max(refSkin.frameSat, 0.02f);
+                const float relS = srcSkin.C / std::max(srcSkin.frameSat, 0.02f);
+                k = std::clamp(relR / std::max(relS, 1e-3f), 0.8f, 1.25f);
+            }
+            const float ct = std::clamp(srcSkin.C * k, 0.035f, 0.09f);
+            skinCr_ = std::clamp(ct / srcSkin.C, 0.6f, 4.0f);
+            float dh = refSkin_ ? std::clamp(angDiff(refSkin.hue, srcSkin.hue), -0.105f, 0.105f) : 0.0f;
+            skinHue_ = std::clamp(srcSkin.hue + dh, 36.0f * 0.0174533f, 64.0f * 0.0174533f);
+            skinDh_ = angDiff(skinHue_, srcSkin.hue);
+            if (refSkin_) {
+                const float target = srcSkin.frameL50 + (refSkin.L - refSkin.frameL50);
+                skinLift_ = std::clamp(target - srcSkin.L, 0.0f, 0.05f);
+            }
         }
         for (int k = 0; k < kSectors; ++k) {
             ev_[k] = std::min(1.0f, std::min(ref.secShare[k], src.secShare[k]) / 0.03f);
@@ -772,9 +842,12 @@ public:
         }
     }
 
-    Vec3 apply(Vec3 lab) const {
+    // sk: how much this colour is skin (skinPrior of the decoded source colour)
+    Vec3 apply(Vec3 lab, float sk = -1) const {
+        if (sk < 0) sk = skinWeight(lab);
+        if (!hasSkin_) sk = 0;
         Vec3 ns = src_.neutral(lab.r);
-        const Vec3 nr = ref_.neutral(lab.r);
+        Vec3 nr = ref_.neutral(lab.r);
         {
             // The source's "neutral" tint is only a cast when the frame has real neutrals. In a frame of
             // skin and beige (a warm studio backdrop) the low-chroma pixels are skin-coloured, and taking
@@ -788,6 +861,9 @@ public:
                 ns.g *= k; ns.b *= k;
             }
         }
+        // skin is not a neutral: it keeps most of its own tint instead of being moved with the grey axis
+        ns.g *= 1 - 0.7f * sk; ns.b *= 1 - 0.7f * sk;
+        nr.g *= 1 - 0.5f * sk; nr.b *= 1 - 0.5f * sk;
         float a = lab.g - ns.g, b = lab.b - ns.b;
         const float C = std::hypot(a, b), h = std::atan2(b, a);
         // per hue sector where both frames have it, else the overall saturation
@@ -799,18 +875,25 @@ public:
             w += g;
         }
         dh /= std::max(w, 1e-6f); cr /= std::max(w, 1e-6f);
-        const float sk = skinWeight(lab);
+        // lips and other strong reds next to skin keep their saturation
+        {
+            const float d = angDiff(h, 18.0f * 0.0174533f) / (16.0f * 0.0174533f);
+            const float lip = std::exp(-d * d) * clamp01((C - 0.05f) / 0.04f) * (1 - sk);
+            cr += (std::max(cr, 1.0f) - cr) * lip;
+        }
         dh += (skinDh_ - dh) * sk;
         cr += (skinCr_ - cr) * sk;
         dh *= clamp01((C - 0.015f) / 0.035f);  // no hue to turn on a grey
-        const float c = std::cos(dh), s = std::sin(dh);
-        const float a2 = (a * c - b * s) * cr, b2 = (a * s + b * c) * cr;
-        return {lab.r, a2 + nr.g, b2 + nr.b};
+        float h2 = h + dh;
+        // skin hues held together: stray red or yellow patches pulled a quarter of the way to the face's hue
+        if (sk > 0) h2 += angDiff(skinHue_, h2) * 0.25f * sk * clamp01((C - 0.015f) / 0.02f);
+        const float C2 = C * cr;
+        return {lab.r + skinLift_ * sk, C2 * std::cos(h2) + nr.g, C2 * std::sin(h2) + nr.b};
     }
 
 private:
     const LookProfile ref_, src_;
-    float sat_ = 1, skinDh_ = 0, skinCr_ = 1;
+    float sat_ = 1, skinDh_ = 0, skinCr_ = 1, skinHue_ = 0, skinLift_ = 0;
     bool hasSkin_ = false;
     float ev_[kSectors] = {}, dh_[kSectors] = {}, cr_[kSectors] = {};
 };
@@ -931,6 +1014,15 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
     //     colourful pixels, bounded so a nearly grey frame isn't pushed into false colour. ----
     std::vector<Vec3> canonLab(n);
     for (size_t i = 0; i < n; ++i) canonLab[i] = rgbToOklab(canonicalDisplay(src.px[i]));
+    // Skin weights, taken here: after the scene-linear white balance and the tone normalisation (so a
+    // cast, an exposure or a curve doesn't move a face in or out of the mask) but before the residual
+    // cast and saturation steps and the look (where a face stops looking like skin).
+    auto preSkin = [canonicalDisplay](Vec3 code) { return skinPrior(rgbToOklab(canonicalDisplay(code))); };
+    std::vector<float> srcSkinW(n);
+    double skinSum = 0;
+    for (size_t i = 0; i < n; ++i) { srcSkinW[i] = skinPrior(canonLab[i]); skinSum += srcSkinW[i]; }
+    // a frame that is mostly skin (a close-up) has no grey to judge a residual cast by: take out only part
+    const float skinFrame = 1 - 0.7f * clamp01((float(skinSum / std::max<size_t>(1, n)) - 0.25f) / 0.4f);
     float offA[2] = {0, 0}, offB[2] = {0, 0};  // ab offset = off[0] + off[1] * (L - 0.5)
     for (int it = 0; it < 5; ++it) {
         std::vector<float> d;
@@ -944,7 +1036,7 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
         for (size_t i = 0; i < n; ++i) {
             const Vec3& c = canonLab[i];
             if (c.r < 0.12f || c.r > 0.95f) continue;
-            const float q = d[i] / dm, w = 1.0f / (1.0f + q * q * q * q), u = c.r - 0.5f;
+            const float q = d[i] / dm, w = (1 - 0.9f * srcSkinW[i]) / (1.0f + q * q * q * q), u = c.r - 0.5f;
             w0 += w; w1 += w * u; w2 += w * u * u; sa += w * c.g; sau += w * c.g * u; sb += w * c.b; sbu += w * c.b * u;
         }
         const double ridge = w2 + 0.05 * w0, det = w0 * ridge - w1 * w1;  // ridge on the slope
@@ -954,8 +1046,8 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
     }
     // only a residual cast, and only as far as the frame has neutrals to judge it by
     for (float* off : {offA, offB}) {
-        off[0] = std::clamp(off[0], -0.03f, 0.03f) * cw * wbConfidence;
-        off[1] = std::clamp(off[1], -0.06f, 0.06f) * cw * wbConfidence;
+        off[0] = std::clamp(off[0], -0.03f, 0.03f) * cw * wbConfidence * skinFrame;
+        off[1] = std::clamp(off[1], -0.06f, 0.06f) * cw * wbConfidence * skinFrame;
     }
     std::vector<float> chromas;
     for (Vec3& c : canonLab) {
@@ -987,7 +1079,10 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
     for (const Vec3& v : ref.px) refLab.push_back(rgbToOklab(clamp01(v)));
     for (const Vec3& v : canonRgb) canonLabs.push_back(rgbToOklab(v));
     const LookProfile refLook(refLab), srcLook(canonLabs);
-    auto grade = std::make_shared<Grade>(refLook, srcLook);
+    std::vector<float> refSkinW;
+    for (const Vec3& c : refLab) refSkinW.push_back(skinPrior(c));
+    const SkinStats refSkin = skinStats(refLab, refSkinW), srcSkin = skinStats(canonLabs, srcSkinW);
+    auto grade = std::make_shared<Grade>(refLook, srcLook, refSkin, srcSkin);
     std::shared_ptr<StatTransfer> stat;
     if (o.method == 1 || o.method == 2) stat = std::make_shared<StatTransfer>(canonLabs, refLab);
     std::shared_ptr<ToneChroma> tc;
@@ -995,16 +1090,39 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
         tc = std::make_shared<ToneChroma>(canonLabs, refLab);
         std::vector<Vec3> mapped;
         for (const Vec3& c : canonLabs) mapped.push_back(rgbToOklab(oklabToRgb(tc->apply(c))));
-        grade = std::make_shared<Grade>(refLook, LookProfile(mapped));
+        grade = std::make_shared<Grade>(refLook, LookProfile(mapped), refSkin, skinStats(mapped, srcSkinW));
     }
     const int method = o.method;
-    auto full = [canonical, grade, stat, tc, ls, method](Vec3 code) {
+    auto graded = [canonical, grade, stat, tc, ls, method](Vec3 code, float sk) {
         Vec3 lab = canonical(code);
-        Vec3 look = method == 0 ? grade->apply(lab)
+        Vec3 look = method == 0 ? grade->apply(lab, sk)
                   : method == 1 ? stat->apply(lab)
-                  : method == 2 ? lerp(grade->apply(lab), stat->apply(lab), 0.5f)
-                                : grade->apply(rgbToOklab(oklabToRgb(tc->apply(lab))));
-        return oklabToRgbCompressed(lerp(lab, look, ls), true);
+                  : method == 2 ? lerp(grade->apply(lab, sk), stat->apply(lab), 0.5f)
+                                : grade->apply(rgbToOklab(oklabToRgb(tc->apply(lab))), sk);
+        return lerp(lab, look, ls);
+    };
+
+    // ---- 6. final tone match: the graded result's levels (1/5/25/50/75/95/99% and everything between)
+    // brought to the reference's with a smooth, slope-limited curve on lightness alone (hues and chroma
+    // untouched), so its blacks, shadows, highlights and whites sit where the reference's do. Skin is
+    // never darkened by more than a third of what the curve asks, and no level moves more than 0.15. ----
+    const float mc = clamp01(o.matchContrast) * ls;
+    Curve tone;
+    if (mc > 0) {
+        std::vector<float> a, b;
+        for (size_t i = 0; i < n; ++i) a.push_back(graded(src.px[i], srcSkinW[i]).r * 10);
+        for (const Vec3& c : refLab) b.push_back(c.r * 10);
+        tone = smoothMap(evenQuantiles(a, 257), evenQuantiles(b, 257), 0.75f, 1.3f);
+    }
+    auto full = [graded, preSkin, tone, mc](Vec3 code) {
+        const float sk = preSkin(code);
+        Vec3 lab = graded(code, sk);
+        if (mc > 0) {
+            float d = std::clamp(tone(lab.r * 10) / 10 - lab.r, -0.15f, 0.15f);
+            if (d < 0) d *= 1 - 0.67f * sk;
+            lab.r += d * mc;
+        }
+        return oklabToRgbCompressed(lab, true);
     };
     res.lut = Lut3D(o.look.lutSize);
     res.lut.setShaper(frameShaper(src));

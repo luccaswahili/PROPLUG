@@ -51,7 +51,7 @@ static void usage() {
         "  --match-strength F     0..1 (1)\n"
         "  --region-strength F    0..1 (1)    --skin-protect F  0..1 (auto)\n"
         "  --source NAME          footage encoding for the match (S-Log3, LogC3, V-Log, ...; default: detect)\n"
-        "  --norm-exposure F --norm-white F --norm-contrast F --look-strength F   0..1 (1)\n"
+        "  --norm-exposure F --norm-white F --norm-contrast F --look-strength F --match-contrast F   0..1 (1)\n"
         "Input\n"
         "  --input NAME           rec709 | logc3 | slog3 | vlog (rec709)\n"
         "  --exposure F --temperature F --tint F\n"
@@ -140,6 +140,7 @@ int main(int argc, char** argv) {
         mo.transfer = a.count("source") ? transferFromName(a["source"]) : -1;
         mo.exposure = F("norm-exposure", 1); mo.whiteBalance = F("norm-white", 1);
         mo.contrast = F("norm-contrast", 1); mo.lookStrength = F("look-strength", 1);
+        mo.matchContrast = F("match-contrast", 1);
         auto image = [](const Frame& f, const std::function<Vec3(Vec3)>& g) {
             lm::Image im;
             im.width = f.w; im.height = f.h;
