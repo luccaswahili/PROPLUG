@@ -254,6 +254,71 @@ int main(int argc, char** argv) {
         }
     }
 
+    // skin texture: no plastic skin. A skin patch with pore-scale luma texture (a few pixels across, at the
+    // strength of the bedroom clip's lit skin, band RMS about 0.006) plus chroma noise, through the deband
+    // alone: a stress case, random texture with no shading behind it, must keep at least 80% (real lit skin keeps
+    // 97-99% of its pore-scale detail), and chroma noise must not rise. Texture much fainter than this
+    // (around the size of grain) is reduced: it can't be told from grain and a compressed sky's steps.
+    {
+        const int w = 512, h = 512;
+        std::mt19937 rng(11);
+        std::normal_distribution<float> gauss(0, 1);
+        std::vector<float> tex(size_t(w) * h), px(size_t(w) * h * 4, 1.0f);
+        for (float& v : tex) v = gauss(rng);
+        auto blur = [&](const std::vector<float>& in, int r) {
+            std::vector<float> o(in.size());
+            for (int y = 0; y < h; ++y)
+                for (int x = 0; x < w; ++x) {
+                    float t = 0; int c = 0;
+                    for (int j = std::max(0, y - r); j <= std::min(h - 1, y + r); ++j)
+                        for (int i = std::max(0, x - r); i <= std::min(w - 1, x + r); ++i) { t += in[size_t(j) * w + i]; ++c; }
+                    o[size_t(y) * w + x] = t / c;
+                }
+            return o;
+        };
+        std::vector<float> pores = blur(tex, 2);
+        double rms = 0;
+        for (float v : pores) rms += v * v;
+        rms = std::sqrt(rms / pores.size());
+        for (size_t i = 0; i < pores.size(); ++i) {
+            const float t = pores[i] / float(rms) * 0.0065f + 0.5f + 0.03f * float(i / w) / h;  // texture on a soft shade
+            px[i * 4] = t + 0.022f + 0.0003f * gauss(rng);
+            px[i * 4 + 1] = t + 0.0003f * gauss(rng);
+            px[i * 4 + 2] = t - 0.016f + 0.0003f * gauss(rng);
+        }
+        const DebandParams db = debandParams(1, 2160);  // as on a 4K frame
+        std::vector<float> lumaIn(pores.size()), lumaOut(pores.size());
+        double cIn = 0, cOut = 0;
+        std::vector<float> chromaIn(pores.size()), chromaOut(pores.size());
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                const size_t i = size_t(y) * w + x;
+                const Vec3 o = debandAt(px.data(), w, h, w * 4, x, y, db);
+                lumaIn[i] = (px[i * 4] + px[i * 4 + 1] + px[i * 4 + 2]) / 3;
+                lumaOut[i] = (o.r + o.g + o.b) / 3;
+                chromaIn[i] = px[i * 4] - px[i * 4 + 1];
+                chromaOut[i] = o.r - o.g;
+            }
+        auto band = [&](const std::vector<float>& v) {
+            const std::vector<float> a = blur(v, 1), b = blur(v, 7);
+            double e = 0; long n = 0;
+            for (int y = 16; y < h - 16; ++y)
+                for (int x = 16; x < w - 16; ++x) { const double d = a[size_t(y) * w + x] - b[size_t(y) * w + x]; e += d * d; ++n; }
+            return std::sqrt(e / n);
+        };
+        const double kept = band(lumaOut) / band(lumaIn);
+        for (int y = 16; y < h - 16; ++y)
+            for (int x = 16; x + 1 < w - 16; ++x) {
+                const size_t i = size_t(y) * w + x;
+                cIn += (chromaIn[i] - chromaIn[i + 1]) * (chromaIn[i] - chromaIn[i + 1]);
+                cOut += (chromaOut[i] - chromaOut[i + 1]) * (chromaOut[i] - chromaOut[i + 1]);
+            }
+        const double ratio = std::sqrt(cOut / cIn);
+        std::printf("skin texture through the deband: pore-scale luma kept %.1f%%, chroma noise ratio %.2f\n", kept * 100, ratio);
+        CHECK(kept > 0.80 && kept < 1.05, "deband changes skin texture: %.1f%% kept", kept * 100);
+        CHECK(ratio <= 1.0, "deband raises chroma noise on textured skin (%.2f)", ratio);
+    }
+
     // detail: deband must not smooth texture. On real log frames (skin, fabric, foliage, sand), compare
     // the high-pass energy (pixel minus its 5x5 mean) of the output with and without deband.
     const std::string logDir = std::string(LOOKMATCH_SOURCE_DIR) + "/tests/frames-log";

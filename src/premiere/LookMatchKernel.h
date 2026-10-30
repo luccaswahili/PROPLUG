@@ -105,8 +105,8 @@ static float3 deband(device const T* src, constant Params& p, int x, int y) {
     float3 c = rgbAt(src, p, x, y);
     if (p.debandRadius <= 0) return c;
     uint span = uint(2 * p.debandRadius + 1), nearSpan = uint(2 * p.debandNearRadius + 1);
-    float3 sum = c, nearSum = c;
-    float wsum = 1.0f, nearW = 1.0f;
+    float3 sum = c;
+    float wsum = 1.0f;
     for (int k = 0; k < kDebandPairs + kDebandNearPairs; ++k) {
         uint h = hash4(x, y, 0x5EED, k);
         uint sp = k < kDebandPairs ? span : nearSpan;
@@ -117,15 +117,13 @@ static float3 deband(device const T* src, constant Params& p, int x, int y) {
         float3 m = abs(0.5f * (qa + qb) - c), da = abs(qa - c), db = abs(qb - c);
         float mid = max(m.x, max(m.y, m.z));
         float side = 0.5f * max(max(da.x, max(da.y, da.z)), max(db.x, max(db.y, db.z)));
-        float w = 1.0f - smoothstepf(0.5f * p.debandThreshold, p.debandThreshold, max(mid, side));
-        float3 pair = (qa + qb) * w;
-        sum += pair;
+        float t = k < kDebandPairs ? p.debandThreshold : 0.5f * p.debandThreshold;
+        float w = 1.0f - smoothstepf(0.5f * t, t, max(mid, side));
+        sum += (qa + qb) * w;
         wsum += 2.0f * w;
-        if (k >= kDebandPairs) { nearSum += pair; nearW += 2.0f * w; }
     }
     float3 o = sum * (1.0f / wsum);
-    float3 nm = nearSum * (1.0f / nearW);
-    float dev = ((c.x + c.y + c.z) - (nm.x + nm.y + nm.z)) / 3.0f;
+    float dev = ((c.x + c.y + c.z) - (o.x + o.y + o.z)) / 3.0f;
     float back = dev > p.debandCoring ? dev - p.debandCoring : dev < -p.debandCoring ? dev + p.debandCoring : 0.0f;
     float amount = (wsum - 1.0f) / float(2 * (kDebandPairs + kDebandNearPairs));
     uint h = hash4(x, y, 0x5EED, 64);

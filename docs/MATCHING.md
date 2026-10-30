@@ -128,9 +128,12 @@ idea behind f3kdb / libplacebo `deband`, reimplemented here:
 - For each pixel, it samples point-symmetric pairs of neighbours: 8 pairs within 40 px at 1080p for banding, and
   6 within 3 px for fine noise (both scaled with frame height).
 - A pair counts by how far its midpoint is from the pixel (zero on a straight gradient), with each side within
-  twice the threshold (0.012 code values, falling off from half of it). Pairs across an edge don't count.
-- Fine texture stays: the pixel's brightness relative to its near neighbours comes back, cored by 0.0015 code
-  values, so grain and a compressed sky's steps stay out and real texture stays in.
+  twice the threshold (0.012 code values for the far ring, 0.006 for the near ring, falling off from half of
+  it). Pairs across an edge don't count, and the near ring leaves freckles and fine colour detail alone.
+- Fine texture stays: the pixel's brightness relative to the average comes back, cored by 0.0015 code values, so
+  grain and a compressed sky's steps stay out and real texture stays in. Texture around the size of grain
+  can't be told from grain and sky steps, so it is reduced: random texture of RMS 0.0065 keeps about 83 %. On lit skin in 4K close-ups,
+  pore-scale luma detail stays at about 97–99 %, and the finest level, which is mostly grain, at about 88–98 %.
 - It adds a little triangular dither where it smoothed, the same on all three channels.
 
 The first version weighted each neighbour on its own and dithered each channel separately. On shaded skin that
@@ -157,7 +160,7 @@ With reference 15.38.33, the Marsa frame goes from 43 % to 2.6 %.
 `banding_tests` also renders a skin patch, lit and in shadow, with noise. Chroma noise after the match must stay
 below the deband-off level and below 0.75× the decoded clip's (the old deband fails both).
 
-On the real log frames, deband keeps at least 85 % of the high-pass energy. That energy includes the source's
+On the real log frames, deband keeps at least 89 % of the high-pass energy. That energy includes the source's
 grain, which is now removed on purpose, so the check is at 83 %.
 
 Cost: the GPU takes 12.4 ms per 4K frame, including the copy. The CPU fallback rises from 39 to about

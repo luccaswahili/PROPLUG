@@ -229,8 +229,8 @@ Vec3 debandAt(const float* data, int width, int height, int stride, int x, int y
     // pairs were picked doesn't show. Counting sides one by one left a different lopsided average on every
     // pixel of shaded skin: per-pixel colour speckle. The near ring still passes on shaded skin, where the
     // far pairs are mostly refused, and takes out the source's fine chroma noise.
-    Vec3 sum = c, nearSum = c;
-    float wsum = 1, nearW = 1;
+    Vec3 sum = c;
+    float wsum = 1;
     for (int k = 0; k < kDebandPairs + kDebandNearPairs; ++k) {
         const uint32_t h = hash4(x, y, 0x5EED, k);
         const uint32_t sp = k < kDebandPairs ? span : nearSpan;
@@ -246,17 +246,16 @@ Vec3 debandAt(const float* data, int width, int height, int stride, int x, int y
                                     std::abs(0.5f * (qa[2] + qb[2]) - c.b)});
         const float side = 0.5f * std::max({std::abs(qa[0] - c.r), std::abs(qa[1] - c.g), std::abs(qa[2] - c.b),
                                             std::abs(qb[0] - c.r), std::abs(qb[1] - c.g), std::abs(qb[2] - c.b)});
-        const float w = 1 - smoothstep(0.5f * d.threshold, d.threshold, std::max(mid, side));
-        const Vec3 pair = (Vec3(qa[0], qa[1], qa[2]) + Vec3(qb[0], qb[1], qb[2])) * w;
-        sum = sum + pair;
+        // the near ring only takes very small differences: noise, not freckles or fine colour detail
+        const float t = k < kDebandPairs ? d.threshold : 0.5f * d.threshold;
+        const float w = 1 - smoothstep(0.5f * t, t, std::max(mid, side));
+        sum = sum + (Vec3(qa[0], qa[1], qa[2]) + Vec3(qb[0], qb[1], qb[2])) * w;
         wsum += 2 * w;
-        if (k >= kDebandPairs) { nearSum = nearSum + pair; nearW += 2 * w; }
     }
     Vec3 o = sum * (1.0f / wsum);
-    // fine texture stays: the pixel's brightness relative to its near neighbours comes back, cored, so
-    // deviations of the size of grain and of a compressed sky's steps stay out and real texture stays in
-    const Vec3 nm = nearSum * (1.0f / nearW);
-    const float dev = ((c.r + c.g + c.b) - (nm.r + nm.g + nm.b)) / 3;
+    // fine texture stays: the pixel's brightness relative to the average comes back, cored, so deviations
+    // of the size of grain and of a compressed sky's steps stay out and real texture stays in
+    const float dev = ((c.r + c.g + c.b) - (o.r + o.g + o.b)) / 3;
     const float back = dev > d.coring ? dev - d.coring : dev < -d.coring ? dev + d.coring : 0.0f;
     // dither where it smoothed: the same on all channels, so it adds no colour noise
     const float amount = (wsum - 1) / (2 * (kDebandPairs + kDebandNearPairs));
