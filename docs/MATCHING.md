@@ -87,20 +87,15 @@ The Premiere effect calls it when it builds a match. The CPU and GPU paths both 
        quarter of the way to the face's own hue.
      - **The neutral axis.** Skin follows the grey axis only 10%, so the reference's tint of white doesn't make skin
        highlights pink or lavender.
-     - **Brightness.** Skin the tone curve left darker than the reference's skin sits, relative to its frame, is lifted
-       by up to 0.05. The lift applies only where the colour is clearly skin, because on near-greys it would bend the
-       grey axis.
      - **Lips** and strong reds next to skin keep their saturation.
    - **Other colours**: six hue sectors (red, yellow, green, cyan, blue, magenta). Where both frames have a sector
      (3% or more), it takes the reference's hue shift (within ±15°) and chroma (×0.8–1.25). Elsewhere colours only
      follow the overall saturation (×0.75–1.25).
    - Colours rotate and scale about the neutral axis, so none crosses it. Hue moves fade out below chroma 0.015–0.05,
      because a nearly grey wall's hue flips with every 8-bit step.
-7. **Final tone match** (**Match Contrast**, default 100%). The graded result's lightness distribution is brought to
-   the reference's: its 1/5/25/50/75/95/99% points and everything between, so its blacks, shadows, highlights and
-   whites sit where the reference's do.
-   - It uses a smooth curve on lightness alone (OKLab L; hue and chroma untouched). The slope is held between 0.75 and
-     1.3, and no level moves more than 0.15.
+7. **Final tone match** (**Match Contrast**, default 100%). The graded result's occupied lightness levels are brought
+   toward the reference's with the same kind of curve as step 4: one quadratic on lightness alone (OKLab L; hue and
+   chroma untouched). The slope is held between 0.85 and 1.15, and no level moves more than 0.15.
    - Around the lightness that clearly coloured skin lands at, the curve may darken by at most 0.02. The limit depends
      on lightness only and changes slowly, so lightness stays monotonic. An earlier version shrank the darkening per
      colour by the skin weight. Near-greys carry the reference's tint, so that weight switched on and off along the
