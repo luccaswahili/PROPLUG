@@ -46,16 +46,20 @@ struct Params {
 };
 
 // Deband constants for one frame size (shared with the GPU kernel).
-constexpr int kDebandPairs = 8;  // neighbours are sampled in point-symmetric pairs
+constexpr int kDebandPairs = 8;      // far neighbours, sampled in point-symmetric pairs
+constexpr int kDebandNearPairs = 6;  // near neighbours: fine chroma noise, also on shaded skin
 struct DebandParams {
     int radius = 0;         // sample radius in pixels, 0 = off
     float threshold = 0;    // code-value difference above which a neighbour is real detail
     float dither = 0;       // triangular dither amplitude (code values) where the pixel was smoothed
+    int nearRadius = 1;     // radius of the near ring, pixels
+    float coring = 0;       // brightness deviations below this (code values) are grain or steps, not texture
 };
 DebandParams debandParams(float amount, int height);
-// The debanded code value of pixel (x, y): the mean of the pixel and 2 x kDebandPairs pseudo-random
-// neighbours within the radius, each weighted by how close it is to the centre (neighbours across an
-// edge or in texture differ by more than the threshold and don't count), plus a little dither.
+// The debanded code value of pixel (x, y): the mean of the pixel and pseudo-random point-symmetric pairs
+// of neighbours (a far ring for banding, a near ring for fine noise), each pair weighted by how close its
+// midpoint is to the centre (pairs across an edge or in texture don't count), with the pixel's own fine
+// texture kept above a grain-sized coring level, plus a little dither, the same on all channels.
 Vec3 debandAt(const float* data, int width, int height, int stride, int x, int y, const DebandParams& d);
 
 struct ImageView {  // interleaved float RGBA, rows may be padded

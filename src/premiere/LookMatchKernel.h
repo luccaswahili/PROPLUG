@@ -19,6 +19,8 @@ struct LookMatchGPUParams {
     int shaperSize;  // input shaper entries stored after the LUT in the same buffer (0 = none)
     int debandRadius;  // lm::DebandParams; the kernel reads the source from a copy of the frame
     float debandThreshold, debandDither;
+    int debandNearRadius;
+    float debandCoring;
 };
 
 // Kernel parameters for one frame from the engine's fast-path constants and the split settings
@@ -50,6 +52,8 @@ inline LookMatchGPUParams makeGPUParams(const lm::FinishParams& f, int pitch, in
     p.debandRadius = f.deband.radius;
     p.debandThreshold = f.deband.threshold;
     p.debandDither = f.deband.dither;
+    p.debandNearRadius = f.deband.nearRadius;
+    p.debandCoring = f.deband.coring;
     return p;
 }
 
@@ -70,6 +74,8 @@ struct Params {
     int shaperSize;
     int debandRadius;
     float debandThreshold, debandDither;
+    int debandNearRadius;
+    float debandCoring;
 };
 
 // --- same hash and noise as the CPU engine ---
@@ -93,33 +99,38 @@ static float3 rgbAt(device const T* src, constant Params& p, int x, int y) {
     float4 v = float4(src[uint(y) * uint(p.pitch) + uint(x)]);
     return float3(v.z, v.y, v.x);
 }
-constant int kDebandPairs = 8;  // = lm::kDebandPairs
+constant int kDebandPairs = 8, kDebandNearPairs = 6;  // = lm::kDebandPairs, lm::kDebandNearPairs
 template <typename T>
 static float3 deband(device const T* src, constant Params& p, int x, int y) {
     float3 c = rgbAt(src, p, x, y);
     if (p.debandRadius <= 0) return c;
-    uint span = uint(2 * p.debandRadius + 1);
-    float3 sum = c;
-    float wsum = 1.0f;
-    for (int k = 0; k < kDebandPairs; ++k) {
+    uint span = uint(2 * p.debandRadius + 1), nearSpan = uint(2 * p.debandNearRadius + 1);
+    float3 sum = c, nearSum = c;
+    float wsum = 1.0f, nearW = 1.0f;
+    for (int k = 0; k < kDebandPairs + kDebandNearPairs; ++k) {
         uint h = hash4(x, y, 0x5EED, k);
-        int dx = int((h & 0xFFFFu) % span) - p.debandRadius, dy = int((h >> 16) % span) - p.debandRadius;
-        for (int s = -1; s <= 1; s += 2) {
-            int xx = clamp(x + s * dx, 0, p.width - 1), yy = clamp(y + s * dy, 0, p.height - 1);
-            float3 q = rgbAt(src, p, xx, yy);
-            float3 d = abs(q - c);
-            float w = 1.0f - smoothstepf(0.5f * p.debandThreshold, p.debandThreshold, max(d.x, max(d.y, d.z)));
-            sum += q * w;
-            wsum += w;
-        }
+        uint sp = k < kDebandPairs ? span : nearSpan;
+        int rad = k < kDebandPairs ? p.debandRadius : p.debandNearRadius;
+        int dx = int((h & 0xFFFFu) % sp) - rad, dy = int((h >> 16) % sp) - rad;
+        float3 qa = rgbAt(src, p, clamp(x + dx, 0, p.width - 1), clamp(y + dy, 0, p.height - 1));
+        float3 qb = rgbAt(src, p, clamp(x - dx, 0, p.width - 1), clamp(y - dy, 0, p.height - 1));
+        float3 m = abs(0.5f * (qa + qb) - c), da = abs(qa - c), db = abs(qb - c);
+        float mid = max(m.x, max(m.y, m.z));
+        float side = 0.5f * max(max(da.x, max(da.y, da.z)), max(db.x, max(db.y, db.z)));
+        float w = 1.0f - smoothstepf(0.5f * p.debandThreshold, p.debandThreshold, max(mid, side));
+        float3 pair = (qa + qb) * w;
+        sum += pair;
+        wsum += 2.0f * w;
+        if (k >= kDebandPairs) { nearSum += pair; nearW += 2.0f * w; }
     }
     float3 o = sum * (1.0f / wsum);
-    float amount = (wsum - 1.0f) / float(2 * kDebandPairs);
-    for (int ch = 0; ch < 3; ++ch) {
-        uint h = hash4(x, y, 0x5EED, 64 + ch);
-        o[ch] += (float((h & 0xFFFFu) + (h >> 16)) * (1.0f / 65535.0f) - 1.0f) * p.debandDither * amount;
-    }
-    return o;
+    float3 nm = nearSum * (1.0f / nearW);
+    float dev = ((c.x + c.y + c.z) - (nm.x + nm.y + nm.z)) / 3.0f;
+    float back = dev > p.debandCoring ? dev - p.debandCoring : dev < -p.debandCoring ? dev + p.debandCoring : 0.0f;
+    float amount = (wsum - 1.0f) / float(2 * (kDebandPairs + kDebandNearPairs));
+    uint h = hash4(x, y, 0x5EED, 64);
+    float dith = (float((h & 0xFFFFu) + (h >> 16)) * (1.0f / 65535.0f) - 1.0f) * p.debandDither * amount;
+    return o + float3(back + dith);
 }
 
 // --- tetrahedral 3D LUT, red fastest, 3 floats per entry ---

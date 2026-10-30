@@ -122,17 +122,24 @@ the plateaus show as concentric coloured rings. Premiere already gives the effec
 both the GPU and the CPU path, so the rings were not caused by bit depth. They are in the source, and the
 grade made them visible.
 
-Before the grade, the effect now smooths those steps. The method is the idea behind f3kdb / libplacebo
-`deband`, reimplemented here:
+Before the grade, the effect now smooths those steps and the source's fine noise. The method starts from the
+idea behind f3kdb / libplacebo `deband`, reimplemented here:
 
-- For each pixel, it samples 16 neighbours in point-symmetric pairs within a radius of 40 px at 1080p
-  (scaled with frame height).
-- It weights each neighbour by how close it is to the centre: full weight within 0.006 code values,
-  falling to zero at 0.012. In effect this is a sparse bilateral filter, so edges and texture don't mix.
-- It adds a little triangular dither where it smoothed.
+- For each pixel, it samples point-symmetric pairs of neighbours: 8 pairs within 40 px at 1080p for banding, and
+  6 within 3 px for fine noise (both scaled with frame height).
+- A pair counts by how far its midpoint is from the pixel (zero on a straight gradient), with each side within
+  twice the threshold (0.012 code values, falling off from half of it). Pairs across an edge don't count.
+- Fine texture stays: the pixel's brightness relative to its near neighbours comes back, cored by 0.0015 code
+  values, so grain and a compressed sky's steps stay out and real texture stays in.
+- It adds a little triangular dither where it smoothed, the same on all three channels.
+
+The first version weighted each neighbour on its own and dithered each channel separately. On shaded skin that
+left a different lopsided average on every pixel, plus colour noise: at the Artlist clips' noise level, skin chroma
+noise came out 2.1× the decoded clip, as red speckle in skin shadows. It was less visible on flat walls. The LUT
+wasn't the cause: gains there are smooth and no higher on skin than on the wall. Now it is 0.63× lit and in shadow.
 
 `lm::debandAt` and the Metal `deband()` use the same hash and sample order, so the GPU and the CPU
-agree (`gpu_tests`: max 0.001/255). The GPU filter now reads from a copy of the frame, because the
+agree (`gpu_tests`: max 0.001/255). The GPU filter reads from a copy of the frame, because the
 kernel grades in place.
 
 `banding_tests` renders skies through the engine and measures, along each column, the share of the
@@ -143,15 +150,18 @@ percentile of those jumps. Threshold: share < 15 % and jump < 1/255.
 |---|---|---|---|---|
 | synthetic S-Log3 sky, 10-bit | 13.0 % | 0.1 % | 1.27/255 | 0.66/255 |
 | synthetic S-Log3 sky, 8-bit | 54.4 % | 1.0 % | 4.20/255 | 0.78/255 |
-| Marsa beach frame (16-bit extract of the 10-bit clip) | 44.7 % | 6.2 % | 2.37/255 | 0.85/255 |
+| Marsa beach frame (16-bit extract of the 10-bit clip) | 44.7 % | 14.6 % | 2.37/255 | 0.94/255 |
 
 With reference 15.38.33, the Marsa frame goes from 43 % to 2.6 %.
 
-On the real log frames, deband keeps at least 93 % of the high-pass detail (worst case: an 8K
-portrait). Most of what it removes is 8-bit extraction noise.
+`banding_tests` also renders a skin patch, lit and in shadow, with noise. Chroma noise after the match must stay
+below the deband-off level and below 0.75× the decoded clip's (the old deband fails both).
 
-Cost: the GPU takes 9.6 ms per 4K frame, including the copy. The CPU fallback rises from 39 to about
-310 ms per 4K frame.
+On the real log frames, deband keeps at least 85 % of the high-pass energy. That energy includes the source's
+grain, which is now removed on purpose, so the check is at 83 %.
+
+Cost: the GPU takes 12.4 ms per 4K frame, including the copy. The CPU fallback rises from 39 to about
+400 ms per 4K frame.
 
 Tools: `tools/extract_frame16.swift` extracts a 16-bit frame from a clip. Sky frames go in
 `tests/frames-sky/NAME-sky<W>x<H>.png`, which is git-ignored.

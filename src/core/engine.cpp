@@ -214,6 +214,8 @@ DebandParams debandParams(float amount, int height) {
     // below it; edges and most texture are above it (tests/banding_tests.cpp checks both)
     d.threshold = 0.012f * std::min(1.0f, amount);
     d.dither = 0.0008f * std::min(1.0f, amount);
+    d.nearRadius = std::max(1, int(std::lround(3.0f * height / 1080.0f)));
+    d.coring = 0.0015f;
     return d;
 }
 
@@ -222,31 +224,45 @@ Vec3 debandAt(const float* data, int width, int height, int stride, int x, int y
     const float* p = data + size_t(y) * stride + size_t(x) * 4;
     const Vec3 c(p[0], p[1], p[2]);
     if (d.radius <= 0) return c;
-    const uint32_t span = uint32_t(2 * d.radius + 1);
-    // each neighbour counts as far as it is within the threshold of the centre (a sparse bilateral
-    // filter): on a smooth gradient that is all of them, at an edge only those on the same side
-    Vec3 sum = c;
-    float wsum = 1;
-    for (int k = 0; k < kDebandPairs; ++k) {
+    const uint32_t span = uint32_t(2 * d.radius + 1), nearSpan = uint32_t(2 * d.nearRadius + 1);
+    // Point-symmetric pairs, each counted by its worse side: on a gradient the two sides cancel, so which
+    // pairs were picked doesn't show. Counting sides one by one left a different lopsided average on every
+    // pixel of shaded skin: per-pixel colour speckle. The near ring still passes on shaded skin, where the
+    // far pairs are mostly refused, and takes out the source's fine chroma noise.
+    Vec3 sum = c, nearSum = c;
+    float wsum = 1, nearW = 1;
+    for (int k = 0; k < kDebandPairs + kDebandNearPairs; ++k) {
         const uint32_t h = hash4(x, y, 0x5EED, k);
-        const int dx = int((h & 0xFFFFu) % span) - d.radius, dy = int((h >> 16) % span) - d.radius;
-        for (int s = -1; s <= 1; s += 2) {
-            const int xx = std::clamp(x + s * dx, 0, width - 1), yy = std::clamp(y + s * dy, 0, height - 1);
-            const float* q = data + size_t(yy) * stride + size_t(xx) * 4;
-            const float diff = std::max({std::abs(q[0] - c.r), std::abs(q[1] - c.g), std::abs(q[2] - c.b)});
-            const float w = 1 - smoothstep(0.5f * d.threshold, d.threshold, diff);
-            sum = sum + Vec3(q[0], q[1], q[2]) * w;
-            wsum += w;
-        }
+        const uint32_t sp = k < kDebandPairs ? span : nearSpan;
+        const int rad = k < kDebandPairs ? d.radius : d.nearRadius;
+        const int dx = int((h & 0xFFFFu) % sp) - rad, dy = int((h >> 16) % sp) - rad;
+        const int xa = std::clamp(x + dx, 0, width - 1), ya = std::clamp(y + dy, 0, height - 1);
+        const int xb = std::clamp(x - dx, 0, width - 1), yb = std::clamp(y - dy, 0, height - 1);
+        const float* qa = data + size_t(ya) * stride + size_t(xa) * 4;
+        const float* qb = data + size_t(yb) * stride + size_t(xb) * 4;
+        // how far the pair's midpoint is from the pixel (zero on a straight gradient), and each side
+        // within twice the threshold, so a pair across an edge doesn't count
+        const float mid = std::max({std::abs(0.5f * (qa[0] + qb[0]) - c.r), std::abs(0.5f * (qa[1] + qb[1]) - c.g),
+                                    std::abs(0.5f * (qa[2] + qb[2]) - c.b)});
+        const float side = 0.5f * std::max({std::abs(qa[0] - c.r), std::abs(qa[1] - c.g), std::abs(qa[2] - c.b),
+                                            std::abs(qb[0] - c.r), std::abs(qb[1] - c.g), std::abs(qb[2] - c.b)});
+        const float w = 1 - smoothstep(0.5f * d.threshold, d.threshold, std::max(mid, side));
+        const Vec3 pair = (Vec3(qa[0], qa[1], qa[2]) + Vec3(qb[0], qb[1], qb[2])) * w;
+        sum = sum + pair;
+        wsum += 2 * w;
+        if (k >= kDebandPairs) { nearSum = nearSum + pair; nearW += 2 * w; }
     }
     Vec3 o = sum * (1.0f / wsum);
-    // dither in proportion to how much was smoothed, so smoothed areas don't form new flat steps
-    const float amount = (wsum - 1) / (2 * kDebandPairs);
-    for (int ch = 0; ch < 3; ++ch) {
-        const uint32_t h = hash4(x, y, 0x5EED, 64 + ch);
-        o[ch] += (float((h & 0xFFFFu) + (h >> 16)) * (1.0f / 65535.0f) - 1.0f) * d.dither * amount;
-    }
-    return o;
+    // fine texture stays: the pixel's brightness relative to its near neighbours comes back, cored, so
+    // deviations of the size of grain and of a compressed sky's steps stay out and real texture stays in
+    const Vec3 nm = nearSum * (1.0f / nearW);
+    const float dev = ((c.r + c.g + c.b) - (nm.r + nm.g + nm.b)) / 3;
+    const float back = dev > d.coring ? dev - d.coring : dev < -d.coring ? dev + d.coring : 0.0f;
+    // dither where it smoothed: the same on all channels, so it adds no colour noise
+    const float amount = (wsum - 1) / (2 * (kDebandPairs + kDebandNearPairs));
+    const uint32_t h = hash4(x, y, 0x5EED, 64);
+    const float dith = (float((h & 0xFFFFu) + (h >> 16)) * (1.0f / 65535.0f) - 1.0f) * d.dither * amount;
+    return {o.r + back + dith, o.g + back + dith, o.b + back + dith};
 }
 
 void Engine::render(const ImageView& in, const ImageView& out, long frame) {
