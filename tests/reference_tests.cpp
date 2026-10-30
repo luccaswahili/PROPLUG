@@ -7,6 +7,7 @@
 //              disjoint sets of three. Three stills must move the match at least 20% less.
 //   outlier:   one still of a different grade joins three: how far the match moves with the median
 //              combine, against pooling all the stills' pixels into one reference.
+//   black bars: the same picture with letterbox or pillarbox bars gives the same match.
 //   shot-to-shot: clips matched to the hero clip's graded frame land closer to the hero in exposure and
 //              white balance than clips matched to the look on their own.
 //   reference_tests [--frames DIR]
@@ -166,6 +167,36 @@ int main(int argc, char** argv) {
     CHECK(expB <= expA + 0.05 && wbB <= wbA + 2, "matching to the hero's graded frame doesn't bring clips closer to the hero");
     CHECK(triple < single * 0.8, "three stills don't steady the look (%.2f vs one still %.2f)", triple, single);
     CHECK(outMedian < outPooled, "the median combine is not more robust to an odd still (%.2f vs pooled %.2f)", outMedian, outPooled);
+    // black bars aren't part of the picture: in the clip (the frame the host renders) or the reference
+    {
+        auto withBars = [](const Image& in, bool sides) {  // the same picture, with bars added around it
+            const int bx = sides ? in.width / 16 : 0, by = sides ? 0 : in.height / 10;
+            Image o;
+            o.width = in.width + 2 * bx; o.height = in.height + 2 * by;
+            o.px.assign(size_t(o.width) * o.height, Vec3(0, 0, 0));
+            for (int y = 0; y < in.height; ++y)
+                for (int x = 0; x < in.width; ++x) o.px[size_t(y + by) * o.width + x + bx] = in.at(x, y);
+            return o;
+        };
+        const Image& src = frames[7];
+        auto matchOf = [](const Image& ref, const Image& s) {
+            SceneMatchOptions o;
+            o.look.lutSize = 33;
+            return matchScene(ref, s, o);
+        };
+        const SceneMatch base = matchOf(stills[0], src);
+        const SceneMatch mClip = matchOf(stills[0], withBars(src, true)), mRef = matchOf(withBars(stills[0], false), src);
+        Image clean = src, a = src, b = src;
+        for (Vec3& v : clean.px) v = base.lut.apply(v);
+        for (Vec3& v : a.px) v = mClip.lut.apply(v);
+        for (Vec3& v : b.px) v = mRef.lut.apply(v);
+        const double dClip = dE(clean, a), dRef = dE(clean, b);
+        const Vec3 barOut = mClip.lut.apply(Vec3(0, 0, 0));
+        std::printf("black bars change the match: in the clip %.2f, in the reference %.2f ΔEok; a bar renders at %.3f\n", dClip, dRef,
+                    std::max({barOut.r, barOut.g, barOut.b}));
+        CHECK(dClip < 0.5 && dRef < 0.5, "black bars change the match (%.2f, %.2f)", dClip, dRef);
+        CHECK(std::max({barOut.r, barOut.g, barOut.b}) < 0.12f, "black bars don't stay black");
+    }
     if (failures) std::printf("%d check(s) failed\n", failures);
     else std::printf("all reference tests passed\n");
     return failures ? 1 : 0;

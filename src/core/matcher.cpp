@@ -930,7 +930,7 @@ struct RefLook {
 
 RefLook makeRefLook(const Image& refIn) {
     RefLook r;
-    const Image ref = downsample(refIn, 480);
+    const Image ref = downsample(cropBars(refIn), 480);
     AnalysisOptions ro;
     ro.transfer = int(Transfer::Rec709);
     r.analysis = analyseScene(ref, ro);
@@ -1046,7 +1046,7 @@ namespace {
 
 SceneMatch matchSceneLook(const RefLook& rl, const Image& srcIn, const SceneMatchOptions& o) {
     SceneMatch res;
-    const Image src = downsample(srcIn, 480);
+    const Image src = downsample(cropBars(srcIn), 480);
     AnalysisOptions ao;
     ao.transfer = o.transfer;
     res.source = analyseScene(src, ao);
@@ -1086,7 +1086,11 @@ SceneMatch matchSceneLook(const RefLook& rl, const Image& srcIn, const SceneMatc
     // transfer applied keeps the order of the pixels' brightness, so this undoes it. ----
     std::vector<float> st0 = lumaStops(lin0);
     const float key0 = trimmedMean(st0);
-    const std::vector<float> s0 = evenQuantiles(std::move(st0), kTone);
+    std::vector<float> s0 = evenQuantiles(std::move(st0), kTone);
+    // A sliver of pure black the bar detection can't catch (a logo plate, a burnt-in border) must not read
+    // as stops of real shadow: nothing further than 6 stops below the median counts as tone.
+    const float toneFloor = s0[kTone / 2] - 6.0f;
+    for (float& v : s0) v = std::max(v, toneFloor);
     auto byLuminance = [](const Curve& g, Vec3 l) {
         // below the floor, fill up to it with grey, so black meets the curve's floor continuously
         const float y0 = luma709(l);

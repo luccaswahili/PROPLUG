@@ -56,6 +56,11 @@ struct Image {  // RGB code values, row major
     const Vec3& at(int x, int y) const { return px[size_t(y) * width + x]; }
 };
 Image downsample(const Image& in, int maxWidth);
+// The picture without black bars: rows and columns at the edges that are all black (letterbox or
+// pillarbox, in the frame the host renders or in a reference screenshot). They aren't part of the
+// picture: analysed with it, they read as a deep black and bend the whole tone curve. An all-dark frame
+// or bars that would leave too little picture come back unchanged.
+Image cropBars(const Image& in);
 
 struct TransferGuess {
     Transfer transfer = Transfer::Rec709;

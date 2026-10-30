@@ -42,6 +42,11 @@ The Premiere effect calls it when it builds a match. The CPU and GPU paths both 
    blue-hour sky, a red-lit stage) keeps its colour rather than having it taken for a cast. That measure doesn't
    change with a cast. An estimate that is both warm and magenta sits where skin does, not where light sources do,
    so only half of such a cast is taken out. Otherwise a close-up's face would be neutralised.
+   Before any of this, black bars are taken off the frame and off the reference (`cropBars`): rows and columns at
+   the edges that are at least 99% below 0.03. A sequence can hand the effect a clip with pillarbox or letterbox
+   bars. Read as picture, 6% of bars turned a 3.4-stop clip into 11 stops, bent the tone curve and made skin
+   speckle (light noise ×2.6). Below 6 stops under the median nothing counts as tone, so a burnt-in border or
+   logo plate can't do the same.
 3. **Exposure.** The key is a trimmed log-average of luminance in linear light (5–95%, clipped pixels included, so
    they don't bias it). It is reported in stops from 18% grey.
 4. **Tone.** The luminance distribution in log2 stops is mapped by rank to where the look puts it. With full
