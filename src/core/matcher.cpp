@@ -763,7 +763,7 @@ float skinPrior(const Vec3& lab) {
     const float C = std::hypot(lab.g, lab.b), h = std::atan2(lab.b, lab.g) * 57.29578f;
     const float d = (std::fmod(h - 52.0f + 540.0f, 360.0f) - 180.0f) / 22.0f;
     auto ss = [](float a, float b, float v) { const float t = clamp01((v - a) / (b - a)); return t * t * (3 - 2 * t); };
-    return std::exp(-d * d) * ss(0.006f, 0.02f, C) * (1 - ss(0.15f, 0.22f, C)) * ss(0.15f, 0.28f, lab.r) *
+    return std::exp(-d * d) * ss(0.003f, 0.012f, C) * (1 - ss(0.15f, 0.22f, C)) * ss(0.15f, 0.28f, lab.r) *
            (1 - ss(0.95f, 0.99f, lab.r));
 }
 
@@ -861,9 +861,11 @@ public:
                 ns.g *= k; ns.b *= k;
             }
         }
-        // skin is not a neutral: it keeps most of its own tint instead of being moved with the grey axis
-        ns.g *= 1 - 0.7f * sk; ns.b *= 1 - 0.7f * sk;
-        nr.g *= 1 - 0.5f * sk; nr.b *= 1 - 0.5f * sk;
+        // skin is not a neutral: it keeps its own tint instead of being moved with the grey axis (a cast
+        // was already taken out by the white balance, in linear light; the reference's tint of white on
+        // skin highlights reads as pink or lavender skin)
+        ns.g *= 1 - 0.9f * sk; ns.b *= 1 - 0.9f * sk;
+        nr.g *= 1 - 0.9f * sk; nr.b *= 1 - 0.9f * sk;
         float a = lab.g - ns.g, b = lab.b - ns.b;
         const float C = std::hypot(a, b), h = std::atan2(b, a);
         // per hue sector where both frames have it, else the overall saturation
