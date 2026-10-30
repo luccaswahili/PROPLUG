@@ -3,7 +3,7 @@ const assert = require("assert");
 const os = require("os");
 const path = require("path");
 const fsp = require("fs").promises;
-const { P, SOURCE_FORMATS, TEXTURE_DEFAULTS, guessSourceFormat, sourceFormatReason } = require("../lib/params.js");
+const { P, SOURCE_FORMATS, TEXTURE_DEFAULTS, guessSourceFormat, sourceFormatReason, abNext } = require("../lib/params.js");
 const { Library } = require("../lib/library.js");
 const { Bridge, isLookMatch } = require("../lib/bridge.js");
 const { COMMANDS } = require("../lib/agent.js");
@@ -28,6 +28,17 @@ test("params: source format from metadata and names", () => {
   assert.strictEqual(sourceFormatReason(["x"], 0), "detected from the picture");
   assert.strictEqual(guessSourceFormat(undefined), 0);
   for (const k of Object.keys(TEXTURE_DEFAULTS)) assert(Object.values(P).includes(k), `unknown texture param ${k}`);
+});
+
+test("params: A/B compare goes off -> A (original) -> B (matched) -> A", () => {
+  let st = abNext({ [P.split]: false, [P.splitPos]: 50 });
+  assert.strictEqual(st.label, "A: original");
+  assert.deepStrictEqual(st.params, { [P.split]: true, [P.splitPos]: 100, [P.splitAngle]: 0 });
+  st = abNext(st.params);
+  assert.strictEqual(st.label, "B: matched");
+  assert.strictEqual(st.params[P.splitPos], 0);
+  assert.strictEqual(abNext(st.params).label, "A: original");
+  assert.strictEqual(abNext({ [P.split]: true, [P.splitPos]: 40 }).label, "A: original");
 });
 
 test("library: references, looks, persistence and .lmlook files", async () => {

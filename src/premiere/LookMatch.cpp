@@ -814,7 +814,8 @@ void applySplit(std::vector<float>& after, const std::vector<float>& before, int
     const float a = angleDeg * 3.14159265f / 180.0f;
     const float nx = std::cos(a), ny = std::sin(a);  // line normal; angle 0 = vertical line
     const float cx = pos * w, cy = 0.5f * h;
-    const float line = std::max(1.0f, h / 540.0f);
+    // no line at 0% / 100% (the panel's A/B compare: the whole frame matched or original)
+    const float line = pos <= 0.0f || pos >= 1.0f ? 0.0f : std::max(1.0f, h / 540.0f);
     for (int y = 0; y < h; ++y)
         for (int x = 0; x < w; ++x) {
             float d = (x + 0.5f - cx) * nx + (y + 0.5f - cy) * ny;

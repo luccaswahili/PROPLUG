@@ -64,6 +64,11 @@ GPU and the CPU alike, and leaves edges and texture alone. Untouched clips pass 
 A match never applies a film print: matching sets **Film Strength** to 0 (projects saved with an earlier build keep
 their film settings until a clip is matched again).
 
+**A / B.** With a clip selected, **A / B** shows the whole frame original (A); click again for the whole frame
+matched (B), and so on. It uses the effect's split view at 100% / 0%, which has no line, so the clip's own Mix
+and settings are untouched. **Before / after** turns it off. In Premiere's monitor, toggling A and B is the
+quickest way to judge a match.
+
 **A look from several stills.** Cmd-click (or Shift-click) more references to select 2–5 stills of one look,
 for example frames from the same film or grade. Each still is read on its own, and the look's parts are combined
 by median: tone levels, neutral axis, skin treatment and hue sectors. So the match depends less on what happens

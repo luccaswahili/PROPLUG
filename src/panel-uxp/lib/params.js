@@ -57,6 +57,16 @@ const TEXTURE_DEFAULTS = {
   [P.softness]: 0, [P.vignette]: 0, [P.gateWeave]: 0, [P.flicker]: 0,
 };
 
+// A/B compare on the selected clip: whole frame original (A) or matched (B), through the split view at
+// 100% / 0% (the effect draws no line there). From the clip's current params, the params for the next
+// state and its label: off or a normal split -> A, A -> B, B -> A.
+function abNext(params) {
+  const on = !!params[P.split], pos = Number(params[P.splitPos]);
+  const showA = !(on && pos >= 100);
+  return { params: { [P.split]: true, [P.splitPos]: showA ? 100 : 0, [P.splitAngle]: 0 },
+           label: showA ? "A: original" : "B: matched" };
+}
+
 // Why guessSourceFormat chose what it did, for the panel's analysis line.
 function sourceFormatReason(texts, format) {
   const s = [].concat(texts || []).map((t) => String(t || "")).join(" ").toLowerCase();
@@ -86,4 +96,4 @@ function guessSourceFormat(texts) {
   return 0;
 }
 
-module.exports = { P, POPUPS, SOURCE_FORMATS, TEXTURE_DEFAULTS, guessSourceFormat, sourceFormatReason };
+module.exports = { P, POPUPS, SOURCE_FORMATS, TEXTURE_DEFAULTS, guessSourceFormat, sourceFormatReason, abNext };

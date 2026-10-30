@@ -16,7 +16,7 @@ static int failures = 0;
 // CPU split, as applySplit in LookMatch.cpp
 static void cpuSplit(std::vector<float>& after, const std::vector<float>& before, int w, int h, float pos, float ang) {
     const float a = ang * 3.14159265f / 180.0f, nx = std::cos(a), ny = std::sin(a), cx = pos * w, cy = 0.5f * h;
-    const float line = std::max(1.0f, h / 540.0f);
+    const float line = pos <= 0.0f || pos >= 1.0f ? 0.0f : std::max(1.0f, h / 540.0f);
     for (int y = 0; y < h; ++y)
         for (int x = 0; x < w; ++x) {
             float d = (x + 0.5f - cx) * nx + (y + 0.5f - cy) * ny;
@@ -56,11 +56,13 @@ int main() {
             }
             sceneLut = std::make_shared<Lut3D>(matchScene(b, a, SceneMatchOptions{}).lut);
         }
-        struct Case { const char* name; Params p; bool split; bool scene; } cases[] = {
+        struct Case { const char* name; Params p; bool split; bool scene; float pos = 0.4f; float angle = 15.0f; } cases[] = {
             {"colour only", [] { Params p; p.filmStrength = 0.8f; p.film.negative = 1; p.film.print = 1; return p; }(), false},
             {"grain + vignette + mix", [] { Params p; p.filmStrength = 0.6f; p.grain = 0.7f; p.grainColor = 0.4f; p.vignette = 0.4f; p.mix = 0.8f; return p; }(), false},
             {"exposure, white balance, fade", [] { Params p; p.exposure = 0.5f; p.temperature = 0.3f; p.tint = -0.2f; p.fade = 0.15f; p.filmStrength = 1; p.film.negative = 6; p.film.print = 4; return p; }(), false},
             {"split view", [] { Params p; p.filmStrength = 1; p.grain = 0.3f; return p; }(), true},
+            {"A/B: original (split at 100%)", [] { Params p; p.filmStrength = 1; return p; }(), true, false, 1.0f, 0.0f},
+            {"A/B: matched (split at 0%)", [] { Params p; p.filmStrength = 1; return p; }(), true, false, 0.0f, 0.0f},
             {"source-aware match (shaped LUT)", [] { Params p; p.grain = 0.2f; return p; }(), false, true},
             {"source-aware match, strength 60%", [] { Params p; p.matchStrength = 0.6f; p.vignette = 0.3f; return p; }(), false, true},
         };
@@ -73,7 +75,12 @@ int main() {
             // CPU
             std::vector<float> cpu(src.size());
             e.render({src.data(), w, h, w * 4}, {cpu.data(), w, h, w * 4}, 7);
-            if (tc.split) cpuSplit(cpu, src, w, h, 0.4f, 15.0f);
+            if (tc.split) cpuSplit(cpu, src, w, h, tc.pos, tc.angle);
+            if (tc.split && tc.pos >= 1) {  // A/B "original": the whole frame untouched, no line
+                float d = 0;
+                for (size_t i = 0; i < src.size(); ++i) if (i % 4 != 3) d = std::max(d, std::abs(cpu[i] - src[i]));
+                CHECK(d < 1e-6f, "%s: the original isn't untouched (%.4f)", tc.name, d);
+            }
             // GPU (BGRA float4, in place)
             std::vector<float> bgra(src.size());
             for (size_t i = 0; i < size_t(w) * h; ++i) {
@@ -86,7 +93,7 @@ int main() {
                                        reinterpret_cast<const float*>(lut.data()) + size_t(lut.size()) * lut.size() * lut.size() * 3);
             lutData.insert(lutData.end(), lut.shaper().begin(), lut.shaper().end());
             id<MTLBuffer> lb = [device newBufferWithBytes:lutData.data() length:lutData.size() * 4 options:MTLResourceStorageModeShared];
-            LookMatchGPUParams gp = makeGPUParams(fp, w, w, h, lut.size(), tc.split, 0.4f, 15.0f);
+            LookMatchGPUParams gp = makeGPUParams(fp, w, w, h, lut.size(), tc.split, tc.pos, tc.angle);
             gp.shaperSize = int(lut.shaper().size());
             if (tc.scene) CHECK(gp.shaperSize > 0, "%s: the direct LUT should carry the match's shaper", tc.name);
             id<MTLCommandBuffer> cb = [queue commandBuffer];

@@ -5,7 +5,7 @@ const ppro = require("premierepro");
 const uxp = require("uxp");
 const fs = require("fs");
 const os = require("os");
-const { P, SOURCE_FORMATS, TEXTURE_DEFAULTS, guessSourceFormat, sourceFormatReason } = require("./lib/params.js");
+const { P, SOURCE_FORMATS, TEXTURE_DEFAULTS, guessSourceFormat, sourceFormatReason, abNext } = require("./lib/params.js");
 const { Library, joinPath, baseName } = require("./lib/library.js");
 const { Bridge } = require("./lib/bridge.js");
 const { runSelfTest } = require("./lib/selftest.js");
@@ -314,9 +314,18 @@ $("applyStrength").addEventListener("click", () => run("Apply strength", async (
 $("beforeAfter").addEventListener("click", () => run("Before / after", async () => {
   const cur = await bridge.selectedLookMatchParams();
   if (!cur) throw new Error("Select a clip with LookMatch.");
-  const on = !cur.params[P.split];
+  // after A/B (split at 0% / 100%) this turns the compare off
+  const ab = cur.params[P.split] && (Number(cur.params[P.splitPos]) <= 0 || Number(cur.params[P.splitPos]) >= 100);
+  const on = !cur.params[P.split] && !ab;
   await bridge.applyParams("selection", { [P.split]: on, [P.splitPos]: Number($("splitPos").value) });
   return on ? "Split view on: original on the left" : "Split view off";
+}));
+$("abCompare").addEventListener("click", () => run("A / B", async () => {
+  const cur = await bridge.selectedLookMatchParams();
+  if (!cur) throw new Error("Select a clip with LookMatch.");
+  const next = abNext(cur.params);
+  await bridge.applyParams("selection", next.params);
+  return `${next.label} (${cur.name}). Click again to switch, Before / after to turn it off.`;
 }));
 bindSlider("splitPos", "splitPosV");
 $("splitPos").addEventListener("change", () => run("Split position", async () => {
@@ -519,7 +528,7 @@ $("selfTest").addEventListener("click", () => run("Self-test", async () => {
     require("./lib/agent.js").startAgent(fs, DATA_DIR, bridge, log, {
       // UI driving for tests: only these elements, only set value / click
       fields: ["refPath", "lookName", "lookFile", "cubePath", "normExposure", "normWhite", "normContrast", "lookStrength", "matchContrast"],  // plus tab switching (uiTab)
-      buttons: ["addRef", "matchSel", "matchSeq", "applyStrength", "beforeAfter", "heroRef", "heroMatchSeq", "readFilm", "resetFilm",
+      buttons: ["addRef", "matchSel", "matchSeq", "applyStrength", "beforeAfter", "abCompare", "heroRef", "heroMatchSeq", "readFilm", "resetFilm",
                 "applyFilm", "saveLook", "importLook", "exportCube", "selfTest", "probe", "showLog"],
       status: () => ({ text: $("status").textContent, kind: $("status").className }),
       savedLooks: () => library.looks.map((l) => l.name),
