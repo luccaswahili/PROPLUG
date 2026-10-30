@@ -29,6 +29,7 @@ curves = {
     "BMD Film Gen5": (lambda v: M.oetf_inverse_BlackmagicFilmGeneration5(v), "Blackmagic Wide Gamut"),
     "Log3G10": (lambda v: M.log_decoding_Log3G10(v), "REDWideGamutRGB"),
     "D-Log": (lambda v: M.log_decoding_DJIDLog(v), "DJI D-Gamut"),
+    "DaVinci Int.": (lambda v: M.oetf_inverse_DaVinciIntermediate(v), "DaVinci Wide Gamut"),
 }
 bad = 0
 print(f"{'curve':14s} {'decode max err':>15s} {'at code':>8s}   {'gamut':24s} {'matrix max diff':>15s}")

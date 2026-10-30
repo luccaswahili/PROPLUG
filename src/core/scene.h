@@ -12,12 +12,14 @@ namespace lm {
 // ---------- transfer curves + gamuts ----------
 
 enum class Transfer {
-    Rec709 = 0, SRGB, SLog3, LogC3, LogC4, CLog3, VLog, FLog, FLog2, AppleLog, BMDFilm5, Log3G10, DLog, Count
+    Rec709 = 0, SRGB, SLog3, LogC3, LogC4, CLog3, VLog, FLog, FLog2, AppleLog, BMDFilm5, Log3G10, DLog, DaVinciInt, Count
 };
 constexpr int kTransferCount = int(Transfer::Count);
 const char* transferName(Transfer t);       // "Sony S-Log3 / S-Gamut3.Cine"
 const char* transferShortName(Transfer t);  // "S-Log3"
 inline bool isLog(Transfer t) { return t != Transfer::Rec709 && t != Transfer::SRGB; }
+// the curve a frame detected as log is decoded with when nothing names its curve
+constexpr Transfer kGuessedLog = Transfer::SLog3;
 
 float transferDecode(Transfer t, float code);   // code value 0..1 -> linear (camera primaries)
 float transferEncode(Transfer t, float linear);  // and back

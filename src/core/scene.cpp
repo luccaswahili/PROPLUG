@@ -64,6 +64,10 @@ inline float log3G10Encode(float x) { x += 0.01f; return x < 0 ? x * 15.1927f : 
 // DJI D-Log
 inline float dLogDecode(float t) { return t <= 0.14f ? (t - 0.0929f) / 6.025f : (std::pow(10.0f, 3.89616f * t - 2.27752f) - 0.0108f) / 0.9892f; }
 inline float dLogEncode(float x) { return x <= 0.0078f ? 6.025f * x + 0.0929f : std::log10(x * 0.9892f + 0.0108f) * 0.256663f + 0.584555f; }
+// DaVinci Intermediate (Blackmagic, DaVinci Wide Gamut Intermediate): Resolve's own log, which footage
+// exported through Resolve (stock libraries' "LOG" clips) often carries
+inline float diDecode(float t) { return t <= 0.02740668f ? t / 10.44426855f : std::exp2(t / 0.07329248f - 7.0f) - 0.0075f; }
+inline float diEncode(float x) { return x <= 0.00262409f ? x * 10.44426855f : (std::log2(x + 0.0075f) + 7.0f) * 0.07329248f; }
 
 // ---------- gamuts ----------
 
@@ -78,6 +82,7 @@ const Primaries kVGamut{0.730f, 0.280f, 0.165f, 0.840f, 0.100f, -0.030f};
 const Primaries kBMDWideGen5{0.7177f, 0.3171f, 0.2280f, 0.8616f, 0.1006f, -0.0820f};
 const Primaries kRedWide{0.780308f, 0.304253f, 0.121595f, 1.493994f, 0.095612f, -0.084589f};
 const Primaries kDGamut{0.71f, 0.31f, 0.21f, 0.88f, 0.09f, -0.08f};
+const Primaries kDaVinciWide{0.8000f, 0.3130f, 0.1682f, 0.9877f, 0.0790f, -0.1155f};
 
 Mat3 rgbToXyzFor(const Primaries& p) {  // normalised primary matrix, D65 white
     auto col = [](float x, float y) { return Vec3(x / y, 1.0f, (1 - x - y) / y); };
@@ -98,6 +103,7 @@ const Primaries& primariesOf(Transfer t) {
         case Transfer::BMDFilm5: return kBMDWideGen5;
         case Transfer::Log3G10: return kRedWide;
         case Transfer::DLog: return kDGamut;
+        case Transfer::DaVinciInt: return kDaVinciWide;
         default: return kRec709;
     }
 }
@@ -189,12 +195,13 @@ const char* transferName(Transfer t) {
     static const char* n[] = {"Rec.709", "sRGB", "Sony S-Log3 / S-Gamut3.Cine", "ARRI LogC3 / AWG3", "ARRI LogC4 / AWG4",
                               "Canon Log 3 / Cinema Gamut", "Panasonic V-Log / V-Gamut", "Fujifilm F-Log / F-Gamut",
                               "Fujifilm F-Log2 / F-Gamut", "Apple Log / Rec.2020", "Blackmagic Film Gen5 / Wide Gamut",
-                              "RED Log3G10 / REDWideGamutRGB", "DJI D-Log / D-Gamut"};
+                              "RED Log3G10 / REDWideGamutRGB", "DJI D-Log / D-Gamut",
+                              "DaVinci Intermediate / Wide Gamut"};
     return n[std::clamp(int(t), 0, kTransferCount - 1)];
 }
 const char* transferShortName(Transfer t) {
     static const char* n[] = {"Rec.709", "sRGB", "S-Log3", "LogC3", "LogC4", "Canon Log 3", "V-Log", "F-Log", "F-Log2",
-                              "Apple Log", "BMD Film Gen5", "Log3G10", "D-Log"};
+                              "Apple Log", "BMD Film Gen5", "Log3G10", "D-Log", "DaVinci Int."};
     return n[std::clamp(int(t), 0, kTransferCount - 1)];
 }
 
@@ -212,6 +219,7 @@ float transferDecode(Transfer t, float v) {
         case Transfer::BMDFilm5: return bmdDecode(v);
         case Transfer::Log3G10: return log3G10Decode(v);
         case Transfer::DLog: return dLogDecode(v);
+        case Transfer::DaVinciInt: return diDecode(v);
         default: return v <= 0 ? v / 4.5f : rec709Decode(v);
     }
 }
@@ -229,6 +237,7 @@ float transferEncode(Transfer t, float x) {
         case Transfer::BMDFilm5: return bmdEncode(x);
         case Transfer::Log3G10: return log3G10Encode(x);
         case Transfer::DLog: return dLogEncode(x);
+        case Transfer::DaVinciInt: return diEncode(x);
         default: return x <= 0 ? x * 4.5f : rec709Encode(x);
     }
 }
@@ -248,6 +257,8 @@ int transferFromName(const std::string& text) {
     for (char c : text) s += char(std::tolower((unsigned char)c));
     auto has = [&](const char* k) { return s.find(k) != std::string::npos; };
     if (has("s-log3") || has("slog3") || has("s-log 3") || has("s-gamut3")) return int(Transfer::SLog3);
+    // Artlist re-exports its "LOG" clips through Resolve, camera curve and tags lost; F-Log fits them best
+    if (has("artlist") && has("log")) return int(Transfer::FLog);
     if (has("logc4") || has("log c4") || has("awg4")) return int(Transfer::LogC4);
     if (has("logc") || has("log c") || has("awg3") || has("alexa")) return int(Transfer::LogC3);
     if (has("canon log 3") || has("c-log3") || has("clog3") || has("canon log3")) return int(Transfer::CLog3);
@@ -255,6 +266,7 @@ int transferFromName(const std::string& text) {
     if (has("f-log2") || has("flog2")) return int(Transfer::FLog2);
     if (has("f-log") || has("flog")) return int(Transfer::FLog);
     if (has("apple log") || has("applelog")) return int(Transfer::AppleLog);
+    if (has("davinci intermediate") || has("davinci wide") || has("dwg")) return int(Transfer::DaVinciInt);
     if (has("blackmagic") || has("bmd film") || has("braw")) return int(Transfer::BMDFilm5);
     if (has("log3g10") || has("redwidegamut") || has("ipp2")) return int(Transfer::Log3G10);
     if (has("d-log") || has("dlog")) return int(Transfer::DLog);
@@ -346,7 +358,9 @@ TransferGuess detectTransfer(const Image& img) {
         if (lab.r > 0.25f && lab.r < 0.85f) chroma.push_back(std::hypot(lab.g, lab.b));
     }
     if (lo.empty()) return g;
-    const float floor = quantile(lo, 0.005f), top = quantile(hi, 0.998f);
+    // the top is judged at the 99th percentile: a sun or speculars reaching the top codes don't make a
+    // log frame display-referred (stock "LOG" exports often let them clip)
+    const float floor = quantile(lo, 0.005f), top = quantile(hi, 0.99f);
     const float spread = quantile(luma, 0.95f) - quantile(luma, 0.05f);
     const float sat = chroma.empty() ? 0.0f : quantile(chroma, 0.5f);
     // each cue: 0 = display-like .. 1 = log-like
@@ -363,8 +377,9 @@ TransferGuess detectTransfer(const Image& img) {
     g.why = buf;
     if (g.logScore < 0.55f) return g;
     // Which log can't be told from a picture: the curves differ by about an exposure and a contrast
-    // change, which normalisation removes. S-Log3 stands in unless metadata or the user says otherwise.
-    g.transfer = Transfer::SLog3;
+    // change. S-Log3 sits in the middle of the family and stands in unless metadata, a file name (an
+    // Artlist "LOG" clip reads as F-Log) or the user says otherwise.
+    g.transfer = kGuessedLog;
     return g;
 }
 

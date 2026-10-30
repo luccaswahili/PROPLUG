@@ -5,7 +5,7 @@ const ppro = require("premierepro");
 const uxp = require("uxp");
 const fs = require("fs");
 const os = require("os");
-const { P, SOURCE_FORMATS, TEXTURE_DEFAULTS, guessSourceFormat } = require("./lib/params.js");
+const { P, SOURCE_FORMATS, TEXTURE_DEFAULTS, guessSourceFormat, sourceFormatReason } = require("./lib/params.js");
 const { Library, joinPath, baseName } = require("./lib/library.js");
 const { Bridge } = require("./lib/bridge.js");
 const { runSelfTest } = require("./lib/selftest.js");
@@ -248,7 +248,7 @@ async function matchClips(scope) {
     // Auto: clip metadata (colour space, input LUT, file name) first; the effect detects the rest from the picture
     const hints = await bridge.clipColourHints(scope);
     formats = hints.map((h) => guessSourceFormat(h));
-    how = formats.map((f) => (f ? `${SOURCE_FORMATS[f - 1]} from metadata` : "detected from the picture"));
+    how = formats.map((f, i) => sourceFormatReason(hints[i], f));
   }
   const res = await bridge.applyReference(scope, selectedRef.path, (i) => Object.assign({}, params,
     { [P.sourceFormat]: formats ? (formats[i] || 1) : chosen }));

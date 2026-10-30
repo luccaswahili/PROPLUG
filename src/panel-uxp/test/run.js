@@ -3,7 +3,7 @@ const assert = require("assert");
 const os = require("os");
 const path = require("path");
 const fsp = require("fs").promises;
-const { P, SOURCE_FORMATS, TEXTURE_DEFAULTS, guessSourceFormat } = require("../lib/params.js");
+const { P, SOURCE_FORMATS, TEXTURE_DEFAULTS, guessSourceFormat, sourceFormatReason } = require("../lib/params.js");
 const { Library } = require("../lib/library.js");
 const { Bridge, isLookMatch } = require("../lib/bridge.js");
 const { COMMANDS } = require("../lib/agent.js");
@@ -13,7 +13,7 @@ const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
 
 test("params: source format from metadata and names", () => {
-  assert.strictEqual(SOURCE_FORMATS.length, 14, "Auto + the 13 transfers of lm::Transfer");
+  assert.strictEqual(SOURCE_FORMATS.length, 15, "Auto + the 14 transfers of lm::Transfer");
   assert.strictEqual(guessSourceFormat("A001_C002_SLOG3.mov"), 4);
   assert.strictEqual(guessSourceFormat(["clip", "ARRI LogC4"]), 6);
   assert.strictEqual(guessSourceFormat("ALEXA_LogC_clip.mxf"), 5);
@@ -21,6 +21,11 @@ test("params: source format from metadata and names", () => {
   assert.strictEqual(guessSourceFormat("X-H2S F-Log2"), 10);
   assert.strictEqual(guessSourceFormat("iPhone Apple Log"), 11);
   assert.strictEqual(guessSourceFormat("Sample Media Clip 2.mp4"), 0);
+  assert.strictEqual(guessSourceFormat("DaVinci Intermediate DWG export"), 15);
+  const artlist = "6274378_Beach Workout Talking Women_By_Andrii_Nekrasov_Artlist_LOG_4K.mov";
+  assert.strictEqual(guessSourceFormat(artlist), 9);
+  assert.strictEqual(sourceFormatReason([artlist], 9), "Artlist log → F-Log (best fit)");
+  assert.strictEqual(sourceFormatReason(["x"], 0), "detected from the picture");
   assert.strictEqual(guessSourceFormat(undefined), 0);
   for (const k of Object.keys(TEXTURE_DEFAULTS)) assert(Object.values(P).includes(k), `unknown texture param ${k}`);
 });
