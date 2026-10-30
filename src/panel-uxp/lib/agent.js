@@ -10,7 +10,7 @@ const COMMANDS = {
   ping: async () => "pong",
   clipNames: async (b, a) => b.clipNames(a.scope),
   readSelected: async (b) => b.selectedLookMatchParams(),
-  applyReference: async (b, a) => b.applyReference(a.scope, String(a.path)),
+  applyReference: async (b, a) => b.applyReference(a.scope, Array.isArray(a.path) ? a.path.slice(0, 5).map(String) : String(a.path)),
   readAnalysis: async (b, a) => b.readAnalysis(Number(a.slot) || 0, { timeoutMs: Math.min(60000, Number(a.timeoutMs) || 0) }),
   applyParams: async (b, a) => {
     const params = {};
@@ -20,7 +20,7 @@ const COMMANDS = {
   },
   saveProject: async (b) => { await b.saveProject(); return "saved"; },
   exportCube: async (b, a) => b.exportCube(String(a.path)),
-  captureFrame: async (b) => b.captureFrame(),
+  captureFrame: async (b, a) => b.captureFrame({ graded: !!a.graded }),
   selectClip: async (b, a) => b.selectClip(Number(a.index) || 0),
   inspectParams: async (b, a) => b.inspectParams(Number(a.limit) || 8),
   timeline: async (b) => b.timeline(),

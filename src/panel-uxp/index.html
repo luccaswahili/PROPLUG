@@ -32,6 +32,7 @@
       <sp-button id="matchSel" variant="cta">Match selected clips</sp-button>
       <sp-button id="matchSeq" variant="secondary">Match whole sequence</sp-button>
       <sp-action-button id="beforeAfter">Before / after</sp-action-button>
+      <sp-action-button id="abCompare" title="Whole frame: original (A) or matched (B). Before / after turns it off.">A / B</sp-action-button>
     </div>
     <div id="refGrid" class="grid"></div>
     <sp-divider size="S"></sp-divider>
@@ -62,6 +63,7 @@
       <sp-action-button id="heroRef">Use selected clip as reference</sp-action-button>
       <sp-action-button id="heroMatchSeq">Match sequence to this clip</sp-action-button>
     </div>
+    <sp-checkbox id="heroGraded" checked>Match to its graded look (keeps exposure, white balance and skin the same across cuts)</sp-checkbox>
   </section>
 
   <!-- TEXTURE: film texture controls -->

@@ -45,7 +45,7 @@ inline LookMatchGPUParams makeGPUParams(const lm::FinishParams& f, int pitch, in
     p.splitNx = std::cos(a);
     p.splitNy = std::sin(a);
     p.splitCy = 0.5f * h;
-    p.splitLine = std::fmax(1.0f, h / 540.0f);
+    p.splitLine = splitPos <= 0.0f || splitPos >= 1.0f ? 0.0f : std::fmax(1.0f, h / 540.0f);  // no line at 0% / 100% (A/B)
     p.shaperSize = 0;
     p.debandRadius = f.deband.radius;
     p.debandThreshold = f.deband.threshold;

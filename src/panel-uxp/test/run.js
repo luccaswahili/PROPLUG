@@ -3,7 +3,7 @@ const assert = require("assert");
 const os = require("os");
 const path = require("path");
 const fsp = require("fs").promises;
-const { P, SOURCE_FORMATS, TEXTURE_DEFAULTS, guessSourceFormat, sourceFormatReason } = require("../lib/params.js");
+const { P, SOURCE_FORMATS, TEXTURE_DEFAULTS, guessSourceFormat, sourceFormatReason, abNext } = require("../lib/params.js");
 const { Library } = require("../lib/library.js");
 const { Bridge, isLookMatch } = require("../lib/bridge.js");
 const { COMMANDS } = require("../lib/agent.js");
@@ -28,6 +28,17 @@ test("params: source format from metadata and names", () => {
   assert.strictEqual(sourceFormatReason(["x"], 0), "detected from the picture");
   assert.strictEqual(guessSourceFormat(undefined), 0);
   for (const k of Object.keys(TEXTURE_DEFAULTS)) assert(Object.values(P).includes(k), `unknown texture param ${k}`);
+});
+
+test("params: A/B compare goes off -> A (original) -> B (matched) -> A", () => {
+  let st = abNext({ [P.split]: false, [P.splitPos]: 50 });
+  assert.strictEqual(st.label, "A: original");
+  assert.deepStrictEqual(st.params, { [P.split]: true, [P.splitPos]: 100, [P.splitAngle]: 0 });
+  st = abNext(st.params);
+  assert.strictEqual(st.label, "B: matched");
+  assert.strictEqual(st.params[P.splitPos], 0);
+  assert.strictEqual(abNext(st.params).label, "A: original");
+  assert.strictEqual(abNext({ [P.split]: true, [P.splitPos]: 40 }).label, "A: original");
 });
 
 test("library: references, looks, persistence and .lmlook files", async () => {
@@ -114,6 +125,25 @@ test("bridge: applyReference writes refs/<slot>.txt and sets the slot", async ()
   assert.deepStrictEqual(res.names, ["V1"]);
 });
 
+test("bridge: a look from several stills is one path per line (at most 5)", async () => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "lm-"));
+  const v1 = makeItem("V1", true, true);
+  const b = new Bridge(makePremiere({ selected: [v1] }), fsp, dir);
+  const stills = ["/a.png", "/b.png", "/c.png", "/d.png", "/e.png", "/f.png"];
+  const res = await b.applyReference("selection", stills, {});
+  assert.strictEqual(await fsp.readFile(path.join(dir, "refs", `${res.slot}.txt`), "utf-8"), stills.slice(0, 5).join("\n"));
+});
+
+test("bridge: scope \"others\" is the sequence without the selected hero clip", async () => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "lm-"));
+  const clips = [makeItem("hero", true, true), makeItem("b", true, false), makeItem("c", true, true)];
+  const b = new Bridge(makePremiere({ selected: [clips[0]], tracks: [clips] }), fsp, dir);
+  const { items } = await b.items("others");
+  assert.deepStrictEqual(await Promise.all(items.map((i) => i.getName())), ["b", "c"]);
+  const res = await b.applyReference("others", "/hero.png", {});
+  assert.deepStrictEqual(res.names, ["b", "c"]);
+});
+
 test("bridge: every clip gets its own reference slot", async () => {
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "lm-"));
   const clips = [makeItem("a", true, true), makeItem("b", true, false), makeItem("c", true, true)];
@@ -177,6 +207,9 @@ test("bridge: captureFrame sets the capture slot and returns the PNG the effect 
     await fsp.writeFile(path.join(dir, "refs", `capture-${slot}.done`), "could not read the frame");
   };
   await assert.rejects(b.captureFrame({ sleep: failing, pollMs: 1, timeoutMs: 50 }), /could not read/);
+  // graded: the request file asks the effect for the frame as it renders it
+  const g = await b.captureFrame({ sleep, pollMs: 1, timeoutMs: 50, graded: true });
+  assert.strictEqual(await fsp.readFile(path.join(dir, "refs", `capture-${g.slot}.txt`), "utf-8"), "graded");
 });
 
 test("bridge: per-clip match params, analysis file, colour hints", async () => {

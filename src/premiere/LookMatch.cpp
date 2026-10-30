@@ -6,6 +6,12 @@
 #include "LookMatch.h"
 
 #include <atomic>
+#include <algorithm>
+#include <sys/stat.h>
+#ifdef _WIN32
+#include <direct.h>
+#define mkdir(path, mode) _mkdir(path)
+#endif
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -25,6 +31,7 @@
 #include "matcher.h"
 #include "parallel.h"
 #include "PanelFiles.h"
+#include "MatchCache.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_WINDOWS_UTF8
@@ -583,27 +590,45 @@ bool isMediaPending(const std::vector<float>& buf, int width, int height) {
 // Builds a match LUT from a reference still and a frame (RGBA float, as read by worldToFloat).
 // Returns false with a user-facing message if the reference can't be read or the frame is unusable.
 // `analysis` (optional) receives the source / reference / result analysis as JSON for the panel.
+void writeSlotLut(const std::string& file, const lm::Lut3D& lut);
+void writeTextFile(const std::string& file, const std::string& text);
+
+// refPath: one reference still, or several (2-5 frames of one look), one path per line
 bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, int height, PF_ParamDef* params[],
                 lm::Lut3D& lutOut, std::string& error, std::string* analysis = nullptr) {
-    int rw, rh, rn;
-    unsigned char* ref8 = stbi_load(refPath, &rw, &rh, &rn, 3);
-    if (!ref8) {
-        error = "LookMatch: could not read the reference image (PNG, JPEG, TGA or BMP).";
-        return false;
-    }
     if (isMediaPending(buf, width, height)) {
-        stbi_image_free(ref8);
         error = "LookMatch: Premiere is still loading this clip (Media pending). Try again in a moment.";
         lmLog("buildMatch: frame is Premiere's Media pending card, not matching");
         return false;
     }
-    lm::Image ref;
-    ref.width = rw; ref.height = rh;
-    ref.px.resize(size_t(rw) * rh);
-    for (size_t i = 0; i < ref.px.size(); ++i) ref.px[i] = {ref8[i * 3] / 255.0f, ref8[i * 3 + 1] / 255.0f, ref8[i * 3 + 2] / 255.0f};
-    stbi_image_free(ref8);
-    ref = lm::downsample(ref, 640);
-    lmLog("buildMatch: reference %s (%dx%d, %d channels)", refPath, rw, rh, rn);
+    std::vector<lm::Image> refs;
+    std::vector<std::string> refPaths;
+    {
+        std::string all(refPath), line;
+        size_t start = 0;
+        while (start <= all.size() && refs.size() < 5) {
+            size_t end = all.find('\n', start);
+            line = all.substr(start, end == std::string::npos ? std::string::npos : end - start);
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+            start = end == std::string::npos ? all.size() + 1 : end + 1;
+            if (line.empty()) continue;
+            int rw, rh, rn;
+            unsigned char* ref8 = stbi_load(line.c_str(), &rw, &rh, &rn, 3);
+            if (!ref8) { lmLog("buildMatch: could not read reference %s", line.c_str()); continue; }
+            lm::Image ref;
+            ref.width = rw; ref.height = rh;
+            ref.px.resize(size_t(rw) * rh);
+            for (size_t i = 0; i < ref.px.size(); ++i) ref.px[i] = {ref8[i * 3] / 255.0f, ref8[i * 3 + 1] / 255.0f, ref8[i * 3 + 2] / 255.0f};
+            stbi_image_free(ref8);
+            refs.push_back(lm::downsample(ref, 640));
+            refPaths.push_back(line);
+            lmLog("buildMatch: reference %s (%dx%d, %d channels)", line.c_str(), rw, rh, rn);
+        }
+    }
+    if (refs.empty()) {
+        error = "LookMatch: could not read the reference image (PNG, JPEG, TGA or BMP).";
+        return false;
+    }
 
     // the footage as the match sees it: Input group (encoding, exposure, temperature, tint) applied
     lm::Engine e;
@@ -654,14 +679,34 @@ bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, i
     mo.contrast = F(params, P_NORM_CONTRAST) / 100.0f;
     mo.lookStrength = F(params, P_LOOK_STRENGTH) / 100.0f;
     mo.matchContrast = F(params, P_MATCH_CONTRAST) / 100.0f;
-    lm::SceneMatch m = lm::matchScene(ref, src, mo);
+    const std::string cacheDir = refsDir().empty() ? "" : refsDir() + "cache/";
+    const std::string key = cacheDir.empty() ? "" : lmpanel::matchCacheKey(refPaths, src, mo, kMatchVersion, LM_DESCRIPTION);
+    if (!key.empty()) {
+        if (std::shared_ptr<const lm::Lut3D> hit = readSlotLut(cacheDir + key + ".lut")) {
+            lutOut = *hit;
+            if (analysis) {
+                std::string a = fileLine(cacheDir + key + ".json");
+                *analysis = a.empty() ? "{}" : a.substr(0, a.size() - 1) + ",\"cached\":true}";
+            }
+            lmLog("buildMatch: from the match cache (%s)", key.c_str());
+            return true;
+        }
+    }
+    lm::SceneMatch m = lm::matchScene(refs, src, mo);
     lutOut = std::move(m.lut);
     lmLog("buildMatch: %s", m.report.c_str());
-    if (analysis)
-        *analysis = "{\"source\":" + m.source.json() + ",\"reference\":" + m.reference.json() + ",\"result\":" + m.result.json() +
+    const std::string json = "{\"source\":" + m.source.json() + ",\"reference\":" + m.reference.json() + ",\"result\":" + m.result.json() +
                     ",\"settings\":{\"exposure\":" + std::to_string(mo.exposure) + ",\"whiteBalance\":" +
                     std::to_string(mo.whiteBalance) + ",\"contrast\":" + std::to_string(mo.contrast) + ",\"lookStrength\":" +
-                    std::to_string(mo.lookStrength) + ",\"matchContrast\":" + std::to_string(mo.matchContrast) + "}}";
+                    std::to_string(mo.lookStrength) + ",\"matchContrast\":" + std::to_string(mo.matchContrast) + "},\"stills\":" +
+                    std::to_string(refs.size()) + "}";
+    if (analysis) *analysis = json;
+    if (!key.empty()) {
+        mkdir(cacheDir.c_str(), 0755);
+        writeSlotLut(cacheDir + key + ".lut", lutOut);
+        writeTextFile(cacheDir + key + ".json", json);
+        lmpanel::pruneMatchCache(cacheDir, 300);
+    }
     for (float g : {0.18f, 0.5f, 1.0f}) {
         lm::Vec3 v = lutOut.apply({g, g, g});
         lmLog("buildMatch: LUT grey %.2f -> %.3f %.3f %.3f", g, v.r, v.g, v.b);
@@ -769,7 +814,8 @@ void applySplit(std::vector<float>& after, const std::vector<float>& before, int
     const float a = angleDeg * 3.14159265f / 180.0f;
     const float nx = std::cos(a), ny = std::sin(a);  // line normal; angle 0 = vertical line
     const float cx = pos * w, cy = 0.5f * h;
-    const float line = std::max(1.0f, h / 540.0f);
+    // no line at 0% / 100% (the panel's A/B compare: the whole frame matched or original)
+    const float line = pos <= 0.0f || pos >= 1.0f ? 0.0f : std::max(1.0f, h / 540.0f);
     for (int y = 0; y < h; ++y)
         for (int x = 0; x < w; ++x) {
             float d = (x + 0.5f - cx) * nx + (y + 0.5f - cy) * ny;
@@ -981,8 +1027,11 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
             lmLog("Render: export slot %ld -> %s (%s)", exportSlot, target.c_str(), result.c_str());
         }
     }
-    // Panel "hero clip": a new Capture Slot means save this clip's (ungraded) frame as a PNG the
-    // panel then uses as the reference for other clips. Once per slot.
+    // Panel "hero clip": a new Capture Slot means save this clip's frame as a PNG the panel then uses
+    // as the reference for other clips. Once per slot. Ungraded by default; with "graded" in
+    // refs/capture-<slot>.txt, the frame as LookMatch renders it (after the render below), so other
+    // clips match the hero's finished look (shot-to-shot matching).
+    std::string gradedCapture;  // base path of a graded capture to write after the render
     const long captureSlot = long(F(params, P_CAPTURE_SLOT));
     if (captureSlot > 0) {
         static std::mutex cm;
@@ -993,6 +1042,9 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
             std::string result = "ok";
             if (isMediaPending(buf, w, h)) {
                 captured.erase(captureSlot);  // footage still loading: try again on the next render
+                result.clear();
+            } else if (fileLine(base + ".txt") == "graded") {
+                gradedCapture = base;
                 result.clear();
             } else if (!stbi_write_png((base + ".png").c_str(), w, h, 3, to8bitRGB(buf, w, h).data(), w * 3)) {
                 result = "could not write " + base + ".png";
@@ -1009,6 +1061,12 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
     if (split) before = buf;
     lm::ImageView view{buf.data(), w, h, w * 4};
     pe->engine.render(view, view, frame);
+    if (!gradedCapture.empty()) {
+        const std::string result = stbi_write_png((gradedCapture + ".png").c_str(), w, h, 3, to8bitRGB(buf, w, h).data(), w * 3)
+                                       ? "ok" : "could not write " + gradedCapture + ".png";
+        if (FILE* df = std::fopen((gradedCapture + ".done").c_str(), "wb")) { std::fputs(result.c_str(), df); std::fclose(df); }
+        lmLog("Render: graded capture -> %s.png (%s)", gradedCapture.c_str(), result.c_str());
+    }
     if (split) applySplit(buf, before, w, h, F(params, P_SPLIT_POS) / 100.0f, F(params, P_SPLIT_ANGLE));
     releaseEngine(pe);
 

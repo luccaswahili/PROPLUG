@@ -64,5 +64,9 @@ std::string describeLook(const Image& displayRgb);
 
 // `source` holds the frame's code values (what the effect receives); `reference` is display RGB.
 SceneMatch matchScene(const Image& reference, const Image& source, const SceneMatchOptions& opt);
+// The same with a look shown by several stills (2-5 frames of one grade): each still is read on its
+// own and the look's elements (tone levels, neutral axis, skin treatment, hue sectors) are combined
+// by median, so one odd still moves the look less.
+SceneMatch matchScene(const std::vector<Image>& references, const Image& source, const SceneMatchOptions& opt);
 
 }  // namespace lm

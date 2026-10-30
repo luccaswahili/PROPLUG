@@ -47,7 +47,8 @@ static void usage() {
     std::printf(
         "lookmatch-render --in FRAME --out OUT.png [options]\n\n"
         "Look match\n"
-        "  --ref IMAGE            reference still to match (the footage frame is --in)\n"
+        "  --ref IMAGE            reference still to match (the footage frame is --in); several stills of one\n"
+        "                         look: --ref \"a.png|b.png|c.png\" (combined by median)\n"
         "  --match-strength F     0..1 (1)\n"
         "  --region-strength F    0..1 (1)    --skin-protect F  0..1 (auto)\n"
         "  --source NAME          footage encoding for the match (S-Log3, LogC3, V-Log, ...; default: detect)\n"
@@ -131,8 +132,20 @@ int main(int argc, char** argv) {
     engine.setParams(p);
 
     if (a.count("ref")) {
-        Frame ref;
-        if (!load(a["ref"], ref)) return 1;
+        // one still, or several stills of one look separated by '|'
+        std::vector<Frame> refFrames;
+        {
+            std::string all = a["ref"];
+            size_t start = 0;
+            while (start <= all.size()) {
+                size_t end = all.find('|', start);
+                std::string one = all.substr(start, end == std::string::npos ? std::string::npos : end - start);
+                start = end == std::string::npos ? all.size() + 1 : end + 1;
+                if (one.empty()) continue;
+                refFrames.emplace_back();
+                if (!load(one, refFrames.back())) return 1;
+            }
+        }
         auto t0 = std::chrono::steady_clock::now();
         SceneMatchOptions mo;
         mo.look.regionStrength = F("region-strength", 1);
@@ -148,7 +161,9 @@ int main(int argc, char** argv) {
             for (size_t i = 0; i < im.px.size(); ++i) im.px[i] = g({f.px[i * 4], f.px[i * 4 + 1], f.px[i * 4 + 2]});
             return im;
         };
-        SceneMatch m = matchScene(image(ref, [](Vec3 c) { return c; }), image(src, [&](Vec3 c) { return engine.neutralDisplay(c); }), mo);
+        std::vector<lm::Image> refs;
+        for (const Frame& f : refFrames) refs.push_back(image(f, [](Vec3 c) { return c; }));
+        SceneMatch m = matchScene(refs, image(src, [&](Vec3 c) { return engine.neutralDisplay(c); }), mo);
         auto t1 = std::chrono::steady_clock::now();
         std::printf("%smatch built in %.0f ms\nsource %s\nresult %s\n", m.report.c_str(),
                     std::chrono::duration<double, std::milli>(t1 - t0).count(), m.source.json().c_str(), m.result.json().c_str());

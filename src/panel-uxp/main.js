@@ -5,12 +5,12 @@ const ppro = require("premierepro");
 const uxp = require("uxp");
 const fs = require("fs");
 const os = require("os");
-const { P, SOURCE_FORMATS, TEXTURE_DEFAULTS, guessSourceFormat, sourceFormatReason } = require("./lib/params.js");
+const { P, SOURCE_FORMATS, TEXTURE_DEFAULTS, guessSourceFormat, sourceFormatReason, abNext } = require("./lib/params.js");
 const { Library, joinPath, baseName } = require("./lib/library.js");
 const { Bridge } = require("./lib/bridge.js");
 const { runSelfTest } = require("./lib/selftest.js");
 
-const VERSION = "0.6.0";  // kept equal to manifest.json by build_panel.sh
+const VERSION = "0.7.0";  // kept equal to manifest.json by build_panel.sh
 const DATA_DIR = os.platform() === "win32"
   ? joinPath(process.env.APPDATA || "", "PRO PLUGS\\LookMatch")
   : joinPath(os.homedir(), "Library/Application Support/PRO PLUGS/LookMatch");
@@ -19,7 +19,8 @@ const LOG_FILE = joinPath(os.homedir(), "Library/Logs/LookMatch.log");
 const $ = (id) => document.getElementById(id);
 const library = new Library(fs, DATA_DIR);
 const bridge = new Bridge(ppro, fs, DATA_DIR);
-let selectedRef = null;
+let selectedRef = null;  // the reference clicked last (also the first of selectedRefs)
+let selectedRefs = [];   // the stills the look is read from: Cmd/Shift-click adds up to 5 of one look
 
 // ---------- status & console ----------
 
@@ -93,18 +94,20 @@ async function renderRefs() {
   }
   for (const ref of library.refs) {
     const div = document.createElement("div");
-    div.className = "thumb" + (selectedRef && selectedRef.id === ref.id ? " sel" : "");
+    div.className = "thumb" + (selectedRefs.some((r) => r.id === ref.id) ? " sel" : "");
     div.title = ref.path;
     div.innerHTML = `<img alt=""><div class="name"><span class="x" title="Remove">×</span></div>`;
     div.querySelector(".name").appendChild(document.createTextNode(ref.name));
     div.addEventListener("click", (ev) => {
       if (ev.target.classList.contains("x")) {
         library.removeReference(ref.id);
-        if (selectedRef && selectedRef.id === ref.id) selectedRef = null;
+        selectedRefs = selectedRefs.filter((r) => r.id !== ref.id);
+        selectedRef = selectedRefs[0] || null;
         library.save().then(renderRefs);
         return;
       }
-      selectedRef = ref;
+      selectedRefs = toggleReference(selectedRefs, ref, ev.metaKey || ev.shiftKey || ev.ctrlKey);
+      selectedRef = selectedRefs[0] || null;
       renderRefs();
     });
     grid.appendChild(div);
@@ -112,11 +115,23 @@ async function renderRefs() {
   }
 }
 
+// Click picks one reference; Cmd/Shift/Ctrl-click adds or removes it from a set of up to 5 stills of
+// one look (the match reads each and combines them).
+function toggleReference(current, ref, add) {
+  if (!add) return [ref];
+  if (current.some((r) => r.id === ref.id)) return current.filter((r) => r.id !== ref.id);
+  return current.concat([ref]).slice(-5);
+}
+function referenceLabel(refs) {
+  return refs.length > 1 ? `${refs.length} stills (${refs.map((r) => r.name).join(", ")})` : refs[0].name;
+}
+
 async function addReference(path) {
   path = String(path || "").trim().replace(/^file:\/\//, "");
   if (!path) throw new Error("Enter or drop an image path.");
   try { await fs.lstat(path); } catch (e) { throw new Error(`No file at ${path}`); }
   selectedRef = library.addReference(path);
+  selectedRefs = [selectedRef];
   await library.save();
   await renderRefs();
   return `Added ${baseName(path)}`;
@@ -240,7 +255,8 @@ async function followAnalysis(entries) {
 }
 
 async function matchClips(scope) {
-  if (!selectedRef) throw new Error("Pick a reference first (add one above and click it).");
+  if (!selectedRefs.length && selectedRef) selectedRefs = [selectedRef];
+  if (!selectedRefs.length) throw new Error("Pick a reference first (add one above and click it).");
   const params = matchSettings();
   // The match decodes the footage itself, so the Input group passes code values straight through.
   params[P.footageEncoding] = 1;
@@ -252,20 +268,25 @@ async function matchClips(scope) {
     formats = hints.map((h) => guessSourceFormat(h));
     how = formats.map((f, i) => sourceFormatReason(hints[i], f));
   }
-  const res = await bridge.applyReference(scope, selectedRef.path, (i) => Object.assign({}, params,
+  const refLabel = referenceLabel(selectedRefs);
+  const res = await bridge.applyReference(scope, selectedRefs.map((r) => r.path), (i) => Object.assign({}, params,
     { [P.sourceFormat]: formats ? (formats[i] || 1) : chosen }));
-  log(`matched ${res.clips} clip(s) to ${selectedRef.name} (slot ${res.slot}${res.added ? `, added LookMatch to ${res.added}` : ""})`);
+  log(`matched ${res.clips} clip(s) to ${refLabel} (slot ${res.slot}${res.added ? `, added LookMatch to ${res.added}` : ""})`);
   log("tip: to keep this match inside the project (for other Macs), click LookMatch > Panel Link > Save into Project in Effect Controls");
   const entries = res.slots.map((slot, i) => ({ slot, name: res.names[i], how: chosen === 1 ? how[i] : SOURCE_FORMATS[chosen - 1], analysis: null }));
   followAnalysis(entries).catch((e) => log(`analysis: ${e.message}`));
-  return `Matched ${res.clips} clip(s) to ${selectedRef.name}`;
+  return `Matched ${res.clips} clip(s) to ${refLabel}`;
 }
 
 // Shot matching: grab the selected (hero) clip's frame through the effect, add it to the library.
+// With "Match to its graded look", the frame as LookMatch renders it (its match included), so the other
+// clips take the hero's finished look; otherwise the clip as shot.
 async function captureHero() {
-  const res = await bridge.captureFrame();
+  const graded = !!$("heroGraded").checked;
+  const res = await bridge.captureFrame({ graded });
   selectedRef = library.addReference(res.path);
-  selectedRef.name = `Hero: ${res.clip}`;
+  selectedRef.name = `Hero${graded ? " (graded)" : ""}: ${res.clip}`;
+  selectedRefs = [selectedRef];
   await library.save();
   await renderRefs();
   log(`captured hero frame of ${res.clip} -> ${res.path}`);
@@ -278,7 +299,8 @@ $("heroRef").addEventListener("click", () => run("Capture hero", async () => {
 }));
 $("heroMatchSeq").addEventListener("click", () => run("Match sequence to hero", async () => {
   const res = await captureHero();
-  const msg = await matchClips("sequence");
+  // every clip but the hero: the hero keeps its own grade
+  const msg = await matchClips("others");
   return `${msg} (hero: ${res.clip})`;
 }));
 
@@ -292,9 +314,18 @@ $("applyStrength").addEventListener("click", () => run("Apply strength", async (
 $("beforeAfter").addEventListener("click", () => run("Before / after", async () => {
   const cur = await bridge.selectedLookMatchParams();
   if (!cur) throw new Error("Select a clip with LookMatch.");
-  const on = !cur.params[P.split];
+  // after A/B (split at 0% / 100%) this turns the compare off
+  const ab = cur.params[P.split] && (Number(cur.params[P.splitPos]) <= 0 || Number(cur.params[P.splitPos]) >= 100);
+  const on = !cur.params[P.split] && !ab;
   await bridge.applyParams("selection", { [P.split]: on, [P.splitPos]: Number($("splitPos").value) });
   return on ? "Split view on: original on the left" : "Split view off";
+}));
+$("abCompare").addEventListener("click", () => run("A / B", async () => {
+  const cur = await bridge.selectedLookMatchParams();
+  if (!cur) throw new Error("Select a clip with LookMatch.");
+  const next = abNext(cur.params);
+  await bridge.applyParams("selection", next.params);
+  return `${next.label} (${cur.name}). Click again to switch, Before / after to turn it off.`;
 }));
 bindSlider("splitPos", "splitPosV");
 $("splitPos").addEventListener("change", () => run("Split position", async () => {
@@ -488,6 +519,7 @@ $("selfTest").addEventListener("click", () => run("Self-test", async () => {
   renderFilmControls();
   await library.load();
   selectedRef = library.refs[0] || null;
+  selectedRefs = selectedRef ? [selectedRef] : [];
   await renderRefs();
   renderSaved();
   log(`LookMatch panel ${VERSION} ready (data in ${DATA_DIR})`);
@@ -496,7 +528,7 @@ $("selfTest").addEventListener("click", () => run("Self-test", async () => {
     require("./lib/agent.js").startAgent(fs, DATA_DIR, bridge, log, {
       // UI driving for tests: only these elements, only set value / click
       fields: ["refPath", "lookName", "lookFile", "cubePath", "normExposure", "normWhite", "normContrast", "lookStrength", "matchContrast"],  // plus tab switching (uiTab)
-      buttons: ["addRef", "matchSel", "matchSeq", "applyStrength", "beforeAfter", "heroRef", "readFilm", "resetFilm",
+      buttons: ["addRef", "matchSel", "matchSeq", "applyStrength", "beforeAfter", "abCompare", "heroRef", "heroMatchSeq", "readFilm", "resetFilm",
                 "applyFilm", "saveLook", "importLook", "exportCube", "selfTest", "probe", "showLog"],
       status: () => ({ text: $("status").textContent, kind: $("status").className }),
       savedLooks: () => library.looks.map((l) => l.name),

@@ -64,9 +64,30 @@ GPU and the CPU alike, and leaves edges and texture alone. Untouched clips pass 
 A match never applies a film print: matching sets **Film Strength** to 0 (projects saved with an earlier build keep
 their film settings until a clip is matched again).
 
+**A / B.** With a clip selected, **A / B** shows the whole frame original (A); click again for the whole frame
+matched (B), and so on. It uses the effect's split view at 100% / 0%, which has no line, so the clip's own Mix
+and settings are untouched. **Before / after** turns it off. In Premiere's monitor, toggling A and B is the
+quickest way to judge a match.
+
+**A look from several stills.** Cmd-click (or Shift-click) more references to select 2–5 stills of one look,
+for example frames from the same film or grade. Each still is read on its own, and the look's parts are combined
+by median: tone levels, neutral axis, skin treatment and hue sectors. So the match depends less on what happens
+to be in one still, and one odd still moves it little. In `reference_tests`, three stills moved the match 36% less
+than one, and an odd still of another grade moved a three-still look 1.79 ΔEok with the median combine, against
+2.28 with the stills' pixels pooled. A plain click selects a single reference again.
+
 **Shot matching.** Select your best-looking clip, park the playhead on it, and click **Use selected clip as
-reference**. Its frame (without LookMatch's grade) joins the library as "Hero: …". Then match other clips to it,
-or use **Match sequence to this clip** to do both steps at once.
+reference**. Its frame joins the library as "Hero: …". Then match other clips to it, or use **Match sequence to
+this clip** to do both steps at once: every clip except the hero is matched, and the hero keeps its own grade.
+With **Match to its graded look** (on by default), the hero's frame is captured as LookMatch renders it, match
+included. The other clips then take the hero's finished look, so exposure, white balance and skin agree across
+cuts. This matters most when the hero was matched with its own settings or references. Turn it off to use the
+hero's frame as shot.
+
+Matches are cached: matching the same clip again with the same references and settings is read from
+`refs/cache/` instead of being built again. Each match takes about 0.5 s to build. The cache key covers the
+reference files (path, size, date), the frame and every match setting, so changing any of them builds a fresh
+match. The newest 300 matches are kept.
 
 A match made from the panel is kept on this Mac (in the LookMatch data folder). To store it inside the project,
 for example to open the project on another Mac, click **Effect Controls > LookMatch > Panel Link > Save into Project**.

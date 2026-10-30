@@ -60,6 +60,11 @@ target_compile_definitions(banding_tests PRIVATE LOOKMATCH_SOURCE_DIR="${CMAKE_S
                                                  LOOKMATCH_TEST_REF="${LOOKMATCH_TEST_REF}")
 target_link_libraries(banding_tests PRIVATE lookmatch_core)
 add_test(NAME banding_tests COMMAND banding_tests)
+add_executable(reference_tests tests/reference_tests.cpp)
+target_include_directories(reference_tests PRIVATE third_party)
+target_compile_definitions(reference_tests PRIVATE LOOKMATCH_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_link_libraries(reference_tests PRIVATE lookmatch_core)
+add_test(NAME reference_tests COMMAND reference_tests)
 
 # GPU kernel (Premiere GPU render) vs CPU engine, and a timing benchmark. macOS / Metal only.
 if(APPLE)

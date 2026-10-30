@@ -55,7 +55,7 @@ Requirements: CMake 3.16+, a C++17 compiler.
 # engine, command-line renderer and tests (any OS)
 cmake -S . -B build && cmake --build build -j
 ./build/engine_tests
-(cd build && ctest)   # engine, consistency, banding and GPU tests
+(cd build && ctest)   # engine, consistency, banding, reference and GPU tests
 
 # consistency test on real frames: grab a few frames per clip, then point it at a reference still
 swift tools/extract_frames.swift tests/frames 640 2 clip1.mov clip2.mp4
@@ -157,6 +157,7 @@ cmake -S . -B build -DLOOKMATCH_BUILD_PLUGIN=ON -DAE_SDK_DIR=<AE SDK>/Examples \
 |---|---|
 | Engine (match, film, texture) | `engine_tests` passes: identity, film neutrality, export LUT, self-match, fast path vs full path, concurrent renders, transfer curves, CCT/tint, cast and log detection |
 | Source-aware match | `consistency_tests`: real frames under exposure, white balance, curve, saturation and log perturbations, CIEDE2000 against the untouched match. See [docs/MATCHING.md](docs/MATCHING.md) |
+| Several stills, shot matching | `reference_tests`: three stills of one look steady the match (36% less change between choices of stills than one), the median combine resists an odd still, clips matched to a hero's graded frame land on the hero |
 | Banding | `banding_tests`: compressed 8/10-bit log skies (synthetic and real) show no contour steps after the grade, and deband keeps at least 93% of the texture detail |
 | Camera curves | `tests/check_transfers.py`: 11 log curves and their gamuts match colour-science |
 | Command-line renderer | Built and tested |

@@ -685,6 +685,7 @@ struct LookProfile {
         return w > 1e-6f ? Vec3(0, a / w, b / w) : Vec3(0, 0, 0);
     }
 
+    LookProfile() = default;
     explicit LookProfile(const std::vector<Vec3>& lab) {
         double na[kLBands] = {}, nb[kLBands] = {}, nw[kLBands] = {};
         for (const Vec3& c : lab) {
@@ -910,16 +911,146 @@ std::string describeLook(const Image& img) {
     return LookProfile(lab).describe();
 }
 
-SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOptions& o) {
+namespace {
+
+// ---------- the reference, as the match reads it ----------
+// Everything the match takes from a reference still: its analysis (for the report), its luminance
+// distribution in stops (where the tone lands), its look profile (neutral axis, skin, sectors,
+// saturation), its skin treatment, its lightness levels (final tone match) and its pixels (the
+// statistical methods only).
+struct RefLook {
+    SceneAnalysis analysis;
+    std::vector<float> stops;  // kTone quantiles of log2(luminance / 0.18)
+    float key = 0;             // trimmed mean of the stops
+    LookProfile profile;
+    SkinStats skin;
+    std::vector<float> lq;     // 257 quantiles of OKLab L x 10
+    std::vector<Vec3> lab;
+};
+
+RefLook makeRefLook(const Image& refIn) {
+    RefLook r;
+    const Image ref = downsample(refIn, 480);
+    AnalysisOptions ro;
+    ro.transfer = int(Transfer::Rec709);
+    r.analysis = analyseScene(ref, ro);
+    r.analysis.transferFromUser = false;
+    std::vector<Vec3> lin(ref.px.size());
+    for (size_t i = 0; i < ref.px.size(); ++i) lin[i] = decodeToRec709(Transfer::Rec709, clamp01(ref.px[i]));
+    std::vector<float> st = lumaStops(lin);
+    r.key = trimmedMean(st);
+    r.stops = evenQuantiles(std::move(st), kTone);
+    for (const Vec3& v : ref.px) r.lab.push_back(rgbToOklab(clamp01(v)));
+    r.profile = LookProfile(r.lab);
+    std::vector<float> w, L;
+    for (const Vec3& c : r.lab) { w.push_back(skinPrior(c)); L.push_back(c.r * 10); }
+    r.skin = skinStats(r.lab, w);
+    r.lq = evenQuantiles(std::move(L), 257);
+    return r;
+}
+
+float median(std::vector<float> v) {
+    if (v.empty()) return 0;
+    std::sort(v.begin(), v.end());
+    const size_t m = v.size() / 2;
+    return v.size() % 2 ? v[m] : 0.5f * (v[m - 1] + v[m]);
+}
+// median of angles (radians): the median of their offsets from the circular mean
+float medianAngle(const std::vector<float>& a) {
+    if (a.empty()) return 0;
+    double sx = 0, sy = 0;
+    for (float x : a) { sx += std::cos(x); sy += std::sin(x); }
+    const float c = float(std::atan2(sy, sx));
+    std::vector<float> d;
+    for (float x : a) d.push_back(angDiff(x, c));
+    return c + median(d);
+}
+
+// Several stills of one look combined element by element, by median: one odd still (a different
+// light, a frame that is mostly one colour) moves the look less than a mean or pooled pixels would.
+// Elements a still doesn't have (no skin, no greys in a band, no pixels in a hue sector) are left
+// out of that element's median.
+RefLook combineRefLooks(const std::vector<RefLook>& rs) {
+    if (rs.size() == 1) return rs[0];
+    RefLook out;
+    auto med = [&](auto get) { std::vector<float> v; for (const RefLook& r : rs) v.push_back(get(r)); return median(v); };
+    out.analysis = rs[0].analysis;
+    out.analysis.exposure = med([](const RefLook& r) { return r.analysis.exposure; });
+    out.analysis.cct = med([](const RefLook& r) { return r.analysis.cct; });
+    out.analysis.tint = med([](const RefLook& r) { return r.analysis.tint; });
+    out.analysis.contrast = med([](const RefLook& r) { return r.analysis.contrast; });
+    out.analysis.saturation = med([](const RefLook& r) { return r.analysis.saturation; });
+    out.key = med([](const RefLook& r) { return r.key; });
+    out.stops.resize(rs[0].stops.size());
+    for (size_t i = 0; i < out.stops.size(); ++i) out.stops[i] = med([i](const RefLook& r) { return r.stops[i]; });
+    out.lq.resize(rs[0].lq.size());
+    for (size_t i = 0; i < out.lq.size(); ++i) out.lq[i] = med([i](const RefLook& r) { return r.lq[i]; });
+    for (const RefLook& r : rs) out.lab.insert(out.lab.end(), r.lab.begin(), r.lab.end());
+    // look profile
+    LookProfile& p = out.profile;
+    for (int k = 0; k < kLBands; ++k) {
+        std::vector<float> a, b, w;
+        for (const RefLook& r : rs) {
+            w.push_back(r.profile.nW[k]);
+            if (r.profile.nW[k] > 0.05f) { a.push_back(r.profile.nA[k]); b.push_back(r.profile.nB[k]); }
+        }
+        p.nW[k] = median(w);
+        p.nA[k] = median(a); p.nB[k] = median(b);
+    }
+    {
+        std::vector<float> h, c, sh;
+        for (const RefLook& r : rs) {
+            sh.push_back(r.profile.skinShare);
+            if (r.profile.skinShare >= 0.02f) { h.push_back(r.profile.skinHue); c.push_back(r.profile.skinC); }
+        }
+        p.skinShare = median(sh); p.skinHue = medianAngle(h); p.skinC = median(c);
+    }
+    for (int k = 0; k < kSectors; ++k) {
+        std::vector<float> h, c, sh;
+        for (const RefLook& r : rs) {
+            sh.push_back(r.profile.secShare[k]);
+            if (r.profile.secShare[k] > 0.005f) { h.push_back(r.profile.secHue[k]); c.push_back(r.profile.secC[k]); }
+        }
+        p.secShare[k] = median(sh); p.secHue[k] = medianAngle(h); p.secC[k] = median(c);
+    }
+    p.sat = med([](const RefLook& r) { return r.profile.sat; });
+    p.l2 = med([](const RefLook& r) { return r.profile.l2; });
+    p.l50 = med([](const RefLook& r) { return r.profile.l50; });
+    p.l98 = med([](const RefLook& r) { return r.profile.l98; });
+    // skin treatment
+    {
+        std::vector<float> L, C, h, fs, fl, sh;
+        for (const RefLook& r : rs) {
+            sh.push_back(r.skin.share); fs.push_back(r.skin.frameSat); fl.push_back(r.skin.frameL50);
+            if (r.skin.share >= 0.02f) { L.push_back(r.skin.L); C.push_back(r.skin.C); h.push_back(r.skin.hue); }
+        }
+        out.skin.share = median(sh); out.skin.frameSat = median(fs); out.skin.frameL50 = median(fl);
+        out.skin.L = median(L); out.skin.C = median(C); out.skin.hue = medianAngle(h);
+        // the skin treatment is relative to the frame: take it from the stills that have skin
+        if (!L.empty()) {
+            std::vector<float> fs2, fl2;
+            for (const RefLook& r : rs) if (r.skin.share >= 0.02f) { fs2.push_back(r.skin.frameSat); fl2.push_back(r.skin.frameL50); }
+            out.skin.frameSat = median(fs2); out.skin.frameL50 = median(fl2);
+        }
+    }
+    return out;
+}
+
+}  // namespace
+
+SceneMatch matchScene(const Image& reference, const Image& source, const SceneMatchOptions& o) {
+    return matchScene(std::vector<Image>{reference}, source, o);
+}
+
+namespace {
+
+SceneMatch matchSceneLook(const RefLook& rl, const Image& srcIn, const SceneMatchOptions& o) {
     SceneMatch res;
-    const Image ref = downsample(refIn, 480), src = downsample(srcIn, 480);
+    const Image src = downsample(srcIn, 480);
     AnalysisOptions ao;
     ao.transfer = o.transfer;
     res.source = analyseScene(src, ao);
-    AnalysisOptions ro;
-    ro.transfer = int(Transfer::Rec709);
-    res.reference = analyseScene(ref, ro);
-    res.reference.transferFromUser = false;
+    res.reference = rl.analysis;
     const Transfer tf = res.source.transfer;
     const float ce = clamp01(o.exposure), cw = clamp01(o.whiteBalance), cc = clamp01(o.contrast), ls = clamp01(o.lookStrength);
     const size_t n = src.px.size();
@@ -965,11 +1096,8 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
     };
 
     // ---- 3. where the tone lands: the reference's distribution, its key moderated ----
-    std::vector<Vec3> refLin(ref.px.size());
-    for (size_t i = 0; i < ref.px.size(); ++i) refLin[i] = decodeToRec709(Transfer::Rec709, clamp01(ref.px[i]));
-    std::vector<float> refStops = lumaStops(refLin);
-    const float mr = trimmedMean(refStops), mr2 = moderateKey(mr);
-    std::vector<float> r = evenQuantiles(std::move(refStops), kTone);
+    const float mr = rl.key, mr2 = moderateKey(mr);
+    std::vector<float> r = rl.stops;
     if (mr2 > mr) {  // lift a dark reference: keep its highlights, open its shadows
         const float top = r[kTone * 99 / 100], k = std::clamp((top - mr2) / std::max(1e-3f, top - mr), 0.3f, 1.0f);
         for (float& v : r) v = top - (top - v) * k;
@@ -1079,13 +1207,13 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
     for (size_t i = 0; i < n; ++i) canonRgb[i] = oklabToRgb(canonical(src.px[i]));
 
     // ---- 5. the reference's look on the canonical frame (tone already done), thing by thing ----
-    std::vector<Vec3> refLab, canonLabs;
-    for (const Vec3& v : ref.px) refLab.push_back(rgbToOklab(clamp01(v)));
+    std::vector<Vec3> canonLabs;
     for (const Vec3& v : canonRgb) canonLabs.push_back(rgbToOklab(v));
-    const LookProfile refLook(refLab), srcLook(canonLabs);
-    std::vector<float> refSkinW;
-    for (const Vec3& c : refLab) refSkinW.push_back(skinPrior(c));
-    const SkinStats refSkin = skinStats(refLab, refSkinW), srcSkin = skinStats(canonLabs, srcSkinW);
+    const std::vector<Vec3>& refLab = rl.lab;
+    const LookProfile& refLook = rl.profile;
+    const LookProfile srcLook(canonLabs);
+    const SkinStats& refSkin = rl.skin;
+    const SkinStats srcSkin = skinStats(canonLabs, srcSkinW);
     auto grade = std::make_shared<Grade>(refLook, srcLook, refSkin, srcSkin);
     std::shared_ptr<StatTransfer> stat;
     if (o.method == 1 || o.method == 2) stat = std::make_shared<StatTransfer>(canonLabs, refLab);
@@ -1122,8 +1250,7 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
             // clearly coloured skin only: warm whites (walls, sheets) share skin's hue
             if (srcSkinW[i] > 0.3f && std::hypot(g.g, g.b) > 0.025f) sl.push_back({g.r, srcSkinW[i]});
         }
-        for (const Vec3& c : refLab) b.push_back(c.r * 10);
-        tone = smoothMap(evenQuantiles(a, 257), evenQuantiles(b, 257), 0.75f, 1.3f);
+        tone = smoothMap(evenQuantiles(a, 257), rl.lq, 0.75f, 1.3f);
         if (srcSkin.share >= 0.003f && sl.size() > n / 200) skinL = weightedMedian(sl);
     }
     auto full = [graded, preSkin, tone, mc, skinL](Vec3 code) {
@@ -1163,6 +1290,15 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
                   res.reference.contrast, mr2);
     res.report = std::string(buf) + "reference look:\n" + refLook.describe() + "source (canonical):\n" + srcLook.describe();
     return res;
+}
+
+}  // namespace
+
+SceneMatch matchScene(const std::vector<Image>& references, const Image& source, const SceneMatchOptions& o) {
+    std::vector<RefLook> rs;
+    for (const Image& r : references) if (r.width > 0 && r.height > 0) rs.push_back(makeRefLook(r));
+    if (rs.empty()) rs.push_back(makeRefLook(source));  // no reference: the clip's own look
+    return matchSceneLook(combineRefLooks(rs), source, o);
 }
 
 }  // namespace lm
