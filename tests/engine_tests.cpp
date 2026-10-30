@@ -279,7 +279,7 @@ int main() {
         };
         auto stops = [&](const lm::SceneMatch& m, float st) { return std::log2(lm::rec709Decode(luma(m, st))); };  // the display curve's own bend aside
         float worstShare = 0, worstStep = 0, prev = -1;
-        for (float st = -3.25f; st <= 0.5f; st += 0.25f) {  // skin, below the highlight shoulder
+        for (float st = -3.25f; st <= 0.0f; st += 0.25f) {  // skin, below the highlight shoulder
             worstShare = std::max(worstShare, std::abs(luma(small, st) - luma(large, st)));
             const float d = 0.05f, slope = (stops(large, st + d) - stops(large, st - d)) / (2 * d);
             if (prev >= 0) worstStep = std::max(worstStep, std::abs(slope - prev));

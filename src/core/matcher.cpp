@@ -354,8 +354,9 @@ constexpr float kCanonChroma = 0.07f;   // canonical RMS OKLab chroma
 constexpr float kStopFloor = 1.0f / 4096;
 // limits on the tone curve, in stops per stop. A grade that would need more stops short of the reference:
 // a steep stretch multiplies skin texture and noise by its slope, a flat one turns skin to wax.
-constexpr float kMinCurveSlope = 0.75f, kMaxCurveSlope = 1.25f;
-constexpr float kMinLightSlope = 0.85f, kMaxLightSlope = 1.15f;  // the final tone match, in lightness
+constexpr float kMinCurveSlope = 0.6f, kMaxCurveSlope = 1.6f, kMaxSkinSlope = 1.05f;
+constexpr float kMaxExposureMove = 2.0f, kSkinOverGrey = 0.5f;  // stops
+constexpr float kMinLightSlope = 0.85f, kMaxLightSlope = 1.15f, kMaxSkinLightSlope = 1.03f;  // the final tone match, in lightness
 
 // Acklam's inverse normal CDF
 float invNormal(double p) {
@@ -421,8 +422,8 @@ float moderateKey(float k) {
     return k;
 }
 
-inline float rollOff(float y) {  // linear display value, slope 1 below 0.8, asymptote 1
-    const float k = 0.8f;
+inline float rollOff(float y) {  // linear display value, slope 1 below 0.7, asymptote 1
+    const float k = 0.7f;
     return y <= k ? y : k + (1 - k) * (1 - std::exp(-(y - k) / (1 - k)));
 }
 
@@ -456,34 +457,49 @@ ToneLevels occupiedLevels(const std::vector<float>& q, float bin) {
     return out;
 }
 
-// One smooth curve from level pairs: a quadratic (least squares through the five), so its slope changes
-// evenly and it can't kink, with its bend scaled back until the slope stays in [lo, hi] over the frame's
-// range. Past the range it carries on in a straight line. Stored as a fine polyline for Curve.
-Curve smoothCurve(const ToneLevels& from, const ToneLevels& to, float lo, float hi) {
+// One smooth curve from level pairs: a cubic (least squares through the five), so it can make a gentle S
+// with a toe and shoulder, its slope changes evenly and it can't kink. Its bend is scaled back until the
+// slope stays in [lo, hi] over the frame's range. Past the range it carries on in a straight line.
+// Stored as a fine polyline for Curve.
+// Over [keepLo, keepHi] (in `from` units; skin) the slope stays at most keepMax: there a slope is texture.
+Curve smoothCurve(const ToneLevels& from, const ToneLevels& to, float lo, float hi, float keepLo = 1, float keepHi = 0, float keepMax = 0) {
     const float c0 = from[2], u0 = from[0] - c0, u1 = from[4] - c0;
-    double A[3][4] = {};
+    double A[4][5] = {};
     for (int i = 0; i < 5; ++i) {
-        const double u = from[size_t(i)] - c0, B[3] = {1, u, u * u};
-        for (int r = 0; r < 3; ++r) {
-            for (int k = 0; k < 3; ++k) A[r][k] += B[r] * B[k];
-            A[r][3] += B[r] * (to[size_t(i)] - from[size_t(i)]);
+        const double u = from[size_t(i)] - c0, B[4] = {1, u, u * u, u * u * u};
+        for (int r = 0; r < 4; ++r) {
+            for (int k = 0; k < 4; ++k) A[r][k] += B[r] * B[k];
+            A[r][4] += B[r] * (to[size_t(i)] - from[size_t(i)]);
         }
     }
-    A[1][1] += 1e-3; A[2][2] += 1e-3;  // a frame of one tone: a plain offset
-    for (int c = 0; c < 3; ++c)
-        for (int r = 0; r < 3; ++r)
+    A[1][1] += 1e-3; A[2][2] += 1e-3; A[3][3] += 1e-3;  // a frame of one tone: a plain offset
+    for (int c = 0; c < 4; ++c)
+        for (int r = 0; r < 4; ++r)
             if (r != c) {
                 const double f = A[r][c] / A[c][c];
-                for (int k = c; k < 4; ++k) A[r][k] -= f * A[c][k];
+                for (int k = c; k < 5; ++k) A[r][k] -= f * A[c][k];
             }
-    float a = float(A[0][3] / A[0][0]), b = float(A[1][3] / A[1][1]), c = float(A[2][3] / A[2][2]);  // y - x
-    const float s0 = b + 2 * c * u0, s1 = b + 2 * c * u1, top = std::max({s0, s1, 0.0f}), bot = std::min({s0, s1, 0.0f});
-    const float k = std::min({1.0f, (hi - 1) / std::max(top, 1e-6f), (1 - lo) / std::max(-bot, 1e-6f)});
-    b *= k; c *= k;
+    const float a = float(A[0][4] / A[0][0]);  // y - x = a + b u + c u^2 + d u^3
+    float b = float(A[1][4] / A[1][1]), c = float(A[2][4] / A[2][2]), d = float(A[3][4] / A[3][3]);
+    float top = 0, bot = 0;
+    for (int i = 0; i <= 32; ++i) {
+        const float u = u0 + (u1 - u0) * float(i) / 32, sl = b + (2 * c + 3 * d * u) * u;
+        top = std::max(top, sl); bot = std::min(bot, sl);
+    }
+    float k = std::min({1.0f, (hi - 1) / std::max(top, 1e-6f), (1 - lo) / std::max(-bot, 1e-6f)});
+    if (keepLo < keepHi) {
+        float keepTop = 0;
+        for (int i = 0; i <= 16; ++i) {
+            const float u = keepLo - c0 + (keepHi - keepLo) * float(i) / 16;
+            keepTop = std::max(keepTop, b + (2 * c + 3 * d * u) * u);
+        }
+        k = std::min(k, (keepMax - 1) / std::max(keepTop, 1e-6f));
+    }
+    b *= k; c *= k; d *= k;
     const float xa = u0 - 14, xb = u1 + 8;
     auto y = [=](float u) {
-        const float v = std::clamp(u, u0, u1), s = b + 2 * c * v;
-        return u + a + b * v + c * v * v + (u - v) * s;
+        const float v = std::clamp(u, u0, u1), sl = b + (2 * c + 3 * d * v) * v;
+        return u + a + (b + (c + d * v) * v) * v + (u - v) * sl;
     };
     Curve out;
     const int N = 1024;
@@ -1142,6 +1158,7 @@ SceneMatch matchSceneLook(const RefLook& rl, const Image& srcIn, const SceneMatc
     // ---- 3. where the tone lands: the reference's distribution, its key moderated ----
     const float mr = rl.key, mr2 = moderateKey(mr);
     ToneLevels refLevels = rl.toneLevels;
+    const float refMedian = rl.stops[kTone / 2] + (mr2 - mr);
     if (mr2 > mr) {  // lift a dark reference: keep its highlights, open its shadows
         const float top = rl.stops[kTone * 99 / 100], k = std::clamp((top - mr2) / std::max(1e-3f, top - mr), 0.3f, 1.0f);
         for (float& v : refLevels) v = top - (top - v) * k;
@@ -1159,7 +1176,34 @@ SceneMatch matchSceneLook(const RefLook& rl, const Image& srcIn, const SceneMatc
         const float q = (srcLevels[i] - ce * srcLevels[2]) + (canonLevels[i] + keep - (srcLevels[i] - ce * srcLevels[2])) * cc;
         t[i] = q + (refLevels[i] + keep - q) * ls;
     }
-    const Curve g1 = smoothCurve(srcLevels, t, kMinCurveSlope, kMaxCurveSlope);
+    Curve g1 = smoothCurve(srcLevels, t, kMinCurveSlope, kMaxCurveSlope);
+
+    // Skin, in source stops: contrast comes from the toe and shoulder around it, not from steepening skin,
+    // where a slope above 1 reads as crunch. Exposure then is one global gain on top of the curve: skin, where
+    // there is any, lands where the reference's skin sits (or a little above its mid grey, if it shows none); a
+    // frame without skin puts its mid grey on the reference's. The tonal range alone would leave a subject
+    // against a bright sky or wall dark.
+    float anchorStops = s0[kTone / 2], targetStops = refMedian;
+    {
+        std::vector<std::pair<float, float>> skinStops;
+        for (size_t i = 0; i < n; ++i) {
+            const Vec3 l = byLuminance(g1, lin0[i]);
+            const float m = std::max({l.r, l.g, l.b, kStopFloor}), k = rollOff(m) / m;
+            const Vec3 lab = rgbToOklab(Vec3(rec709Encode(clamp01(l.r * k)), rec709Encode(clamp01(l.g * k)), rec709Encode(clamp01(l.b * k))));
+            const float w = skinPrior(lab);
+            if (w > 0.3f && std::hypot(lab.g, lab.b) > 0.025f) skinStops.push_back({std::log2(std::max(luma709(lin0[i]), kStopFloor) / 0.18f), w});
+        }
+        if (skinStops.size() > n / 100) {
+            anchorStops = weightedMedian(skinStops);
+            targetStops = rl.skin.share >= 0.02f ? std::log2(std::max(rl.skin.L * rl.skin.L * rl.skin.L, 1e-4f) / 0.18f) + (mr2 - mr)
+                                                 : refMedian + kSkinOverGrey;
+            std::sort(skinStops.begin(), skinStops.end());
+            const float a = skinStops[skinStops.size() / 10].first, b = skinStops[skinStops.size() * 9 / 10].first;
+            g1 = smoothCurve(srcLevels, t, kMinCurveSlope, kMaxCurveSlope, a, b, kMaxSkinSlope);
+        }
+    }
+    const float gainStops = std::clamp(targetStops - g1(anchorStops), 0.0f, kMaxExposureMove) * ce * ls;  // lifts only: the fit is never too bright
+    for (float& y : g1.y) y += gainStops;
 
     auto canonicalDisplay = [linear, byLuminance, g1](Vec3 code) {
         Vec3 lc = byLuminance(g1, linear(code));
@@ -1275,6 +1319,7 @@ SceneMatch matchSceneLook(const RefLook& rl, const Image& srcIn, const SceneMatc
     const float mc = clamp01(o.matchContrast) * ls;
     Curve tone;
     float skinL = -1;  // lightness skin lands at after the look (-1: no skin)
+    float lightMid = 0.5f;  // median lightness after the look
     if (mc > 0) {
         std::vector<float> a, b;
         std::vector<std::pair<float, float>> sl;
@@ -1284,14 +1329,19 @@ SceneMatch matchSceneLook(const RefLook& rl, const Image& srcIn, const SceneMatc
             // clearly coloured skin only: warm whites (walls, sheets) share skin's hue
             if (srcSkinW[i] > 0.3f && std::hypot(g.g, g.b) > 0.025f) sl.push_back({g.r, srcSkinW[i]});
         }
-        tone = smoothCurve(occupiedLevels(evenQuantiles(a, 257), 0.25f), rl.lightLevels, kMinLightSlope, kMaxLightSlope);
+        const std::vector<float> graded257 = evenQuantiles(a, 257);
+        lightMid = graded257[128] / 10;
         if (srcSkin.share >= 0.003f && sl.size() > n / 200) skinL = weightedMedian(sl);
+        tone = skinL >= 0 ? smoothCurve(occupiedLevels(graded257, 0.25f), rl.lightLevels, kMinLightSlope, kMaxLightSlope, (skinL - 0.15f) * 10, (skinL + 0.15f) * 10, kMaxSkinLightSlope)
+                          : smoothCurve(occupiedLevels(graded257, 0.25f), rl.lightLevels, kMinLightSlope, kMaxLightSlope);
     }
-    auto full = [graded, preSkin, tone, mc, skinL](Vec3 code) {
+    // the curve shapes the levels around the anchor; where the anchor sits is exposure's business
+    const float toneAt = skinL >= 0 ? skinL : tone.x.empty() ? 0.0f : lightMid, toneShift = mc > 0 ? tone(toneAt * 10) / 10 - toneAt : 0.0f;
+    auto full = [graded, preSkin, tone, mc, skinL, toneShift](Vec3 code) {
         const float sk = preSkin(code);
         Vec3 lab = graded(code, sk);
         if (mc > 0) {
-            float d = 0.15f * std::tanh((tone(lab.r * 10) / 10 - lab.r) / 0.15f);
+            float d = 0.15f * std::tanh((tone(lab.r * 10) / 10 - lab.r - toneShift) / 0.15f);
             // Skin is not crushed: around the lightness skin sits at, the curve may darken by at most 0.02.
             // The limit is a function of lightness alone, joined softly, so lightness stays smooth:
             // a per-colour skin weight here would bend the grey axis.
