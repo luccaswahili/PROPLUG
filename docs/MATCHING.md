@@ -295,72 +295,72 @@ pixels), with the looser bound.
 
 | Group | Perturbation | Mean ΔE00 | p95 ΔE00 | Previous matcher (mean / p95) | Result |
 |---|---|---|---|---|---|
-| exposure | -2.0 stops | 0.42 | 0.84 | 4.33 / 7.49 | pass |
-| exposure | -1.0 stops | 1.02 | 1.70 | 2.00 / 3.60 | pass |
-| exposure | -0.5 stops | 0.47 | 0.86 | 0.99 / 1.82 | pass |
-| exposure | +0.5 stops (23 frames clipped, below) | 0.05 | 0.13 | 1.67 / 5.21 | pass |
-| exposure | +0.5 stops (clipped frames) | 1.82 | 4.85 |  | pass |
-| exposure | +1.0 stops (25 frames clipped, below) | 0.07 | 0.10 | 5.17 / 11.54 | pass |
-| exposure | +1.0 stops (clipped frames) | 5.03 | 12.74 |  | **fail** |
-| exposure | +2.0 stops (clipped frames) | 9.07 | 19.63 | 9.88 / 17.86 | **fail** |
-| white balance | 3200K tint +0 (23 frames clipped, below) | 0.13 | 0.43 | 11.06 / 21.48 | pass |
-| white balance | 3200K tint +0 (clipped frames) | 4.74 | 12.56 |  | **fail** |
-| white balance | 4300K tint +0 (21 frames clipped, below) | 0.11 | 0.27 | 8.42 / 14.99 | pass |
-| white balance | 4300K tint +0 (clipped frames) | 1.07 | 3.68 |  | pass |
-| white balance | 5500K tint +0 (10 frames clipped, below) | 0.08 | 0.21 | 4.98 / 8.26 | pass |
-| white balance | 5500K tint +0 (clipped frames) | 0.27 | 0.65 |  | pass |
-| white balance | 7500K tint +0 (7 frames clipped, below) | 0.08 | 0.23 | 4.12 / 6.93 | pass |
-| white balance | 7500K tint +0 (clipped frames) | 0.53 | 1.80 |  | pass |
-| white balance | 6504K tint +20 (17 frames clipped, below) | 0.46 | 0.96 | 8.37 / 13.59 | pass |
-| white balance | 6504K tint +20 (clipped frames) | 1.23 | 4.72 |  | pass |
-| white balance | 6504K tint -20 (3 frames clipped, below) | 0.13 | 0.29 | 9.83 / 15.75 | pass |
-| white balance | 6504K tint -20 (clipped frames) | 0.19 | 0.47 |  | pass |
-| white balance | 3200K tint +10 (23 frames clipped, below) | 3.20 | 6.79 | 13.56 / 25.72 | **fail** |
-| white balance | 3200K tint +10 (clipped frames) | 6.88 | 14.12 |  | **fail** |
-| white balance | 7500K tint -10 (3 frames clipped, below) | 0.11 | 0.26 | 6.63 / 11.11 | pass |
-| white balance | 7500K tint -10 (clipped frames) | 0.13 | 0.28 |  | pass |
-| white balance | 4300K tint -20 (11 frames clipped, below) | 0.15 | 0.37 | 8.91 / 14.56 | pass |
-| white balance | 4300K tint -20 (clipped frames) | 0.46 | 1.01 |  | pass |
-| curves | S-curve (2 frames clipped, below) | 3.42 | 5.89 | 2.71 / 4.81 | **fail** |
-| curves | S-curve (clipped frames) | 3.19 | 5.00 |  | pass |
-| curves | strong S-curve (4 frames clipped, below) | 5.64 | 9.48 | 4.59 / 7.75 | **fail** |
-| curves | strong S-curve (clipped frames) | 4.85 | 8.34 |  | pass |
-| curves | inverse S | 3.20 | 5.66 | 2.09 / 4.12 | **fail** |
-| curves | contrast +25% (21 frames clipped, below) | 4.42 | 8.74 | 2.42 / 6.28 | **fail** |
-| curves | contrast +25% (clipped frames) | 4.00 | 9.78 |  | pass |
-| curves | lift +0.08 | 1.85 | 3.49 | 0.84 / 1.65 | pass |
-| curves | gamma 0.8 | 1.64 | 3.01 | 1.82 / 3.05 | pass |
-| curves | gamma 1.25 | 1.52 | 2.80 | 1.54 / 2.73 | pass |
-| curves | gain 0.85 | 0.79 | 1.45 | 0.97 / 1.73 | pass |
-| curves | colour LGG (warm gain, blue lift) (13 frames clipped, below) | 2.52 | 6.12 | 7.67 / 12.49 | **fail** |
-| curves | colour LGG (warm gain, blue lift) (clipped frames) | 2.87 | 5.93 |  | pass |
-| curves | faded (lift + gain) | 2.94 | 5.32 | 1.56 / 2.78 | **fail** |
-| saturation | saturation 0.50 | 3.44 | 7.27 | 4.29 / 7.24 | **fail** |
-| saturation | saturation 0.75 | 1.58 | 3.44 | 1.79 / 3.10 | pass |
-| saturation | saturation 1.25 (1 frames clipped, below) | 1.15 | 2.54 | 1.33 / 2.24 | pass |
-| saturation | saturation 1.25 (clipped frames) | 1.17 | 2.95 |  | pass |
-| saturation | saturation 1.50 (2 frames clipped, below) | 2.16 | 4.50 | 2.18 / 3.72 | **fail** |
-| saturation | saturation 1.50 (clipped frames) | 1.70 | 4.19 |  | pass |
-| log | as S-Log3 | 0.16 | 0.48 | 7.49 / 13.69 | pass |
-| log | as LogC3 | 0.86 | 1.79 | 7.32 / 13.50 | pass |
-| log | as LogC4 | 2.19 | 4.34 | 8.29 / 14.66 | **fail** |
-| log | as Canon Log 3 | 2.28 | 4.14 | 7.67 / 13.25 | **fail** |
-| log | as V-Log | 1.37 | 2.89 | 7.92 / 14.28 | pass |
-| log | as F-Log | 2.83 | 4.81 | 6.57 / 11.80 | **fail** |
-| log | as F-Log2 | 1.76 | 3.90 | 7.62 / 13.96 | pass |
-| log | as Apple Log | 1.86 | 3.95 | 7.22 / 13.16 | pass |
-| log | as BMD Film Gen5 | 1.87 | 3.35 | 7.80 / 14.12 | pass |
-| log | as Log3G10 | 2.10 | 4.06 | 8.14 / 14.39 | **fail** |
-| log | as D-Log | 0.59 | 1.23 | 7.43 / 13.72 | pass |
-| combined | -1 stop, 3200K, S-curve | 5.68 | 11.18 | 13.68 / 24.21 | **fail** |
-| combined | +0.5 stop, 7500K tint -10, sat 0.7 | 2.74 | 6.27 | 7.40 / 12.70 | **fail** |
-| combined | lift, gamma 1.2, 5500K, sat 1.3 (13 frames clipped, below) | 2.03 | 3.96 | 6.09 / 10.07 | **fail** |
-| combined | lift, gamma 1.2, 5500K, sat 1.3 (clipped frames) | 2.23 | 4.48 |  | pass |
-| combined | S-Log3 shot -1 stop at 4300K | 0.25 | 0.72 | 9.25 / 14.98 | pass |
-| combined | LogC3 shot +1 stop at 7500K tint +10 | 0.98 | 2.02 | 7.73 / 13.62 | pass |
-| combined | V-Log shot -0.5 stop, tint -15 | 1.40 | 2.89 | 8.44 / 15.30 | pass |
-| combined | inverse S, gain 0.9, 4300K tint +10 (2 frames clipped, below) | 5.13 | 9.00 | 11.60 / 20.66 | **fail** |
-| combined | inverse S, gain 0.9, 4300K tint +10 (clipped frames) | 3.53 | 5.64 |  | pass |
+| exposure | -2.0 stops | 0.40 | 0.88 | 4.33 / 7.49 | pass |
+| exposure | -1.0 stops | 0.97 | 1.65 | 2.00 / 3.60 | pass |
+| exposure | -0.5 stops | 0.73 | 1.28 | 0.99 / 1.82 | pass |
+| exposure | +0.5 stops (23 frames clipped, below) | 0.11 | 0.48 | 1.67 / 5.21 | pass |
+| exposure | +0.5 stops (clipped frames) | 1.56 | 4.93 |  | pass |
+| exposure | +1.0 stops (25 frames clipped, below) | 0.17 | 0.62 | 5.17 / 11.54 | pass |
+| exposure | +1.0 stops (clipped frames) | 5.46 | 13.54 |  | **fail** |
+| exposure | +2.0 stops (clipped frames) | 9.11 | 19.70 | 9.88 / 17.86 | **fail** |
+| white balance | 3200K tint +0 (23 frames clipped, below) | 0.29 | 1.17 | 11.06 / 21.48 | pass |
+| white balance | 3200K tint +0 (clipped frames) | 4.61 | 12.56 |  | **fail** |
+| white balance | 4300K tint +0 (21 frames clipped, below) | 0.18 | 0.52 | 8.42 / 14.99 | pass |
+| white balance | 4300K tint +0 (clipped frames) | 1.15 | 3.59 |  | pass |
+| white balance | 5500K tint +0 (10 frames clipped, below) | 0.13 | 0.37 | 4.98 / 8.26 | pass |
+| white balance | 5500K tint +0 (clipped frames) | 0.36 | 0.80 |  | pass |
+| white balance | 7500K tint +0 (7 frames clipped, below) | 0.14 | 0.38 | 4.12 / 6.93 | pass |
+| white balance | 7500K tint +0 (clipped frames) | 0.70 | 2.24 |  | pass |
+| white balance | 6504K tint +20 (17 frames clipped, below) | 0.66 | 1.24 | 8.37 / 13.59 | pass |
+| white balance | 6504K tint +20 (clipped frames) | 1.47 | 5.35 |  | pass |
+| white balance | 6504K tint -20 (3 frames clipped, below) | 0.20 | 0.51 | 9.83 / 15.75 | pass |
+| white balance | 6504K tint -20 (clipped frames) | 0.34 | 0.66 |  | pass |
+| white balance | 3200K tint +10 (23 frames clipped, below) | 4.93 | 9.82 | 13.56 / 25.72 | **fail** |
+| white balance | 3200K tint +10 (clipped frames) | 7.15 | 14.42 |  | **fail** |
+| white balance | 7500K tint -10 (3 frames clipped, below) | 0.15 | 0.39 | 6.63 / 11.11 | pass |
+| white balance | 7500K tint -10 (clipped frames) | 0.19 | 0.43 |  | pass |
+| white balance | 4300K tint -20 (11 frames clipped, below) | 0.32 | 0.78 | 8.91 / 14.56 | pass |
+| white balance | 4300K tint -20 (clipped frames) | 0.51 | 1.07 |  | pass |
+| curves | S-curve (2 frames clipped, below) | 2.98 | 6.01 | 2.71 / 4.81 | **fail** |
+| curves | S-curve (clipped frames) | 2.63 | 5.37 |  | pass |
+| curves | strong S-curve (4 frames clipped, below) | 4.58 | 9.00 | 4.59 / 7.75 | **fail** |
+| curves | strong S-curve (clipped frames) | 4.55 | 8.77 |  | pass |
+| curves | inverse S | 3.26 | 6.48 | 2.09 / 4.12 | **fail** |
+| curves | contrast +25% (21 frames clipped, below) | 3.54 | 8.88 | 2.42 / 6.28 | **fail** |
+| curves | contrast +25% (clipped frames) | 3.37 | 9.24 |  | pass |
+| curves | lift +0.08 | 1.58 | 3.43 | 0.84 / 1.65 | pass |
+| curves | gamma 0.8 | 1.39 | 2.60 | 1.82 / 3.05 | pass |
+| curves | gamma 1.25 | 1.33 | 2.43 | 1.54 / 2.73 | pass |
+| curves | gain 0.85 | 0.99 | 1.79 | 0.97 / 1.73 | pass |
+| curves | colour LGG (warm gain, blue lift) (13 frames clipped, below) | 3.71 | 7.87 | 7.67 / 12.49 | **fail** |
+| curves | colour LGG (warm gain, blue lift) (clipped frames) | 3.43 | 6.76 |  | pass |
+| curves | faded (lift + gain) | 2.70 | 5.55 | 1.56 / 2.78 | **fail** |
+| saturation | saturation 0.50 | 3.16 | 6.33 | 4.29 / 7.24 | **fail** |
+| saturation | saturation 0.75 | 1.49 | 3.07 | 1.79 / 3.10 | pass |
+| saturation | saturation 1.25 (1 frames clipped, below) | 1.22 | 2.58 | 1.33 / 2.24 | pass |
+| saturation | saturation 1.25 (clipped frames) | 1.16 | 2.50 |  | pass |
+| saturation | saturation 1.50 (2 frames clipped, below) | 2.06 | 4.27 | 2.18 / 3.72 | **fail** |
+| saturation | saturation 1.50 (clipped frames) | 1.88 | 4.33 |  | pass |
+| log | as S-Log3 | 0.23 | 0.81 | 7.49 / 13.69 | pass |
+| log | as LogC3 | 1.00 | 2.22 | 7.32 / 13.50 | pass |
+| log | as LogC4 | 2.14 | 4.31 | 8.29 / 14.66 | **fail** |
+| log | as Canon Log 3 | 1.95 | 3.93 | 7.67 / 13.25 | pass |
+| log | as V-Log | 1.40 | 2.99 | 7.92 / 14.28 | pass |
+| log | as F-Log | 2.62 | 4.71 | 6.57 / 11.80 | **fail** |
+| log | as F-Log2 | 1.84 | 4.10 | 7.62 / 13.96 | pass |
+| log | as Apple Log | 1.93 | 4.08 | 7.22 / 13.16 | pass |
+| log | as BMD Film Gen5 | 1.72 | 3.13 | 7.80 / 14.12 | pass |
+| log | as Log3G10 | 1.99 | 3.76 | 8.14 / 14.39 | pass |
+| log | as D-Log | 0.67 | 1.56 | 7.43 / 13.72 | pass |
+| combined | -1 stop, 3200K, S-curve | 5.17 | 10.67 | 13.68 / 24.21 | **fail** |
+| combined | +0.5 stop, 7500K tint -10, sat 0.7 | 3.31 | 6.83 | 7.40 / 12.70 | **fail** |
+| combined | lift, gamma 1.2, 5500K, sat 1.3 (13 frames clipped, below) | 1.38 | 3.20 | 6.09 / 10.07 | pass |
+| combined | lift, gamma 1.2, 5500K, sat 1.3 (clipped frames) | 2.18 | 4.40 |  | pass |
+| combined | S-Log3 shot -1 stop at 4300K | 0.42 | 1.20 | 9.25 / 14.98 | pass |
+| combined | LogC3 shot +1 stop at 7500K tint +10 | 1.24 | 2.64 | 7.73 / 13.62 | pass |
+| combined | V-Log shot -0.5 stop, tint -15 | 1.44 | 3.00 | 8.44 / 15.30 | pass |
+| combined | inverse S, gain 0.9, 4300K tint +10 (2 frames clipped, below) | 5.81 | 10.77 | 11.60 / 20.66 | **fail** |
+| combined | inverse S, gain 0.9, 4300K tint +10 (clipped frames) | 5.70 | 10.06 |  | **fail** |
 
 
 Other checks on the same run:
@@ -369,9 +369,28 @@ Other checks on the same run:
 - **Banding:** the LUT never adds steps the transform doesn't have. The largest LUT-vs-exact local gain on smooth
   gradients is 1.61, against a bound of 1.25× the exact gain + 1.5. The grey axis still fails on a few extreme
   perturbations: steps up to 34/255 per 1/1024, and slight darkening.
-- **Content preservation:** 26 of 29 frames.
-- **Log detection:** all 286 log-encoded frames were detected as log. 12 display-referred perturbed frames were
-  taken for log.
+- **Content preservation:** 27 of 29 frames (26 before the skin work).
+- **Log detection:** all 286 log-encoded frames were detected as log. 15 display-referred perturbed frames were
+  taken for log (12 before the top codes were judged at the 99th percentile; that is what catches log clips with a
+  clipped sun).
+- **Skin** (11 frames with skin, judged where skin is at most 40% of the frame): no face flagged ashy, orange or
+  split. The two flags are Clip 14, sunlit concrete that the hue prior reads as skin. Mean skin-only ΔE00 against
+  the untouched match:
+
+  | Perturbation | ΔE00 |
+  |---|---|
+  | exposure | 0.95 |
+  | white balance | 0.92 |
+  | log | 2.00 |
+  | saturation | 2.64 |
+  | curves | 2.88 |
+  | combined | 3.02 |
+
+- **Cost of the skin rules:** consistency on unclipped rows is 1.73 / 3.57 on average, against 1.71 / 3.35 before,
+  with 19 rows over target instead of 21. The loss is on warm-magenta casts, which the white balance only half
+  removes because they look like skin: 3200 K tint +10 went from 3.20 to 4.93, and inverse S with 4300 K tint +10
+  from 5.13 to 5.81. Without the skin rules those rows return. They are kept because they are what fixed orange,
+  grey and split skin on real footage.
 - **GPU vs CPU:** 0.000/255 (`gpu_tests`).
 
 ### Open cases
