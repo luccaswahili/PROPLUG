@@ -890,7 +890,9 @@ public:
         // skin hues held together: stray red or yellow patches pulled a quarter of the way to the face's hue
         if (sk > 0) h2 += angDiff(skinHue_, h2) * 0.25f * sk * clamp01((C - 0.015f) / 0.02f);
         const float C2 = C * cr;
-        return {lab.r + skinLift_ * sk, C2 * std::cos(h2) + nr.g, C2 * std::sin(h2) + nr.b};
+        // the lift only where the colour is clearly skin: on near-greys a varying weight would bend the grey axis
+        const float skL = sk * clamp01((C - 0.006f) / 0.012f);
+        return {lab.r + skinLift_ * skL, C2 * std::cos(h2) + nr.g, C2 * std::sin(h2) + nr.b};
     }
 
 private:
@@ -1110,18 +1112,32 @@ SceneMatch matchScene(const Image& refIn, const Image& srcIn, const SceneMatchOp
     // never darkened by more than a third of what the curve asks, and no level moves more than 0.15. ----
     const float mc = clamp01(o.matchContrast) * ls;
     Curve tone;
+    float skinL = -1;  // lightness skin lands at after the look (-1: no skin)
     if (mc > 0) {
         std::vector<float> a, b;
-        for (size_t i = 0; i < n; ++i) a.push_back(graded(src.px[i], srcSkinW[i]).r * 10);
+        std::vector<std::pair<float, float>> sl;
+        for (size_t i = 0; i < n; ++i) {
+            const Vec3 g = graded(src.px[i], srcSkinW[i]);
+            a.push_back(g.r * 10);
+            // clearly coloured skin only: warm whites (walls, sheets) share skin's hue
+            if (srcSkinW[i] > 0.3f && std::hypot(g.g, g.b) > 0.025f) sl.push_back({g.r, srcSkinW[i]});
+        }
         for (const Vec3& c : refLab) b.push_back(c.r * 10);
         tone = smoothMap(evenQuantiles(a, 257), evenQuantiles(b, 257), 0.75f, 1.3f);
+        if (srcSkin.share >= 0.003f && sl.size() > n / 200) skinL = weightedMedian(sl);
     }
-    auto full = [graded, preSkin, tone, mc](Vec3 code) {
+    auto full = [graded, preSkin, tone, mc, skinL](Vec3 code) {
         const float sk = preSkin(code);
         Vec3 lab = graded(code, sk);
         if (mc > 0) {
             float d = std::clamp(tone(lab.r * 10) / 10 - lab.r, -0.15f, 0.15f);
-            if (d < 0) d *= 1 - 0.67f * sk;
+            // Skin is not crushed: around the lightness skin sits at, the curve may darken by at most 0.02.
+            // The limit is a function of lightness alone and changes slowly enough (slope < 0.95) that
+            // lightness stays monotonic: a per-colour skin weight here would bend the grey axis.
+            if (skinL >= 0) {
+                const float u = (lab.r - skinL) / 0.12f;
+                d = std::max(d, -(0.15f - 0.13f * std::exp(-u * u)));
+            }
             lab.r += d * mc;
         }
         return oklabToRgbCompressed(lab, true);
