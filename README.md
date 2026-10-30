@@ -39,8 +39,7 @@ with interlayer coupling on the negative, printed through printer lights onto a 
 dye crosstalk. That gives film's toe, shoulder and colour crossover, and printer-point grading.
 
 The look match is source-aware (`src/core/scene.*`, `matchScene` in `src/core/matcher.cpp`). The clip
-is decoded (its log curve and gamut, detected or named), white balanced in scene linear, its tone curve
-undone by rank to a canonical distribution, and its saturation evened out. Then the reference's look is
+is decoded (its log curve and gamut, detected or named), white balanced in scene linear, its tone brought over with one smooth, slope-limited curve, and its saturation evened out. Then the reference's look is
 applied: its tone distribution (with its key moderated, so a night reference doesn't crush a day clip)
 and the region-aware colour transfer from the Python prototype, which matches skin to skin, sky to sky
 and foliage to foliage, with skin protection. The whole chain is baked into a 65³ LUT with a 1D input

@@ -49,15 +49,16 @@ The Premiere effect calls it when it builds a match. The CPU and GPU paths both 
    logo plate can't do the same.
 3. **Exposure.** The key is a trimmed log-average of luminance in linear light (5–95%, clipped pixels included, so
    they don't bias it). It is reported in stops from 18% grey.
-4. **Tone.** The luminance distribution in log2 stops is mapped by rank to where the look puts it. With full
-   contrast normalisation that is a fixed canonical distribution: normal, σ = 1.6 stops. It is applied to R, G and B
-   as a luminance ratio, so hue and colour relationships stay the frame's own. A curve a grade or transfer applied
-   keeps the order of the pixels' brightness, so this undoes it.
-   - The curve is a monotone cubic spline through 17 rank-averaged control points, not the raw quantiles. Read
-     straight off an 8-bit frame, the quantiles form a staircase, and the staircase posterises.
-   - Its slope is held between 0.35 and 2.2.
-   - The frame's 5–95% range is stretched at most 2×: a soft close-up stays soft.
-   - True black meets the curve's floor continuously.
+4. **Tone.** One smooth curve on luminance, applied to R, G and B as a ratio, so hue and colour relationships stay
+   the frame's own. Identity is the plain camera transform, so anything the curve leaves alone looks like it.
+   - It is fitted to five levels of the tones the frame *occupies*, counted evenly across stops, not by pixel count.
+     By pixel count, a plain backdrop filling most of a close-up owned the curve: on portrait 6439240, 66 % of the frame
+     sat in a 0.75-stop band, its slope went from 2.7 to 0.36 within a quarter stop, and shaded skin got about 3×
+     contrast next to flat lit skin.
+   - The curve is a quadratic, so its slope changes evenly and it can't kink. Its bend is scaled back until the slope
+     stays between 0.75 and 1.25: a match that would need more stops short of the reference.
+   - The cost: a capped curve can't fully undo a strong curve baked into display-referred footage, and clips with a
+     large bright area land darker than the reference's median.
 5. **Residual colour.** In OKLab:
    - **Skin weights are taken here.** They come after the scene-linear white balance and the tone normalisation, so a
      cast, an exposure or a curve doesn't move a face into or out of the mask. They come before the residual cast and
