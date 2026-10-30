@@ -6,6 +6,12 @@
 #include "LookMatch.h"
 
 #include <atomic>
+#include <algorithm>
+#include <sys/stat.h>
+#ifdef _WIN32
+#include <direct.h>
+#define mkdir(path, mode) _mkdir(path)
+#endif
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -25,6 +31,7 @@
 #include "matcher.h"
 #include "parallel.h"
 #include "PanelFiles.h"
+#include "MatchCache.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_WINDOWS_UTF8
@@ -583,6 +590,9 @@ bool isMediaPending(const std::vector<float>& buf, int width, int height) {
 // Builds a match LUT from a reference still and a frame (RGBA float, as read by worldToFloat).
 // Returns false with a user-facing message if the reference can't be read or the frame is unusable.
 // `analysis` (optional) receives the source / reference / result analysis as JSON for the panel.
+void writeSlotLut(const std::string& file, const lm::Lut3D& lut);
+void writeTextFile(const std::string& file, const std::string& text);
+
 // refPath: one reference still, or several (2-5 frames of one look), one path per line
 bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, int height, PF_ParamDef* params[],
                 lm::Lut3D& lutOut, std::string& error, std::string* analysis = nullptr) {
@@ -592,6 +602,7 @@ bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, i
         return false;
     }
     std::vector<lm::Image> refs;
+    std::vector<std::string> refPaths;
     {
         std::string all(refPath), line;
         size_t start = 0;
@@ -610,6 +621,7 @@ bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, i
             for (size_t i = 0; i < ref.px.size(); ++i) ref.px[i] = {ref8[i * 3] / 255.0f, ref8[i * 3 + 1] / 255.0f, ref8[i * 3 + 2] / 255.0f};
             stbi_image_free(ref8);
             refs.push_back(lm::downsample(ref, 640));
+            refPaths.push_back(line);
             lmLog("buildMatch: reference %s (%dx%d, %d channels)", line.c_str(), rw, rh, rn);
         }
     }
@@ -667,14 +679,34 @@ bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, i
     mo.contrast = F(params, P_NORM_CONTRAST) / 100.0f;
     mo.lookStrength = F(params, P_LOOK_STRENGTH) / 100.0f;
     mo.matchContrast = F(params, P_MATCH_CONTRAST) / 100.0f;
+    const std::string cacheDir = refsDir().empty() ? "" : refsDir() + "cache/";
+    const std::string key = cacheDir.empty() ? "" : lmpanel::matchCacheKey(refPaths, src, mo, kMatchVersion, LM_DESCRIPTION);
+    if (!key.empty()) {
+        if (std::shared_ptr<const lm::Lut3D> hit = readSlotLut(cacheDir + key + ".lut")) {
+            lutOut = *hit;
+            if (analysis) {
+                std::string a = fileLine(cacheDir + key + ".json");
+                *analysis = a.empty() ? "{}" : a.substr(0, a.size() - 1) + ",\"cached\":true}";
+            }
+            lmLog("buildMatch: from the match cache (%s)", key.c_str());
+            return true;
+        }
+    }
     lm::SceneMatch m = lm::matchScene(refs, src, mo);
     lutOut = std::move(m.lut);
     lmLog("buildMatch: %s", m.report.c_str());
-    if (analysis)
-        *analysis = "{\"source\":" + m.source.json() + ",\"reference\":" + m.reference.json() + ",\"result\":" + m.result.json() +
+    const std::string json = "{\"source\":" + m.source.json() + ",\"reference\":" + m.reference.json() + ",\"result\":" + m.result.json() +
                     ",\"settings\":{\"exposure\":" + std::to_string(mo.exposure) + ",\"whiteBalance\":" +
                     std::to_string(mo.whiteBalance) + ",\"contrast\":" + std::to_string(mo.contrast) + ",\"lookStrength\":" +
-                    std::to_string(mo.lookStrength) + ",\"matchContrast\":" + std::to_string(mo.matchContrast) + "}}";
+                    std::to_string(mo.lookStrength) + ",\"matchContrast\":" + std::to_string(mo.matchContrast) + "},\"stills\":" +
+                    std::to_string(refs.size()) + "}";
+    if (analysis) *analysis = json;
+    if (!key.empty()) {
+        mkdir(cacheDir.c_str(), 0755);
+        writeSlotLut(cacheDir + key + ".lut", lutOut);
+        writeTextFile(cacheDir + key + ".json", json);
+        lmpanel::pruneMatchCache(cacheDir, 300);
+    }
     for (float g : {0.18f, 0.5f, 1.0f}) {
         lm::Vec3 v = lutOut.apply({g, g, g});
         lmLog("buildMatch: LUT grey %.2f -> %.3f %.3f %.3f", g, v.r, v.g, v.b);

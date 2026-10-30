@@ -6,6 +6,9 @@
 #include "engine.h"
 #include "matcher.h"
 #include "scene.h"
+#include "../src/premiere/MatchCache.h"
+#include <unistd.h>
+#include <sys/stat.h>
 
 using namespace lm;
 
@@ -201,6 +204,40 @@ int main() {
         Image logImg = img;
         for (Vec3& c : logImg.px) c = encodeFromRec709(Transfer::SLog3, Vec3(rec709Decode(c.r), rec709Decode(c.g), rec709Decode(c.b)));
         CHECK(isLog(detectTransfer(logImg).transfer), "S-Log3 frame not detected as log (%s)", detectTransfer(logImg).why.c_str());
+    }
+
+    // match cache: the key changes with every input the match depends on, and pruning keeps the newest
+    {
+        Image src;
+        src.width = 8; src.height = 4;
+        for (int i = 0; i < 32; ++i) src.px.push_back(Vec3(i / 32.0f, 0.5f, 1 - i / 32.0f));
+        SceneMatchOptions mo;
+        const std::vector<std::string> refs = {"/nonexistent/ref.png"};
+        const std::string k0 = lmpanel::matchCacheKey(refs, src, mo, 2, "build");
+        CHECK(k0 == lmpanel::matchCacheKey(refs, src, mo, 2, "build"), "cache key not stable");
+        Image src2 = src; src2.px[5].g += 0.01f;
+        SceneMatchOptions mo2 = mo; mo2.matchContrast = 0.5f;
+        SceneMatchOptions mo3 = mo; mo3.transfer = 7;
+        const std::string ks[] = {lmpanel::matchCacheKey(refs, src2, mo, 2, "build"), lmpanel::matchCacheKey(refs, src, mo2, 2, "build"),
+                                  lmpanel::matchCacheKey(refs, src, mo3, 2, "build"), lmpanel::matchCacheKey({"/other.png"}, src, mo, 2, "build"),
+                                  lmpanel::matchCacheKey(refs, src, mo, 3, "build"), lmpanel::matchCacheKey(refs, src, mo, 2, "build2"),
+                                  lmpanel::matchCacheKey({refs[0], "/b.png"}, src, mo, 2, "build")};
+        for (const std::string& k : ks) CHECK(k != k0, "cache key ignores an input");
+        char tmpl[] = "/tmp/lmcacheXXXXXX";
+        if (char* d = mkdtemp(tmpl)) {
+            const std::string dir = std::string(d) + "/";
+            for (int i = 0; i < 5; ++i) {
+                for (const char* ext : {".lut", ".json"})
+                    if (FILE* f = std::fopen((dir + "k" + std::to_string(i) + ext).c_str(), "wb")) { std::fputs("x", f); std::fclose(f); }
+                usleep(20000);
+            }
+            lmpanel::pruneMatchCache(dir, 3);
+            auto exists = [&](const std::string& n) { struct stat st {}; return stat((dir + n).c_str(), &st) == 0; };
+            CHECK(!exists("k0.lut") && !exists("k1.lut") && !exists("k1.json"), "prune kept old cache entries");
+            CHECK(exists("k2.lut") && exists("k4.lut") && exists("k4.json"), "prune removed new cache entries");
+            for (int i = 0; i < 5; ++i) for (const char* ext : {".lut", ".json"}) std::remove((dir + "k" + std::to_string(i) + ext).c_str());
+            rmdir(d);
+        }
     }
 
     std::printf(failures ? "%d check(s) failed\n" : "all engine tests passed\n", failures);

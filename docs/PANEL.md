@@ -79,6 +79,11 @@ included. The other clips then take the hero's finished look, so exposure, white
 cuts. This matters most when the hero was matched with its own settings or references. Turn it off to use the
 hero's frame as shot.
 
+Matches are cached: matching the same clip again with the same references and settings is read from
+`refs/cache/` instead of being built again. Each match takes about 0.5 s to build. The cache key covers the
+reference files (path, size, date), the frame and every match setting, so changing any of them builds a fresh
+match. The newest 300 matches are kept.
+
 A match made from the panel is kept on this Mac (in the LookMatch data folder). To store it inside the project,
 for example to open the project on another Mac, click **Effect Controls > LookMatch > Panel Link > Save into Project**.
 
