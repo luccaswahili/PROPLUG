@@ -112,11 +112,13 @@ inline float shoulder(float x) {  // slope-1 soft clip above 0.8, asymptote 1
 
 }  // namespace
 
-Engine::Engine() { setParams(Params{}); }
+Engine::Engine() { setParams(Params{}); film_ = std::make_unique<FilmModel>(p_.film); }
 
 void Engine::setParams(const Params& p) {
     const Params& o = p_;
-    bool colour = lutDirty_ || p.input != o.input || p.matchStrength != o.matchStrength || p.filmStrength != o.filmStrength ||
+    // only an actual change counts: lutDirty_ (the CPU render's LUT) is never cleared on the GPU path,
+    // and testing it here made every GPU frame rebuild its 65^3 LUT
+    bool colour = p.input != o.input || p.matchStrength != o.matchStrength || p.filmStrength != o.filmStrength ||
                   p.film.negative != o.film.negative || p.film.print != o.film.print || p.film.saturation != o.film.saturation ||
                   std::memcmp(p.film.printerPoints, o.film.printerPoints, sizeof o.film.printerPoints) != 0 || p.fade != o.fade ||
                   p.adjust != o.adjust || p.lutSize != o.lutSize;

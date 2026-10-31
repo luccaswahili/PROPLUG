@@ -328,6 +328,9 @@ prSuiteError Render(PrGPUFilterInstance* io, const PrGPUFilterRenderParams* rp, 
     Instance* inst = static_cast<Instance*>(io->ioPrivatePluginData);
     if (!inst || !outFrame) return suiteError_Fail;
     std::lock_guard<std::mutex> lock(inst->renderLock);
+    if (inst->framesRendered < 400 || inst->framesRendered % 50 == 0)
+        gpuLog("node %d Render called: clip time %lld, ticks/frame %lld", int(inst->nodeID), (long long)rp->inClipTime,
+               (long long)rp->inRenderTicksPerFrame);
     @autoreleasepool {
         const auto t0 = std::chrono::steady_clock::now();
         // values may be keyframed: read them at this frame. If the host can't give one (a failed read
@@ -400,9 +403,9 @@ prSuiteError Render(PrGPUFilterInstance* io, const PrGPUFilterRenderParams* rp, 
         [enc dispatchThreadgroups:grid threadsPerThreadgroup:group];
         [enc endEncoding];
         [cb commit];
-        // the first frames of every instance, then one in 100
+        // the first 400 frames of every instance, then one in 50 (only when LOOKMATCH_LOG=1)
         const long n = inst->framesRendered++;
-        if (n < 3 || n % 100 == 0) {
+        if (n < 400 || n % 50 == 0) {
             const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
             gpuLog("node %d frame %ld (#%ld) %dx%d %s pitch %d: params %s, mix %.0f, match %s, look lut %s, %.1f ms",
                    int(inst->nodeID), frame, n, w, h, f32 ? "32f" : "16f", pitch,
