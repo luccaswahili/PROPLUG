@@ -295,10 +295,21 @@ const thumb = (path) => {
   return thumbCache.get(path);
 };
 
+// A plain mouse wheel over the reference row scrolls it sideways (trackpads already can).
+$("refGrid").addEventListener("wheel", (ev) => {
+  const g = $("refGrid");
+  if (Math.abs(ev.deltaY) > Math.abs(ev.deltaX) && g.scrollWidth > g.clientWidth) {
+    g.scrollLeft += ev.deltaY;
+    ev.preventDefault();
+  }
+});
+
 async function renderRefs() {
   const grid = $("refGrid");
+  const keepScroll = grid.scrollLeft;
   grid.innerHTML = "";
-  // the add tile first, then the references, newest first
+  // the add tile stays put on the left; the references, newest first, scroll beside it
+  $("refAdd").innerHTML = "";
   const add = document.createElement("div");
   add.className = "ref add";
   add.title = "Add a still";
@@ -308,7 +319,7 @@ async function renderRefs() {
     if (!file) return "Cancelled";
     return addReference(file.nativePath);
   }));
-  grid.appendChild(add);
+  $("refAdd").appendChild(add);
   for (const ref of library.refs) {
     const div = document.createElement("div");
     div.className = "ref" + (selectedRefs.some((r) => r.id === ref.id) ? " sel" : "");
@@ -327,6 +338,7 @@ async function renderRefs() {
       if (selectedRefs.length) status(`Reference: ${referenceLabel(selectedRefs)}. Select clips and click Match.`);
     });
     grid.appendChild(div);
+    grid.scrollLeft = keepScroll;
     thumb(ref.path).then((t) => {
       if (!t) return;
       const img = div.querySelector("img");

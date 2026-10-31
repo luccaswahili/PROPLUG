@@ -39,7 +39,11 @@ section[hidden] { display: none; }
 .grow { flex: 1 1 auto; min-width: 120px; }
 
 /* reference strip */
-.refs { display: flex; flex-wrap: wrap; }
+/* one fixed-height row: the + tile stays on the left, more references scroll sideways beside it */
+.refrow { display: flex; align-items: flex-start; }
+.refadd { flex: 0 0 auto; margin-right: 6px; }
+.refs { flex: 1 1 auto; min-width: 0; display: flex; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; height: 62px; }
+.refs > .ref { flex: 0 0 auto; }
 .ref { width: 74px; height: 48px; border-radius: 8px; border: 2px solid #333333; position: relative; overflow: hidden;
        cursor: pointer; background-color: #2e2e2e; }
 .ref.sel { border-color: #2d6fdb; }
@@ -148,7 +152,7 @@ section > * { margin-bottom: 10px; }
 .status > * { margin-right: 8px; }
 .stack > * { margin-bottom: 6px; }
 .row > * { margin-right: 6px; }
-.refs > * { margin-right: 6px; margin-bottom: 6px; }
+.refs > * { margin-right: 6px; }
 .matchrow > * { margin-right: 8px; }
 .ctl-line > * { margin-right: 8px; }
 .fold-head > * { margin-right: 8px; }
