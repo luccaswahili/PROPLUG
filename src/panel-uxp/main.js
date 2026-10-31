@@ -170,10 +170,10 @@ const ADVANCED = [
   { param: P.regionMatching, title: "Region matching", def: 100, onChange: updateAdvSub },
 ];
 const TEXTURE = [
-  { param: P.grain, title: "Grain", icon: "grain", max: 200, def: TEXTURE_DEFAULTS[P.grain] },
-  { param: P.halation, title: "Halation", icon: "halation", max: 200, def: TEXTURE_DEFAULTS[P.halation] },
-  { param: P.bloom, title: "Bloom", icon: "bloom", max: 200, def: TEXTURE_DEFAULTS[P.bloom] },
-  { param: P.vignette, title: "Vignette", icon: "vignette", def: TEXTURE_DEFAULTS[P.vignette] },
+  { param: P.grain, title: "Grain", icon: "grain", desc: "Film grain over the picture, finer in the highlights.", max: 200, def: TEXTURE_DEFAULTS[P.grain] },
+  { param: P.halation, title: "Halation", icon: "halation", desc: "Red-orange glow around bright highlights, as light scatters in film.", max: 200, def: TEXTURE_DEFAULTS[P.halation] },
+  { param: P.bloom, title: "Bloom", icon: "bloom", desc: "Soft white glow that spreads from the brightest areas.", max: 200, def: TEXTURE_DEFAULTS[P.bloom] },
+  { param: P.vignette, title: "Vignette", icon: "vignette", desc: "Darkens the corners of the frame.", def: TEXTURE_DEFAULTS[P.vignette] },
 ];
 const TEXTURE_MORE = [
   { param: P.fade, title: "Fade" },
