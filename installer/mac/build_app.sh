@@ -29,10 +29,31 @@ done
 lipo -create "$OUT/app/installer-arm64" "$OUT/app/installer-x86_64" -output "$APP/Contents/MacOS/Install Komodo"
 rm "$OUT/app/installer-arm64" "$OUT/app/installer-x86_64"
 
+# app icon: the Komodo mark, rendered by the installer itself, as an .icns
+ICONSET="$OUT/app/AppIcon.iconset"
+mkdir -p "$ICONSET"
+LOOKMATCH_INSTALLER_ICON="$OUT/app/icon-1024.png" "$APP/Contents/MacOS/Install Komodo"
+for s in 16 32 128 256 512; do
+  sips -z $s $s "$OUT/app/icon-1024.png" --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
+  sips -z $((s * 2)) $((s * 2)) "$OUT/app/icon-1024.png" --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
+done
+iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
+rm -rf "$ICONSET" "$OUT/app/icon-1024.png"
+
 ditto "$OUT/cmake/src/premiere/LookMatch.plugin" "$APP/Contents/Resources/LookMatch.plugin"
 codesign --force -s "$SIGN" "$APP/Contents/Resources/LookMatch.plugin"
 cp "$PANEL" "$APP/Contents/Resources/"
 codesign --force -s "$SIGN" "$APP"
+
+# Not notarized without a Developer ID: say how to open it the first time.
+cat > "$OUT/app/If it won't open.txt" <<'TXT'
+If macOS says "Install Komodo" can't be opened because Apple can't check it:
+
+1. Right-click (or Control-click) "Install Komodo" and choose Open.
+2. Click Open in the window that appears.
+
+You only need to do this the first time.
+TXT
 
 rm -f "$OUT/Komodo-Installer.dmg"
 hdiutil create -quiet -volname "Komodo" -srcfolder "$OUT/app" -fs HFS+ -format UDZO "$OUT/Komodo-Installer.dmg"

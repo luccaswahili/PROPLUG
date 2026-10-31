@@ -1,7 +1,8 @@
-// Install LookMatch: a small native installer that shows which Premiere Pro / After Effects
-// versions are on this Mac inline (no alerts), lets the user locate one manually or continue
-// without, copies LookMatch.plugin into Adobe's shared MediaCore folder and, for Premiere Pro
-// 2025 or later, installs the LookMatch panel (.ccx) with Adobe's UnifiedPluginInstallerAgent.
+// Install Komodo: a one-screen installer in Komodo's own look (Premiere greys, Premiere blue for
+// what's active). It shows which Premiere Pro / After Effects versions are on this Mac, warns if one
+// is running, copies the plug-in (LookMatch.plugin, its file name since before Komodo) into Adobe's
+// shared MediaCore folder and, for Premiere Pro 2025 or later, installs the Komodo panel (.ccx)
+// with Adobe's UnifiedPluginInstallerAgent.
 //
 // Built by installer/mac/build_app.sh with swiftc (no Xcode project).
 // Environment, for testing only:
@@ -29,7 +30,7 @@ struct HostApp: Identifiable, Equatable {
     let kind: Kind
     var located = false
 
-    // LookMatch needs CC 2015 or later: Premiere Pro 9.0+, After Effects 13.5+.
+    // Komodo needs CC 2015 or later: Premiere Pro 9.0+, After Effects 13.5+.
     var supported: Bool {
         let parts = version.split(separator: ".").map { Int($0) ?? 0 } + [0, 0]
         switch kind {
@@ -104,7 +105,7 @@ enum InstallError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .missingPayload: return "LookMatch.plugin is missing from this installer. Download it again."
+        case .missingPayload: return "The Komodo plug-in is missing from this installer. Download it again."
         case .cancelled: return "The installation was cancelled. Nothing was changed."
         case .failed(let msg): return msg
         }
@@ -124,7 +125,7 @@ func installPlugin(hosts: [HostApp]) throws {
         throw InstallError.missingPayload
     }
     let dest = mediaCoreDir + "/LookMatch.plugin"
-    var logLines = ["LookMatch installed \(Date())", "Location: \(dest)", "Hosts:"]
+    var logLines = ["Komodo installed \(Date())", "Location: \(dest)", "Hosts:"]
     logLines += hosts.isEmpty ? ["  none found"] : hosts.map { "  \($0.name) \($0.version)\($0.supported ? "" : " (not supported)")" }
     let printLog = "printf '%s\\n' " + logLines.map(shellQuote).joined(separator: " ")
 
@@ -190,21 +191,31 @@ func installPanel(hosts: [HostApp]) -> PanelResult {
 // MARK: - Model
 
 final class InstallerModel: ObservableObject {
-    enum Step: Int, CaseIterable {
-        case welcome, apps, install, done
-        var title: String { ["Introduction", "Adobe Apps", "Install", "Done"][rawValue] }
-    }
+    enum Step: Int, CaseIterable { case ready, installing, done }
 
-    @Published var step: Step = .welcome
+    @Published var step: Step = .ready
     @Published var hosts: [HostApp] = []
-    @Published var installing = false
     @Published var installError: String?
     @Published var installCancelled = false
     @Published var panelResult: PanelResult?
+    @Published var runningAdobe: [String] = []
 
-    init() { hosts = scanForHosts() }
+    init() {
+        hosts = scanForHosts()
+        refreshRunning()
+    }
 
     var adobeHosts: [HostApp] { hosts.filter { $0.kind != .other } }
+
+    /// Premiere Pro or After Effects open right now: the plug-in can't be replaced while they run.
+    func refreshRunning() {
+        if ProcessInfo.processInfo.environment["LOOKMATCH_INSTALLER_SNAPSHOTS"] != nil { return }
+        runningAdobe = NSWorkspace.shared.runningApplications.compactMap { app in
+            let id = app.bundleIdentifier ?? ""
+            guard id.hasPrefix("com.adobe.PremierePro") || id.hasPrefix("com.adobe.AfterEffects") else { return nil }
+            return app.localizedName
+        }
+    }
 
     func locate() {
         let panel = NSOpenPanel()
@@ -225,7 +236,9 @@ final class InstallerModel: ObservableObject {
     }
 
     func install() {
-        installing = true
+        refreshRunning()
+        guard runningAdobe.isEmpty else { return }
+        step = .installing
         installError = nil
         installCancelled = false
         let hosts = self.hosts
@@ -241,12 +254,13 @@ final class InstallerModel: ObservableObject {
                 failure = error.localizedDescription
             }
             DispatchQueue.main.async {
-                self.installing = false
                 self.panelResult = panel
                 if cancelled {
                     self.installCancelled = true
+                    self.step = .ready
                 } else if let failure = failure {
                     self.installError = failure
+                    self.step = .ready
                 } else {
                     self.step = .done
                 }
@@ -255,161 +269,204 @@ final class InstallerModel: ObservableObject {
     }
 }
 
-// MARK: - Views
+// MARK: - Komodo look (same palette as the panel)
 
-struct StepList: View {
-    let current: InstallerModel.Step
+enum K {
+    static let bg = Color(red: Double(0x23) / 255, green: Double(0x23) / 255, blue: Double(0x23) / 255)
+    static let card = Color(red: Double(0x2a) / 255, green: Double(0x2a) / 255, blue: Double(0x2a) / 255)
+    static let border = Color(red: Double(0x3e) / 255, green: Double(0x3e) / 255, blue: Double(0x3e) / 255)
+    static let tile = Color(red: Double(0x4a) / 255, green: Double(0x4a) / 255, blue: Double(0x4a) / 255)
+    static let text = Color(red: Double(0xe6) / 255, green: Double(0xe6) / 255, blue: Double(0xe6) / 255)
+    static let dim = Color(red: Double(0xa8) / 255, green: Double(0xa8) / 255, blue: Double(0xa8) / 255)
+    static let faint = Color(red: Double(0x7a) / 255, green: Double(0x7a) / 255, blue: Double(0x7a) / 255)
+    static let blue = Color(red: Double(0x2d) / 255, green: Double(0x6f) / 255, blue: Double(0xdb) / 255)
+    static let blueHover = Color(red: Double(0x3b) / 255, green: Double(0x7f) / 255, blue: Double(0xe8) / 255)
+    static let blueText = Color(red: Double(0x5b) / 255, green: Double(0x9b) / 255, blue: Double(0xf0) / 255)
+    static let warn = Color(red: Double(0xfb) / 255, green: Double(0xbf) / 255, blue: Double(0x24) / 255)
+    static let err = Color(red: Double(0xf8) / 255, green: Double(0x71) / 255, blue: Double(0x71) / 255)
+    static let width: CGFloat = 560, height: CGFloat = 460
+}
 
+/// The Komodo mark: two overlapping rings in a rounded tile, as in the panel header.
+struct Logo: View {
+    var size: CGFloat = 44
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            ForEach(InstallerModel.Step.allCases, id: \.rawValue) { step in
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(step == current ? Color.accentColor : Color.secondary.opacity(0.35))
-                        .frame(width: 8, height: 8)
-                    Text(step.title)
-                        .fontWeight(step == current ? .semibold : .regular)
-                        .foregroundColor(step == current ? .primary : .secondary)
-                }
+        ZStack {
+            RoundedRectangle(cornerRadius: size * 0.3).fill(K.tile)
+            Circle().stroke(Color.white, lineWidth: size * 0.06)
+                .frame(width: size * 0.36, height: size * 0.36).offset(x: -size * 0.09)
+            Circle().stroke(Color(white: 0.82), lineWidth: size * 0.06)
+                .frame(width: size * 0.36, height: size * 0.36).offset(x: size * 0.09)
+        }
+        .frame(width: size, height: size)
+    }
+}
+
+struct PrimaryButton: ButtonStyle {
+    var enabled = true
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 14, weight: .heavy))
+            .foregroundColor(enabled ? .white : K.faint)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 11)
+            .background(RoundedRectangle(cornerRadius: 12)
+                .fill(enabled ? (configuration.isPressed ? K.blueHover : K.blue) : K.card))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(enabled ? Color.clear : K.border, lineWidth: 1))
+    }
+}
+
+struct QuietButton: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 11.5, weight: .semibold))
+            .foregroundColor(configuration.isPressed ? .white : K.dim)
+            .padding(.horizontal, 12).padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 8).fill(K.card))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(K.border, lineWidth: 1))
+    }
+}
+
+struct Card<Content: View>: View {
+    let content: Content
+    init(@ViewBuilder _ content: () -> Content) { self.content = content() }
+    var body: some View {
+        content
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 12).fill(K.card))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(K.border, lineWidth: 1))
+    }
+}
+
+struct SectionLabel: View {
+    let text: String
+    var body: some View {
+        Text(text).font(.system(size: 10, weight: .bold)).tracking(2.5).foregroundColor(K.dim)
+    }
+}
+
+/// A note line with a small icon: info (grey), warning (amber), error (red), ok (blue).
+struct Note: View {
+    enum Kind { case info, warn, error, ok }
+    let kind: Kind
+    let text: String
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: icon).foregroundColor(color).font(.system(size: 12, weight: .semibold)).padding(.top, 1)
+            Text(text).font(.system(size: 12)).foregroundColor(kind == .info ? K.dim : K.text)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+    var icon: String {
+        switch kind {
+        case .info: return "info.circle"
+        case .warn: return "exclamationmark.triangle.fill"
+        case .error: return "xmark.octagon.fill"
+        case .ok: return "checkmark.circle.fill"
+        }
+    }
+    var color: Color {
+        switch kind {
+        case .info: return K.faint
+        case .warn: return K.warn
+        case .error: return K.err
+        case .ok: return K.blue
+        }
+    }
+}
+
+// MARK: - Screens
+
+struct Header: View {
+    var body: some View {
+        HStack(spacing: 12) {
+            Logo(size: 40)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Komodo").font(.system(size: 20, weight: .heavy)).foregroundColor(.white)
+                Text("v1.0.0 · PRO PLUGS").font(.system(size: 10.5, weight: .semibold)).foregroundColor(K.faint)
             }
             Spacer()
         }
-        .padding(.top, 28)
-        .padding(.leading, 22)
-        .frame(width: 170, alignment: .leading)
     }
 }
 
 struct HostRow: View {
     let host: HostApp
-
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: icon)
-                .foregroundColor(color)
-                .font(.system(size: 15))
-                .frame(width: 18)
-            VStack(alignment: .leading, spacing: 2) {
+        HStack(spacing: 10) {
+            Image(systemName: icon).foregroundColor(color).font(.system(size: 13, weight: .semibold)).frame(width: 16)
+            VStack(alignment: .leading, spacing: 1) {
                 Text(host.name + (host.version.isEmpty ? "" : "  \(host.version)"))
-                    .fontWeight(.medium)
-                Text(note)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(.system(size: 12.5, weight: .bold)).foregroundColor(.white)
+                Text(note).font(.system(size: 11)).foregroundColor(K.dim)
             }
+            Spacer()
         }
     }
-
     var icon: String {
         if host.kind == .other { return "exclamationmark.circle" }
         return host.supported ? "checkmark.circle.fill" : "minus.circle"
     }
-
     var color: Color {
-        if host.kind == .other { return .orange }
-        return host.supported ? .green : .secondary
+        if host.kind == .other { return K.warn }
+        return host.supported ? K.blue : K.faint
     }
-
     var note: String {
-        if host.kind == .other { return "This isn't Premiere Pro or After Effects, so Komodo won't appear in it." }
-        if !host.supported { return "Older than CC 2015. Komodo won't load here." }
-        let what = host.supportsPanel ? "The LookMatch effect and panel" : "LookMatch"
-        return host.located ? "Located manually. \(what) will appear in it." : "\(what) will appear in it."
+        if host.kind == .other { return "Not Premiere Pro or After Effects: Komodo won't appear here." }
+        if !host.supported { return "Older than CC 2015: Komodo won't load here." }
+        let what = host.supportsPanel ? "Effect and panel" : "Effect"
+        return host.located ? "Located manually. \(what) will be installed." : "\(what) will be installed."
     }
 }
 
-struct WelcomeView: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Komodo by PRO PLUGS")
-                .font(.system(size: 22, weight: .semibold))
-            Text("Match the look of any reference still, then finish the shot with film print emulation, halation, bloom and grain.")
-                .fixedSize(horizontal: false, vertical: true)
-            Text("Works with Premiere Pro and After Effects CC 2015 to 2026. One plug-in covers every version, so there's nothing to choose. Premiere Pro 2025 and later also get the Komodo panel.")
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text("Quit Premiere Pro and After Effects before installing.")
-                .foregroundColor(.secondary)
-        }
-    }
-}
-
-struct AppsView: View {
+struct ReadyView: View {
     @ObservedObject var model: InstallerModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Adobe apps on this Mac")
-                .font(.system(size: 18, weight: .semibold))
-            if model.adobeHosts.isEmpty {
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: "info.circle")
-                        .foregroundColor(.secondary)
-                        .font(.system(size: 15))
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("No Premiere Pro or After Effects found on this Mac.")
-                            .fontWeight(.medium)
-                        Text("If one is installed somewhere else, locate it. Or continue without it: Komodo installs now and appears once you install Premiere Pro or After Effects.")
-                            .font(.callout)
-                            .foregroundColor(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
-            }
-            if model.hosts.count > 4 {
-                ScrollView { hostList }.frame(height: 170)
-            } else if !model.hosts.isEmpty {
-                hostList
-            }
-            Button("Locate…") { model.locate() }
-            Text("Komodo installs into Adobe's shared plug-in folder, which every version reads.")
-                .font(.caption)
-                .foregroundColor(.secondary)
-        }
-    }
-
-    var hostList: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ForEach(model.hosts) { HostRow(host: $0) }
+            Text("Match the look of any reference still, then finish it with film texture.")
+                .font(.system(size: 13)).foregroundColor(K.dim).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                SectionLabel(text: "ADOBE APPS ON THIS MAC")
+                Spacer()
+                Button("Locate…") { model.locate() }.buttonStyle(QuietButton())
+            }
+            Card {
+                if model.hosts.isEmpty {
+                    Note(kind: .info, text: "No Premiere Pro or After Effects found. You can still install: Komodo appears once you install one, or use Locate… if it's somewhere else.")
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 10) { ForEach(model.hosts) { HostRow(host: $0) } }
+                    }
+                    .frame(maxHeight: 128)
+                }
+            }
+            if !model.runningAdobe.isEmpty {
+                Note(kind: .warn, text: "Quit \(model.runningAdobe.joined(separator: " and ")) first, then click Install. Save your work before you quit.")
+            }
+            if model.installCancelled { Note(kind: .info, text: InstallError.cancelled.errorDescription!) }
+            if let error = model.installError { Note(kind: .error, text: error) }
+            Spacer(minLength: 0)
+            Button(model.installError == nil && !model.installCancelled ? "Install Komodo" : "Try Again") { model.install() }
+                .buttonStyle(PrimaryButton(enabled: model.runningAdobe.isEmpty))
+                .disabled(!model.runningAdobe.isEmpty)
+            Text("macOS will ask for your password to copy Komodo into Adobe's shared plug-in folder.")
+                .font(.system(size: 10.5)).foregroundColor(K.faint).frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
-struct InstallView: View {
-    @ObservedObject var model: InstallerModel
-
+struct InstallingView: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Install Komodo")
-                .font(.system(size: 18, weight: .semibold))
-            Text("Komodo will be copied to:")
-            Text(mediaCoreDir)
-                .font(.system(.callout, design: .monospaced))
-                .foregroundColor(.secondary)
-            Text("macOS will ask for your administrator password.")
-                .foregroundColor(.secondary)
-            if model.installing {
-                HStack(spacing: 8) {
-                    ProgressView().scaleEffect(0.6).frame(width: 16, height: 16)
-                    Text("Installing…")
-                }
-            }
-            if model.installCancelled {
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: "info.circle").foregroundColor(.secondary)
-                    Text(InstallError.cancelled.errorDescription!).foregroundColor(.secondary)
-                }
-            }
-            if let error = model.installError {
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: "xmark.octagon.fill").foregroundColor(.red)
-                    Text(error).fixedSize(horizontal: false, vertical: true)
-                }
-            }
+        VStack(spacing: 14) {
+            Spacer()
+            ProgressView().progressViewStyle(CircularProgressViewStyle(tint: K.blue)).scaleEffect(1.1)
+            Text("Installing Komodo…").font(.system(size: 15, weight: .bold)).foregroundColor(.white)
+            Text("Enter your password if macOS asks for it.").font(.system(size: 12)).foregroundColor(K.dim)
+            Spacer()
         }
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -417,25 +474,36 @@ struct DoneView: View {
     @ObservedObject var model: InstallerModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundColor(.green)
-                    .font(.system(size: 24))
-                Text("Komodo is installed")
-                    .font(.system(size: 18, weight: .semibold))
+                Image(systemName: "checkmark.circle.fill").foregroundColor(K.blue).font(.system(size: 26))
+                Text("Komodo is installed").font(.system(size: 18, weight: .heavy)).foregroundColor(.white)
             }
-            Text("Restart Premiere Pro, then find it under Effects > Video Effects > PRO PLUGS > Komodo.")
-                .fixedSize(horizontal: false, vertical: true)
-            Text("In After Effects: Effect > PRO PLUGS > Komodo.")
-                .foregroundColor(.secondary)
-            if let panel = model.panelResult, panel != .noPremiere {
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: panel == .installed ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                        .foregroundColor(panel == .installed ? .green : .orange)
-                    Text(panelNote(panel)).fixedSize(horizontal: false, vertical: true)
+            SectionLabel(text: "WHERE TO FIND IT")
+            Card {
+                VStack(alignment: .leading, spacing: 10) {
+                    step("1", "Open Premiere Pro.")
+                    step("2", "Effects > Video Effects > PRO PLUGS > Komodo, drag it onto a clip.")
+                    if model.panelResult == .installed {
+                        step("3", "Window > UXP Plugins > Komodo opens the panel. Drop a still, click Match.")
+                    }
                 }
             }
+            Text("In After Effects: Effect > PRO PLUGS > Komodo.").font(.system(size: 11.5)).foregroundColor(K.dim)
+            if let panel = model.panelResult, panel != .noPremiere, panel != .installed {
+                Note(kind: .warn, text: panelNote(panel))
+            }
+            Spacer(minLength: 0)
+            Button("Done") { NSApp.terminate(nil) }.buttonStyle(PrimaryButton())
+        }
+    }
+
+    func step(_ n: String, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(n).font(.system(size: 11, weight: .heavy)).foregroundColor(.white)
+                .frame(width: 20, height: 20).background(Circle().fill(K.blue))
+            Text(text).font(.system(size: 12.5)).foregroundColor(K.text).fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 2)
         }
     }
 }
@@ -454,48 +522,26 @@ struct InstallerView: View {
     @ObservedObject var model: InstallerModel
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                StepList(current: model.step)
-                Divider()
-                Group {
-                    switch model.step {
-                    case .welcome: WelcomeView()
-                    case .apps: AppsView(model: model)
-                    case .install: InstallView(model: model)
-                    case .done: DoneView(model: model)
-                    }
+        VStack(alignment: .leading, spacing: 16) {
+            Header()
+            Rectangle().fill(K.border).frame(height: 1)
+            Group {
+                switch model.step {
+                case .ready: ReadyView(model: model)
+                case .installing: InstallingView()
+                case .done: DoneView(model: model)
                 }
-                .padding(28)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-            Divider()
-            HStack {
-                Spacer()
-                if model.step != .welcome && model.step != .done {
-                    Button("Go Back") { model.step = InstallerModel.Step(rawValue: model.step.rawValue - 1)! }
-                        .disabled(model.installing)
-                }
-                primaryButton
-            }
-            .padding(16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(width: 640, height: 420)
-    }
-
-    @ViewBuilder var primaryButton: some View {
-        switch model.step {
-        case .welcome:
-            Button("Continue") { model.step = .apps }.keyboardShortcut(.defaultAction)
-        case .apps:
-            Button(model.adobeHosts.isEmpty ? "Continue Without" : "Continue") { model.step = .install }
-                .keyboardShortcut(.defaultAction)
-        case .install:
-            Button(model.installError == nil && !model.installCancelled ? "Install" : "Try Again") { model.install() }
-                .keyboardShortcut(.defaultAction)
-                .disabled(model.installing)
-        case .done:
-            Button("Done") { NSApp.terminate(nil) }.keyboardShortcut(.defaultAction)
+        .padding(.horizontal, 24)
+        .padding(.top, 34)  // clear of the window's close button (the title bar is hidden)
+        .padding(.bottom, 20)
+        .frame(width: K.width, height: K.height)
+        .background(K.bg)
+        .preferredColorScheme(.dark)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            model.refreshRunning()
         }
     }
 }
@@ -506,47 +552,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if let file = ProcessInfo.processInfo.environment["LOOKMATCH_INSTALLER_ICON"] {
+            renderIcon(to: URL(fileURLWithPath: file))
+            NSApp.terminate(nil)
+            return
+        }
         if let dir = ProcessInfo.processInfo.environment["LOOKMATCH_INSTALLER_SNAPSHOTS"] {
             renderSnapshots(to: URL(fileURLWithPath: dir))
             NSApp.terminate(nil)
             return
         }
-        // macOS 11 SwiftUI doesn't size the window to its content: fix it at 640x420, like Installer.app.
+        // Fixed size, dark, no title text: the window is Komodo's own surface edge to edge.
         DispatchQueue.main.async {
             for window in NSApp.windows {
                 window.styleMask.remove(.resizable)
-                window.setContentSize(NSSize(width: 640, height: 420))
+                window.titlebarAppearsTransparent = true
+                window.titleVisibility = .hidden
+                window.isMovableByWindowBackground = true
+                window.backgroundColor = NSColor(red: 35.0 / 255, green: 35.0 / 255, blue: 35.0 / 255, alpha: 1)
+                window.appearance = NSAppearance(named: .darkAqua)
+                window.setContentSize(NSSize(width: K.width, height: K.height))
                 window.center()
             }
         }
     }
 
-    /// Renders each step offscreen to PNG, for docs and visual checks (no window or permissions needed).
+    /// The app icon: the Komodo mark at 1024 px, inset like other macOS icons (build_app.sh makes the .icns).
+    func renderIcon(to file: URL) {
+        let view = NSHostingView(rootView: Logo(size: 824).frame(width: 1024, height: 1024))
+        view.frame = NSRect(x: 0, y: 0, width: 1024, height: 1024)
+        let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.backgroundColor = .clear
+        window.contentView = view
+        view.layoutSubtreeIfNeeded()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        try? rep.representation(using: .png, properties: [:])?.write(to: file)
+    }
+
+    /// Renders each screen offscreen to PNG, for docs and visual checks (no window or permissions needed).
     func renderSnapshots(to dir: URL) {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let model = InstallerModel()
-        var shots: [(String, () -> Void)] = [
-            ("1-welcome", { model.step = .welcome }),
-            ("2-apps", { model.step = .apps }),
-        ]
+        var shots: [(String, () -> Void)] = [("1-ready", { model.step = .ready })]
         if let locate = ProcessInfo.processInfo.environment["LOOKMATCH_INSTALLER_LOCATE"] {
             let paths = locate.split(separator: ":").map(String.init)
-            shots.append(("3-apps-located", { paths.forEach { model.add(located: URL(fileURLWithPath: $0)) } }))
+            shots.append(("2-ready-located", { paths.forEach { model.add(located: URL(fileURLWithPath: $0)) } }))
         }
         shots += [
-            ("4-install", { model.step = .install }),
-            ("5-installing", { model.installing = true }),
-            ("6-install-cancelled", { model.installing = false; model.installCancelled = true }),
-            ("7-done", { model.installCancelled = false; model.panelResult = .installed; model.step = .done }),
+            ("3-premiere-open", { model.runningAdobe = ["Adobe Premiere Pro 2026"] }),
+            ("4-installing", { model.runningAdobe = []; model.step = .installing }),
+            ("5-cancelled", { model.installCancelled = true; model.step = .ready }),
+            ("6-done", { model.installCancelled = false; model.panelResult = .installed; model.step = .done }),
         ]
         for (name, apply) in shots {
             apply()
             let view = NSHostingView(rootView: InstallerView(model: model))
-            view.frame = NSRect(x: 0, y: 0, width: 640, height: 420)
+            view.frame = NSRect(x: 0, y: 0, width: K.width, height: K.height)
             let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
+            window.appearance = NSAppearance(named: .darkAqua)
             window.contentView = view
             view.layoutSubtreeIfNeeded()
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
             guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
             view.cacheDisplay(in: view.bounds, to: rep)
             try? rep.representation(using: .png, properties: [:])?.write(to: dir.appendingPathComponent("\(name).png"))
@@ -555,14 +623,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 @main
-struct LookMatchInstallerApp: App {
+struct KomodoInstallerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var model = InstallerModel()
 
     var body: some Scene {
-        WindowGroup("Install LookMatch") {
+        WindowGroup("Install Komodo") {
             InstallerView(model: model)
         }
+        .windowStyle(HiddenTitleBarWindowStyle())
         .commands { CommandGroup(replacing: .newItem) {} }
     }
 }
