@@ -200,13 +200,19 @@ function liveSwitch(id, param, after) {
 }
 liveSwitch("autoSkinSw", P.autoSkin);
 liveSwitch("bandSw", P.fixBanding);
-// Before / after: the effect's split view (original on the left of the line)
-$("beforeAfter").addEventListener("click", () => {
-  setOn("baSw", !isOn("baSw"));
-  live.set(P.split, isOn("baSw"));
-  if (isOn("baSw")) { live.set(P.splitPos, 50); live.set(P.splitAngle, 0); }
-  status(isOn("baSw") ? "Before / after: original on the left of the line" : "Before / after off");
-});
+// Before / after: After (the grade), Split (original left of the line) or Before (the whole frame
+// original: the split at 100%, where the effect draws no line). Uses the effect's split view.
+const VIEWS = { after: { [P.split]: false }, split: { [P.split]: true, [P.splitPos]: 50, [P.splitAngle]: 0 },
+                before: { [P.split]: true, [P.splitPos]: 100, [P.splitAngle]: 0 } };
+function showView(view) {
+  for (const b of document.querySelectorAll("[data-view]")) b.classList.toggle("on", b.dataset.view === view);
+}
+for (const b of document.querySelectorAll("[data-view]")) {
+  b.addEventListener("click", () => {
+    showView(b.dataset.view);
+    for (const [k, v] of Object.entries(VIEWS[b.dataset.view])) live.set(k, v);
+  });
+}
 
 // Source Format picker: 1 = Auto, then the effect's popup order (applies live too)
 SOURCE_FORMATS.forEach((name, i) => {
@@ -419,7 +425,8 @@ function showParams(params) {
   for (const [name, s] of sliders) if (typeof params[name] === "number") s.set(params[name]);
   if (params[P.autoSkin] !== undefined) setOn("autoSkinSw", params[P.autoSkin]);
   if (params[P.fixBanding] !== undefined) setOn("bandSw", params[P.fixBanding]);
-  if (params[P.split] !== undefined) setOn("baSw", params[P.split] && params[P.splitPos] > 0 && params[P.splitPos] < 100);
+  if (params[P.split] !== undefined)
+    showView(!params[P.split] || params[P.splitPos] <= 0 ? "after" : params[P.splitPos] >= 100 ? "before" : "split");
   if (params[P.sourceFormat] !== undefined) {
     $("sourceFormat").selectedIndex = Math.max(0, params[P.sourceFormat] - 1);
   }
@@ -529,7 +536,7 @@ $("selfTest").addEventListener("click", () => run("Self-test", async () => {
     require("./lib/agent.js").startAgent(fs, DATA_DIR, bridge, log, {
       // UI driving for tests: only these elements, only set value / click
       fields: ["lookName"],  // plus tab switching (uiTab)
-      buttons: ["matchBtn", "beforeAfter", "saveLook", "selfTest", "probe", "showLog"],
+      buttons: ["matchBtn", "saveLook", "selfTest", "probe", "showLog"],
       status: () => ({ text: $("statusText").textContent, kind: $("status").className }),
       savedLooks: () => library.looks.map((l) => l.name),
       element: (id) => document.getElementById(id),

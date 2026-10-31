@@ -132,3 +132,9 @@ section[hidden] { display: none; }
 .chip:hover { border-color: #8b5cf6; color: #ffffff; }
 .console { background-color: #0d0a16; border: 1px solid #241a3d; border-radius: 10px; color: #a5a0b8; padding: 8px; font-size: 10px;
            white-space: pre-wrap; max-height: 360px; overflow: auto; }
+
+/* Before / after: three-way switch for the Program monitor */
+.seg { display: flex; padding: 3px; gap: 3px; border-radius: 12px; border: 1px solid #241a3d; background-color: #0d0a16; }
+.seg-btn { flex: 1 1 0; text-align: center; padding: 7px 0; border-radius: 9px; color: #a5a0b8; font-weight: 700; cursor: pointer; }
+.seg-btn:hover { color: #ffffff; }
+.seg-btn.on { background-color: #7c3aed; color: #ffffff; }
