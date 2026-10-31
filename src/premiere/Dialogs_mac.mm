@@ -46,6 +46,8 @@ bool LM_SaveCubeDialog(char* pathOut, int capacity) {
 // osascript off the main thread: a synchronous click from inside the effect call would wait on the
 // very main thread it is blocking. macOS asks once to let Premiere use Accessibility; until it is
 // allowed (or if the menu isn't there) the user gets a note saying where the panel lives.
+// The menu item is a toggle (ticked while the panel is open), so an open panel is closed and reopened,
+// which brings it to the front even when it sits in a tab behind others.
 void LM_OpenKomodoPanel() {
     NSString* script = [NSString stringWithFormat:
         @"tell application \"System Events\"\n"
@@ -53,11 +55,15 @@ void LM_OpenKomodoPanel() {
          "  set frontmost of p to true\n"
          "  tell p\n"
          "    set k to menu item \"Komodo\" of menu 1 of menu item \"UXP Plugins\" of menu 1 of menu bar item \"Window\" of menu bar 1\n"
+         "    set shown to false\n"
          "    try\n"
-         "      click menu item 1 of menu 1 of k\n"
-         "    on error\n"
-         "      click k\n"
+         "      set shown to (value of attribute \"AXMenuItemMarkChar\" of k) is not missing value\n"
          "    end try\n"
+         "    click k\n"
+         "    if shown then\n"
+         "      delay 0.3\n"
+         "      click k\n"
+         "    end if\n"
          "  end tell\n"
          "end tell\n",
         int(getpid())];
