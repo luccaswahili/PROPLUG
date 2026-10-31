@@ -18,10 +18,15 @@ The Premiere effect calls it when it builds a match. The CPU and GPU paths both 
    LogC3 / AWG3, LogC4 / AWG4, Canon Log 3 / Cinema Gamut, V-Log / V-Gamut, F-Log and F-Log2 / F-Gamut,
    Apple Log / Rec.2020, Blackmagic Film Gen5 / Wide Gamut, RED Log3G10 / REDWideGamutRGB, DJI D-Log / D-Gamut and
    DaVinci Intermediate / DaVinci Wide Gamut, plus Rec.709 and sRGB. Gamut matrices are derived from the published primaries; the AWG3 one is checked against
-   ARRI's matrix in `engine_tests`. Which log curve a frame uses can't be told from the picture: the curves differ by
-   about an exposure and contrast change. So a detected log clip is decoded with S-Log3 unless metadata, the file
-   name or the user says otherwise, and the following steps absorb most of the difference. S-Log3 sits in the middle
-   of the curve family; F-Log as the fallback raised the harness mean from 1.48 to 1.92 ΔE00.
+   ARRI's matrix in `engine_tests`. Which log curve a frame uses is hard to tell from the picture: the curves differ by
+   about an exposure and contrast change. Metadata, the file name or the user decide first. Otherwise `rankLogCurves`
+   scores every curve on the full frame: black floor, highlight clip level, how well the decode fits shot and read
+   noise, exposure and skin hue. A curve needs 80% of the score to be used, and the panel shows it ("F-Log 92%").
+   Below that, or if it doesn't win on most frames, the default is F-Log (`kGuessedLog`). It takes several frames, with
+   their scores averaged, not added. On noisy synthetic scenes of 12 curves it is right on 16 of 48 and never wrong,
+   and falls back on the rest. Real clips have no ground truth. Uncalibrated it read Artlist clip 587966 as Canon Log
+   3 at 92%, though F-Log puts skin on the skin line (44 deg against 53) and clips less. It now falls back on all five
+   real clips tried, and the Artlist file name rule still comes first.
    - **Artlist "LOG" clips** are re-exported through DaVinci Resolve as ProRes 422 HQ, tagged Rec.709, with no
      camera make, model or log tag. On six of them, F-Log reads closest to normal exposure: mean |exposure| 0.62 stops,
      against 0.91 for V-Log, 0.92 for S-Log3, 1.03 for LogC3 and Canon Log 3, and 1.41 for DaVinci Intermediate. That
@@ -431,17 +436,16 @@ still miss the target:
   ≤ 0.2 / 0.7.
 - **Clipped extremes** (+2 stops, 3200 K): information is gone.
 
-## Skin colour smoothing
+## Skin tone evening
 
-Colour blotches in skin (pink and grey patches a few pores wide) are in the clip, and a lift makes them easier to see.
-With a match on, the effect evens them out in the source code values, before the grade, on the CPU and the GPU alike:
+Pink and grey patches in skin are in the clip: they stay put from frame to frame, and brighter bumps are greyer. A lift
+makes them easier to see. With a match on, **Skin Evening** (default 50%) moves each skin pixel's colour part of the way
+to the skin around it, in the source code values before the grade, on the CPU and the GPU alike:
 
-- Each skin pixel's colour (the pixel minus its mean of R, G and B) takes the average of 24 neighbours on a disc of
-  24 px at 8K, scaled with frame height. Brightness doesn't change, so pores and texture stay.
-- A neighbour counts only if it is skin, close in brightness and close in colour, so lips, eyes, lashes, hair and a
-  different backdrop don't mix in. The mask is warm, between lips' red and wood's yellow, with a little colour.
-- On portrait 6439240, patch-sized colour variation on the cheek goes from 3.8 % to 2.8 % (plain decode 3.0 %), and
-  fine brightness detail stays within 0.3 %.
-- Where the white balance backed off (`skinLike`), skin takes 13 % less saturation, because the tone lifts it.
+- Colour here is the pixel minus its mean of R, G and B, so brightness doesn't change and pores and texture stay.
+- The average is over 24 neighbours on a disc of 240 px at 8K, scaled with frame height. A neighbour counts only if it
+  is skin, close in brightness and close in colour.
+- The mask is by colour only: warm, between lips' red and wood's yellow, with a little colour. A flat beige backdrop
+  inside it evens toward itself, so it hardly moves.
 
 The match cache key includes a hash of `src/core`, so an engine change misses the cache.

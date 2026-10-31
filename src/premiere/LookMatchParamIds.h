@@ -76,6 +76,7 @@ enum ParamId {
     // after the source group (appended, so projects saved before it keep their parameter layout)
     P_MATCH_CONTRAST,   // %: final tone match of the graded result to the reference's levels
     P_FIX_BANDING,      // checkbox: deband the source (skies), off by default
+    P_SKIN_EVENING,     // %: pull skin's colour toward the skin around it
     P_NUM_PARAMS
 };
 
@@ -90,5 +91,6 @@ enum DiskId {
     D_COMPARE_TOPIC, D_SPLIT, D_SPLIT_POS, D_SPLIT_ANGLE, D_COMPARE_TOPIC_END,
     D_SOURCE_TOPIC, D_SOURCE_FORMAT, D_NORM_EXPOSURE, D_NORM_WB, D_NORM_CONTRAST, D_LOOK_STRENGTH, D_SOURCE_TOPIC_END,
     D_MATCH_CONTRAST,
-    D_FIX_BANDING
+    D_FIX_BANDING,
+    D_SKIN_EVENING
 };

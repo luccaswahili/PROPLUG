@@ -21,7 +21,8 @@ struct LookMatchGPUParams {
     float debandThreshold, debandDither;
     int debandNearRadius;
     float debandCoring;
-    int skinRadius;  // lm::SkinSmoothParams
+    int skinRadius;  // lm::SkinEvenParams
+    float skinAmount;
 };
 
 // Kernel parameters for one frame from the engine's fast-path constants and the split settings
@@ -56,6 +57,7 @@ inline LookMatchGPUParams makeGPUParams(const lm::FinishParams& f, int pitch, in
     p.debandNearRadius = f.deband.nearRadius;
     p.debandCoring = f.deband.coring;
     p.skinRadius = f.skin.radius;
+    p.skinAmount = f.skin.amount;
     return p;
 }
 
@@ -78,7 +80,8 @@ struct Params {
     float debandThreshold, debandDither;
     int debandNearRadius;
     float debandCoring;
-    int skinRadius;  // lm::SkinSmoothParams
+    int skinRadius;  // lm::SkinEvenParams
+    float skinAmount;
 };
 
 // --- same hash and noise as the CPU engine ---
@@ -134,7 +137,7 @@ static float3 deband(device const T* src, constant Params& p, int x, int y) {
     return o + float3(back + dith);
 }
 
-// --- skin colour smoothing, as lm::skinSmoothAt (same mask, same samples) ---
+// --- skin tone evening, as lm::skinEvenAt (same mask, same samples) ---
 constant int kSkinSamples = 24;  // = lm::kSkinSamples
 constant float2 kSkinDisc[kSkinSamples] = {
     {0.1443f, 0.0000f}, {-0.1843f, 0.1689f}, {0.0282f, -0.3215f}, {0.2324f, 0.3031f},
@@ -149,11 +152,11 @@ static float skinMask(float3 c) {
     float d1 = c.x - c.y, d2 = c.y - c.z, sat = c.x - c.z;
     if (d1 <= 0 || d2 <= 0) return 0;
     float hue = d2 / (d1 + d2), y = (c.x + c.y + c.z) / 3;
-    return step01(0.22f, 0.29f, hue) * (1 - step01(0.50f, 0.58f, hue)) * step01(0.012f, 0.03f, sat) * (1 - step01(0.16f, 0.22f, sat)) *
+    return step01(0.22f, 0.29f, hue) * (1 - step01(0.46f, 0.52f, hue)) * step01(0.012f, 0.03f, sat) * (1 - step01(0.16f, 0.22f, sat)) *
            step01(0.10f, 0.18f, y) * (1 - step01(0.90f, 0.97f, y));
 }
 template <typename T>
-static float3 skinSmooth(device const T* src, constant Params& p, int x, int y, float3 base) {
+static float3 skinEven(device const T* src, constant Params& p, int x, int y, float3 base) {
     if (p.skinRadius <= 0) return float3(0);
     float3 c = rgbAt(src, p, x, y);
     float m = skinMask(c);
@@ -171,13 +174,13 @@ static float3 skinSmooth(device const T* src, constant Params& p, int x, int y, 
         sum += vq * w;
         wsum += w;
     }
-    return (sum * (1.0f / wsum) - (base - float3((base.x + base.y + base.z) / 3))) * m;
+    return (sum * (1.0f / wsum) - (base - float3((base.x + base.y + base.z) / 3))) * (m * p.skinAmount);
 }
 
 template <typename T>
 static float3 sourceAt(device const T* src, constant Params& p, int x, int y) {
     float3 c = deband(src, p, x, y);
-    return c + skinSmooth(src, p, x, y, c);
+    return c + skinEven(src, p, x, y, c);
 }
 
 // --- tetrahedral 3D LUT, red fastest, 3 floats per entry ---

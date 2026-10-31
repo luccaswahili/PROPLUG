@@ -43,9 +43,9 @@ struct Params {
     // smooth the source's quantisation steps (compressed 8/10-bit gradients such as skies) before the
     // grade expands them into contour rings; 0 = off (the camera's own texture and grain stay), 1 = on
     float deband = 0;
-    // even out low-frequency colour blotches on skin (colour only, brightness and pores untouched); runs
-    // with a match, 0 = off, 1 = on
-    float skinSmooth = 1;
+    // pull skin's colour toward the skin tone around it (colour only, brightness and pores untouched); runs
+    // with a match, 0..1
+    float skinEven = 0.5f;
 };
 
 // Deband constants for one frame size (shared with the GPU kernel).
@@ -65,17 +65,18 @@ DebandParams debandParams(float amount, int height);
 // texture kept above a grain-sized coring level, plus a little dither, the same on all channels.
 Vec3 debandAt(const float* data, int width, int height, int stride, int x, int y, const DebandParams& d);
 
-// Skin colour smoothing, one frame size (shared with the GPU kernel).
+// Skin tone evening, one frame size (shared with the GPU kernel).
 constexpr int kSkinSamples = 24;  // neighbours on a golden-angle disc
-struct SkinSmoothParams {
+struct SkinEvenParams {
     int radius = 0;  // disc radius in pixels, 0 = off
+    float amount = 0;
 };
-SkinSmoothParams skinSmoothParams(float amount, int height);
-// What to add to `base` (the code value of pixel (x, y), debanded if deband is on) so its colour takes the average of the skin around it. The
+SkinEvenParams skinEvenParams(float amount, int height);
+// What to add to `base` (the code value of pixel (x, y), debanded if deband is on) so its colour moves toward the average of the skin around it. The
 // average is of the colour alone (the pixel minus its mean of R, G, B), so brightness and texture stay, and
 // only over neighbours that are skin, as bright and as coloured as the pixel: nothing crosses into lips,
 // eyes, hair or a backdrop. Zero away from skin.
-Vec3 skinSmoothAt(const float* data, int width, int height, int stride, int x, int y, Vec3 base, const SkinSmoothParams& s);
+Vec3 skinEvenAt(const float* data, int width, int height, int stride, int x, int y, Vec3 base, const SkinEvenParams& s);
 
 struct ImageView {  // interleaved float RGBA, rows may be padded
     float* data;
@@ -91,7 +92,7 @@ struct FinishParams {
     float cx = 0, cy = 0, invDiag = 0;
     int frame = 0;
     DebandParams deband;
-    SkinSmoothParams skin;
+    SkinEvenParams skin;
 };
 
 class Engine {

@@ -258,6 +258,7 @@ int transferFromName(const std::string& text) {
     auto has = [&](const char* k) { return s.find(k) != std::string::npos; };
     if (has("s-log3") || has("slog3") || has("s-log 3") || has("s-gamut3")) return int(Transfer::SLog3);
     // Artlist re-exports its "LOG" clips through Resolve, camera curve and tags lost; F-Log fits them best
+    // Artlist re-exports its "LOG" clips through Resolve, camera curve and tags lost; F-Log fits them best
     if (has("artlist") && has("log")) return int(Transfer::FLog);
     if (has("logc4") || has("log c4") || has("awg4")) return int(Transfer::LogC4);
     if (has("logc") || has("log c") || has("awg3") || has("alexa")) return int(Transfer::LogC3);
@@ -398,9 +399,7 @@ TransferGuess detectTransfer(const Image& img) {
     std::snprintf(buf, sizeof buf, "floor %.3f top %.3f spread %.3f chroma %.3f", floor, top, spread, sat);
     g.why = buf;
     if (g.logScore < 0.55f) return g;
-    // Which log can't be told from a picture: the curves differ by about an exposure and a contrast
-    // change. S-Log3 sits in the middle of the family and stands in unless metadata, a file name (an
-    // Artlist "LOG" clip reads as F-Log) or the user says otherwise.
+    // Which log is rankLogCurves' job, on the full frame: here, the default stands in.
     g.transfer = kGuessedLog;
     return g;
 }
@@ -408,10 +407,10 @@ TransferGuess detectTransfer(const Image& img) {
 std::string SceneAnalysis::json() const {
     char buf[512];
     std::snprintf(buf, sizeof buf,
-                  "{\"transfer\":\"%s\",\"transferIndex\":%d,\"log\":%s,\"logScore\":%.2f,\"fromUser\":%s,"
+                  "{\"transfer\":\"%s\",\"guess\":\"%s\",\"transferIndex\":%d,\"log\":%s,\"logScore\":%.2f,\"fromUser\":%s,"
                   "\"exposure\":%.2f,\"cct\":%.0f,\"tint\":%.1f,\"contrast\":%.2f,\"saturation\":%.3f,"
                   "\"blackClip\":%.3f,\"whiteClip\":%.3f,\"neutralShare\":%.3f}",
-                  transferShortName(transfer), int(transfer), isLog(transfer) ? "true" : "false", logScore,
+                  transferShortName(transfer), transferGuess.c_str(), int(transfer), isLog(transfer) ? "true" : "false", logScore,
                   transferFromUser ? "true" : "false", exposure, cct, tint, contrast, saturation, blackClip, whiteClip,
                   neutralShare);
     return buf;
@@ -516,6 +515,147 @@ Vec3 estimateIlluminant(const Image& img, const std::vector<Vec3>& lin, const st
     return norm(out);
 }
 
+
+std::string LogRank::label() const {
+    char b[64];
+    if (detected) std::snprintf(b, sizeof b, "%s %d%%", transferShortName(transfer), int(confidence * 100 + 0.5f));
+    else std::snprintf(b, sizeof b, "%s (default)", transferShortName(transfer));
+    return b;
+}
+
+namespace {
+struct NoisePoint { float level, sd; };
+// grain by level: the quietest 8x8 blocks of each brightness band are flat picture, so what is left in them is noise
+std::vector<NoisePoint> noiseProfile(const Image& f) {
+    std::vector<std::vector<float>> bands(24);
+    for (int y = 0; y + 8 <= f.height; y += 8)
+        for (int x = 0; x + 8 <= f.width; x += 8) {
+            double s = 0, q = 0;
+            for (int j = 0; j < 8; ++j)
+                for (int i = 0; i < 8; ++i) { const Vec3& c = f.px[size_t(y + j) * f.width + x + i]; s += c.g; q += c.g * c.g; }
+            const float m = float(s / 64), v = float(std::max(q / 64 - double(m) * m, 0.0));
+            bands[std::clamp(int(m * 24), 0, 23)].push_back(v);
+        }
+    std::vector<NoisePoint> out;
+    for (int b = 0; b < 24; ++b) {
+        if (bands[b].size() < 40) continue;
+        const float v = quantile(bands[b], 0.1f);
+        if (v > 0) out.push_back({(b + 0.5f) / 24, std::sqrt(v)});
+    }
+    return out;
+}
+// how far a curve's decode is from shot + read noise (variance = a * linear + b), in log variance; negative: no evidence
+float noiseMisfit(Transfer t, const std::vector<NoisePoint>& pts) {
+    if (pts.size() < 4) return -1;
+    std::vector<std::pair<float, float>> xy;
+    for (const NoisePoint& p : pts) {
+        const float e = 0.01f, l0 = decodeToRec709(t, Vec3(p.level, p.level, p.level), false).g,
+                    l1 = decodeToRec709(t, Vec3(p.level + e, p.level + e, p.level + e), false).g;
+        const float sd = p.sd * (l1 - l0) / e;
+        if (l0 > 1e-4f && sd > 0) xy.push_back({l0, sd * sd});
+    }
+    if (xy.size() < 4) return -1;
+    double sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (auto [x, v] : xy) { const double w = 1 / (v * v); sx += w * x; sy += w * v; sxx += w * x * x; sxy += w * x * v; }
+    double sw = 0;
+    for (auto [x, v] : xy) sw += 1 / (double(v) * v);
+    const double det = sw * sxx - sx * sx;
+    if (std::abs(det) < 1e-30) return -1;
+    const double a = std::max((sw * sxy - sx * sy) / det, 0.0), b = std::max((sxx * sy - sx * sxy) / det, 1e-14);
+    double e = 0;
+    for (auto [x, v] : xy) { const double d = std::log2(v / (a * x + b)); e += d * d; }
+    return float(std::sqrt(e / xy.size()));
+}
+// highlights piled up against one code: the sensor's clip level, or -1
+float clipCode(const Image& f) {
+    std::vector<float> h(512, 0);
+    for (const Vec3& c : f.px) h[std::clamp(int(std::max({c.r, c.g, c.b}) * 511), 0, 511)] += 1;
+    for (int i = 509; i > 300; --i) {
+        const float tail = std::accumulate(h.begin() + i + 2, h.end(), 0.0f);
+        if (h[i] + h[i + 1] > 0.002f * f.px.size() && tail < 0.1f * (h[i] + h[i + 1]) && h[i] > 4 * (h[i - 4] + 1)) return (i + 0.5f) / 511;
+    }
+    return -1;
+}
+// sensor clip, in stops over middle grey, by the camera family that uses the curve (ballpark)
+float clipStops(Transfer t) {
+    switch (t) {
+        case Transfer::SLog3: return 6.0f; case Transfer::LogC3: return 7.4f; case Transfer::LogC4: return 10.0f;
+        case Transfer::CLog3: return 5.8f; case Transfer::VLog: return 6.2f; case Transfer::FLog: return 6.1f;
+        case Transfer::FLog2: return 7.0f; case Transfer::AppleLog: return 6.4f; case Transfer::BMDFilm5: return 7.0f;
+        case Transfer::Log3G10: return 8.0f; case Transfer::DLog: return 6.3f; default: return 7.0f;
+    }
+}
+constexpr double kLogTemperature = 2;  // calibrated on real clips: at 1, clip 587966 read Canon Log 3 at 92%, and F-Log fits it better
+
+// log score of each log curve on one frame
+static std::vector<std::pair<Transfer, double>> scoreFrame(const Image& f) {
+    std::vector<std::pair<Transfer, double>> out;
+    if (f.px.empty()) return out;
+    std::vector<float> lows;
+    for (size_t i = 0; i < f.px.size(); i += 7) lows.push_back(std::min({f.px[i].r, f.px[i].g, f.px[i].b}));
+    const float floorCode = quantile(lows, 0.002f), clip = clipCode(f);
+    const std::vector<NoisePoint> noise = noiseProfile(f);
+    const Image small = downsample(f, 240);
+    for (int ti = 0; ti < kTransferCount; ++ti) {
+        const Transfer t = Transfer(ti);
+        if (!isLog(t)) continue;
+        double ll = 0;
+        // no real picture sits below the curve's black; a floor far above it says nothing
+        const float black = encodeFromRec709(t, Vec3(0, 0, 0)).g;
+        if (floorCode < black - 0.015f) ll -= ((black - floorCode) / 0.02f) * ((black - floorCode) / 0.02f);
+        else if (floorCode < black + 0.03f) ll += 1;
+        if (clip > 0) {
+            const float g = 0.18f * std::exp2(clipStops(t)), c = encodeFromRec709(t, Vec3(g, g, g)).g, d = (clip - c) / 0.025f;
+            ll -= 0.5 * std::min(d * d, 16.0f);
+        }
+        const float mis = noiseMisfit(t, noise);
+        if (mis >= 0) ll -= 6.0f * mis * mis;
+        // exposed sensibly, and skin on the skin line
+        std::vector<float> stops;
+        double sx = 0, sy = 0;
+        for (const Vec3& c : small.px) {
+            const Vec3 l = decodeToRec709(t, c);
+            const float y = luma709(Vec3(std::max(l.r, 0.0f), std::max(l.g, 0.0f), std::max(l.b, 0.0f)));
+            if (y > 1e-4f) stops.push_back(std::log2(y / 0.18f));
+            const Vec3 lab = rgbToOklab({rec709Encode(clamp01(l.r)), rec709Encode(clamp01(l.g)), rec709Encode(clamp01(l.b))});
+            const float C = std::hypot(lab.g, lab.b), h = std::atan2(lab.b, lab.g) * 57.29578f;
+            if (C > 0.03f && h > 10 && h < 90) { sx += C * std::cos(h / 57.29578f); sy += C * std::sin(h / 57.29578f); }
+        }
+        if (!stops.empty()) { const float e = quantile(stops, 0.5f) + 0.5f; ll -= 0.5f * (e / 1.5f) * (e / 1.5f); }
+        if (sx > 0) { const float h = std::atan2(float(sy), float(sx)) * 57.29578f, d = (h - 45) / 18; ll -= 0.5f * d * d; }
+        out.push_back({t, ll});
+    }
+    return out;
+}
+}  // namespace
+
+LogRank rankLogCurves(const std::vector<const Image*>& frames) {
+    LogRank r;
+    std::vector<double> total(kTransferCount, 0);
+    std::vector<int> wins(kTransferCount, 0);
+    int used = 0;
+    for (const Image* f : frames) {
+        const auto s = scoreFrame(*f);
+        if (s.empty()) continue;
+        ++used;
+        size_t best = 0;
+        for (size_t i = 0; i < s.size(); ++i) { total[int(s[i].first)] += s[i].second; if (s[i].second > s[best].second) best = i; }
+        ++wins[int(s[best].first)];
+    }
+    if (!used) return r;
+    // the mean over frames, not the sum: frames of one clip share their mistakes, so more of them mustn't breed certainty
+    double top = -1e30, sum = 0;
+    std::vector<std::pair<Transfer, float>> cand;
+    for (int t = 0; t < kTransferCount; ++t) if (isLog(Transfer(t))) top = std::max(top, total[t] / used);
+    for (int t = 0; t < kTransferCount; ++t) if (isLog(Transfer(t))) { const double p = std::exp((total[t] / used - top) / kLogTemperature); cand.push_back({Transfer(t), float(p)}); sum += p; }
+    for (auto& [t, p] : cand) p = float(p / sum);
+    std::sort(cand.begin(), cand.end(), [](auto& a, auto& b) { return a.second > b.second; });
+    r.ranked = cand;
+    r.confidence = cand[0].second;
+    // none wrong before many right: a curve has to stand out overall and win on most frames, else the default
+    if (r.confidence >= 0.8f && wins[int(cand[0].first)] * 3 >= used * 2) { r.transfer = cand[0].first; r.detected = true; }
+    return r;
+}
 
 SceneAnalysis analyseScene(const Image& in, const AnalysisOptions& opt) {
     SceneAnalysis a;

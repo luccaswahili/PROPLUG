@@ -362,7 +362,7 @@ int main() {
     }
 
     {
-        // Skin colour smoothing: blotches go, brightness and whatever isn't skin stay.
+        // Skin tone evening: blotches go, brightness and whatever isn't skin stay.
         const int w = 400, h = 200;
         std::vector<float> a(size_t(w) * h * 4), b;
         for (int y = 0; y < h; ++y)
@@ -374,14 +374,14 @@ int main() {
                                                  : Vec3(0.12f, 0.12f, 0.13f);                           // dark lashes or hair
                 p[0] = c.r; p[1] = c.g; p[2] = c.b; p[3] = 1;
             }
-        const SkinSmoothParams sp = skinSmoothParams(1, 2160);
-        CHECK(sp.radius == 12 && skinSmoothParams(1, 1080).radius == 6 && skinSmoothParams(1, 4320).radius == 24 && skinSmoothParams(0, 2160).radius == 0,
-              "skin smoothing radius %d", sp.radius);
+        const SkinEvenParams sp = skinEvenParams(1, 2160);
+        CHECK(sp.radius == 120 && skinEvenParams(1, 1080).radius == 60 && skinEvenParams(1, 4320).radius == 240 && skinEvenParams(0, 2160).radius == 0,
+              "skin evening radius %d", sp.radius);
         double before = 0, after = 0, luma = 0, bleed = 0;
         for (int y = 30; y < 170; ++y)
             for (int x = 0; x < 300; ++x) {
                 const float* p = a.data() + (size_t(y) * w + x) * 4;
-                const Vec3 d = skinSmoothAt(a.data(), w, h, w * 4, x, y, Vec3(p[0], p[1], p[2]), sp);
+                const Vec3 d = skinEvenAt(a.data(), w, h, w * 4, x, y, Vec3(p[0], p[1], p[2]), sp);
                 luma = std::max(luma, double(std::abs(d.r + d.g + d.b)));
                 if (x >= 200) { bleed = std::max({bleed, double(std::abs(d.r)), double(std::abs(d.g)), double(std::abs(d.b))}); continue; }
                 if (x < 30 || x > 170) continue;
@@ -389,13 +389,47 @@ int main() {
                 before += (p[0] - m) * (p[0] - m); after += (p[0] + d.r - m) * (p[0] + d.r - m);
             }
         const double spreadB = before, spreadA = after;
-        std::printf("skin smoothing: red-vs-mean energy %.3f -> %.3f, brightness moved %.6f, lips and lashes moved %.6f\n", spreadB, spreadA, luma, bleed);
-        CHECK(luma < 1e-4, "skin smoothing moved brightness by %.6f", luma);
+        std::printf("skin evening: red-vs-mean energy %.3f -> %.3f, brightness moved %.6f, lips and lashes moved %.6f\n", spreadB, spreadA, luma, bleed);
+        CHECK(luma < 1e-4, "skin evening moved brightness by %.6f", luma);
         CHECK(bleed < 1e-4, "skin colour bled into lips or lashes: %.6f", bleed);
         // a different engine misses the match cache
         Image f; f.width = f.height = 4; f.px.assign(16, Vec3(0.5f, 0.5f, 0.5f));
         SceneMatchOptions ko;
         CHECK(lmpanel::matchCacheKey({}, f, ko, 2, "engine-a") != lmpanel::matchCacheKey({}, f, ko, 2, "engine-b"), "an engine change must change the cache key");
+    }
+
+    {
+        // The log detector: each curve, encoded from a noisy linear scene with black, skin, greys and clipped highlights.
+        std::vector<Transfer> curves;
+        for (int t = 0; t < kTransferCount; ++t) if (isLog(Transfer(t))) curves.push_back(Transfer(t));
+        int right = 0, fellBack = 0, total = 0;
+        for (Transfer t : curves) {
+            int got[kTransferCount] = {0}, back = 0;
+            for (int seed = 0; seed < 4; ++seed) {
+                std::mt19937 rng(seed * 31 + int(t));
+                std::normal_distribution<float> g(0, 1);
+                Image f; f.width = 960; f.height = 540;
+                for (int y = 0; y < f.height; ++y)
+                    for (int x = 0; x < f.width; ++x) {
+                        const int band = x / 80;
+                        const float grey = 0.004f * std::exp2(float(band));          // greys from black up past clip
+                        Vec3 c = y < 180 ? Vec3(grey, grey, grey) : y < 360 ? Vec3(grey * 1.1f, grey * 0.8f, grey * 0.65f) : Vec3(grey * 0.7f, grey * 0.9f, grey * 1.15f);
+                        if (x < 16) c = Vec3(0, 0, 0);
+                        const float a = 0.0006f + 0.0002f * seed, b = 2e-6f;
+                        for (int ch = 0; ch < 3; ++ch) { float& v = ch == 0 ? c.r : ch == 1 ? c.g : c.b; v = std::max(v + g(rng) * std::sqrt(a * v + b), 0.0f); }
+                        const float top = 0.18f * std::exp2(6.0f);
+                        f.px.push_back(encodeFromRec709(t, Vec3(std::min(c.r, top), std::min(c.g, top), std::min(c.b, top))));
+                    }
+                const LogRank r = rankLogCurves({&f});
+                if (r.detected) ++got[int(r.transfer)]; else ++back;
+                right += r.detected && r.transfer == t; fellBack += !r.detected; ++total;
+            }
+            std::printf("log detector, %-10s:", transferShortName(t));
+            for (Transfer u : curves) if (got[int(u)]) std::printf(" %s x%d", transferShortName(u), got[int(u)]);
+            if (back) std::printf(" default x%d", back);
+            std::printf("\n");
+        }
+        std::printf("log detector: %d of %d right, %d fell back to the default\n", right, total, fellBack);
     }
 
     std::printf(failures ? "%d check(s) failed\n" : "all engine tests passed\n", failures);

@@ -6,6 +6,7 @@
 #include <cstring>
 #include <functional>
 #include <map>
+#include <sstream>
 #include <string>
 #include "../core/engine.h"
 #include "../core/matcher.h"
@@ -69,7 +70,7 @@ static void usage() {
         "Output\n"
         "  --mix F                0..1 (1)\n"
         "  --deband F             smooth the source's quantisation steps before the grade, 0..1 (0)\n"
-        "  --skin-smooth F        even out colour blotches on skin, with a match, 0..1 (1)\n"
+        "  --skin-evening F       pull skin colour toward the skin around it, with a match, 0..1 (0.5)\n"
         "  --frame N              frame number for grain / weave / flicker (0)\n"
         "  --sequence N           render N frames as OUT_0000.png ... (shows grain, weave, flicker)\n"
         "  --export-lut PATH      also write the colour part as a .cube for Lumetri\n"
@@ -126,7 +127,7 @@ int main(int argc, char** argv) {
     p.softness = F("softness", 0); p.vignette = F("vignette", 0); p.weave = F("weave", 0); p.flicker = F("flicker", 0);
     p.mix = F("mix", 1);
     p.deband = F("deband", 0);
-    p.skinSmooth = F("skin-smooth", 1);
+    p.skinEven = F("skin-evening", 0.5f);
 
     Frame src;
     if (!load(a["in"], src)) return 1;
@@ -153,6 +154,32 @@ int main(int argc, char** argv) {
         mo.look.regionStrength = F("region-strength", 1);
         mo.look.skinProtect = F("skin-protect", -1);
         mo.transfer = a.count("source") ? transferFromName(a["source"]) : -1;
+        if (mo.transfer < 0) {
+            Image full; full.width = src.w; full.height = src.h;
+            for (size_t i = 0; i < src.px.size(); i += 4) full.px.push_back({src.px[i], src.px[i + 1], src.px[i + 2]});
+            if (isLog(detectTransfer(downsample(full, 480)).transfer)) {
+                std::vector<Image> more;  // more frames of the clip for the detector: --detect-frames "a.png|b.png"
+                std::vector<const Image*> all{&full};
+                if (a.count("detect-frames")) {
+                    std::stringstream list(a["detect-frames"]);
+                    std::string one;
+                    while (std::getline(list, one, '|')) {
+                        Frame f;
+                        if (!load(one, f)) return 1;
+                        Image im; im.width = f.w; im.height = f.h;
+                        for (size_t i = 0; i < f.px.size(); i += 4) im.px.push_back({f.px[i], f.px[i + 1], f.px[i + 2]});
+                        more.push_back(std::move(im));
+                    }
+                    more.shrink_to_fit();
+                    for (const Image& m : more) all.push_back(&m);
+                }
+                const LogRank rank = rankLogCurves(all);
+                mo.transfer = int(rank.transfer);
+                mo.transferGuess = rank.label();
+                std::fprintf(stderr, "log detector: %s\n", rank.label().c_str());
+                for (size_t i = 0; i < rank.ranked.size() && i < 4; ++i) std::fprintf(stderr, "  %s %.0f%%\n", transferShortName(rank.ranked[i].first), rank.ranked[i].second * 100);
+            }
+        }
         mo.exposure = F("norm-exposure", 1); mo.whiteBalance = F("norm-white", 1);
         mo.contrast = F("norm-contrast", 1); mo.lookStrength = F("look-strength", 1);
         mo.matchContrast = F("match-contrast", 1);

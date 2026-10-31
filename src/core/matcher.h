@@ -36,6 +36,7 @@ MatchResult matchLook(const std::vector<Vec3>& reference, const std::vector<Vec3
 struct SceneMatchOptions {
     MatchOptions look;   // region strength, skin protect, balance, LUT size
     int transfer = -1;   // source encoding (Transfer index), -1 = detect
+    std::string transferGuess;  // the log detector's verdict, when it set `transfer`
     float exposure = 1;      // 0..1: how much to normalise exposure
     float whiteBalance = 1;  // 0..1: how much to neutralise the source's white balance
     float contrast = 1;      // 0..1: how much to undo the source's tone curve and saturation
