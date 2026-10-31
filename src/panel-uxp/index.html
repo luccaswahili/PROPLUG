@@ -5,116 +5,81 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <!-- fixed: brand, tabs and status; everything under them scrolls inside #content -->
   <header>
-    <sp-heading size="XS">LookMatch</sp-heading>
-    <div class="tabs" id="tabs">
-      <sp-action-button data-tab="match" selected>Match</sp-action-button>
-      <sp-action-button data-tab="texture">Texture</sp-action-button>
-      <sp-action-button data-tab="saved">Saved</sp-action-button>
-      <sp-action-button data-tab="tools">Tools</sp-action-button>
+    <div class="brand">
+      <div class="logo"><img src="icons/logo.svg" alt=""></div>
+      <div class="brand-text"><div class="name">Komodo</div><div class="ver" id="version">PRO PLUGS</div></div>
     </div>
+    <div class="tabs" id="tabs">
+      <div class="tab on" data-tab="match">Match</div>
+      <div class="tab" data-tab="texture">Texture</div>
+      <div class="tab" data-tab="library">Library</div>
+    </div>
+    <div id="status" class="status"><div class="dot"></div><span id="statusText">Select a clip on the timeline</span></div>
   </header>
 
-  <div id="status" class="status"></div>
-
   <main id="content">
-  <!-- MATCH: reference library + matching -->
+  <!-- MATCH -->
   <section data-panel="match">
-    <div class="drop" id="drop">
-      <sp-body size="S">Drop a still here, paste its path, or browse.</sp-body>
-      <div class="row">
-        <sp-textfield id="refPath" placeholder="/path/to/reference.jpg" class="grow"></sp-textfield>
-        <sp-action-button id="addRef">Add</sp-action-button>
-        <sp-action-button id="browseRef">Browse…</sp-action-button>
+    <div class="sec-label">REFERENCE</div>
+    <div class="card" id="drop">
+      <div class="refrow"><div class="refadd" id="refAdd"></div><div class="refs" id="refGrid"></div></div>
+      <div class="hint">Drop a still anywhere on the panel, then click it to use it.</div>
+    </div>
+
+    <div class="matchrow">
+      <sp-picker id="sourceFormat" size="m" class="source" title="Source format. Auto reads the clip's colour metadata, then the picture itself."><sp-menu id="sourceMenu" slot="options"></sp-menu></sp-picker>
+      <div class="matchbtn" id="matchBtn">Match</div>
+    </div>
+
+
+    <div class="sec-label">GRADE</div>
+    <div id="gradeControls" class="stack"></div>
+
+    <div class="sec-label">ADJUST</div>
+    <div id="adjustControls" class="card adjust"></div>
+
+    <div class="fold" id="foldAdvanced">
+      <div class="fold-head"><span class="chev">›</span><span class="fold-title">Advanced</span><span class="sub" id="advSub"></span></div>
+      <div class="fold-body">
+        <div id="advancedControls" class="stack"></div>
+        <div class="toggle-row plain"><span>Auto skin protect</span><div class="sw on" id="autoSkinSw"></div></div>
+        <div class="toggle-row plain"><span>Probe selection</span><div class="chip" id="probe">Probe</div></div>
+        <pre id="console" class="console" hidden></pre>
       </div>
     </div>
-    <div class="row">
-      <sp-button id="matchSel" variant="cta">Match selected clips</sp-button>
-      <sp-button id="matchSeq" variant="secondary">Match whole sequence</sp-button>
-      <sp-action-button id="beforeAfter">Before / after</sp-action-button>
-      <sp-action-button id="abCompare" title="Whole frame: original (A) or matched (B). Before / after turns it off.">A / B</sp-action-button>
-    </div>
-    <div id="refGrid" class="grid"></div>
-    <sp-divider size="S"></sp-divider>
-    <div class="slider-row"><sp-detail>MATCH STRENGTH</sp-detail><sp-slider id="strength" min="0" max="100" value="100"></sp-slider><span id="strengthV">100%</span></div>
-    <div class="slider-row"><sp-detail>REGION MATCHING</sp-detail><sp-slider id="region" min="0" max="100" value="100"></sp-slider><span id="regionV">100%</span></div>
-    <div class="row">
-      <sp-checkbox id="autoSkin" checked>Auto skin protect</sp-checkbox>
-    </div>
-    <sp-divider size="S"></sp-divider>
-    <sp-detail>SOURCE</sp-detail>
-    <div class="slider-row"><sp-detail>FORMAT</sp-detail><sp-picker id="sourceFormat" size="s"><sp-menu id="sourceMenu" slot="options"></sp-menu></sp-picker></div>
-    <sp-body size="XS" class="hint" id="sourceHint">Auto reads the clip's colour metadata, then the picture itself.</sp-body>
-    <div class="slider-row"><sp-detail>EXPOSURE</sp-detail><sp-slider id="normExposure" min="0" max="100" value="100"></sp-slider><span id="normExposureV">100%</span></div>
-    <div class="slider-row"><sp-detail>WHITE BALANCE</sp-detail><sp-slider id="normWhite" min="0" max="100" value="100"></sp-slider><span id="normWhiteV">100%</span></div>
-    <div class="slider-row"><sp-detail>CONTRAST</sp-detail><sp-slider id="normContrast" min="0" max="100" value="100"></sp-slider><span id="normContrastV">100%</span></div>
-    <div class="slider-row"><sp-detail>LOOK STRENGTH</sp-detail><sp-slider id="lookStrength" min="0" max="100" value="100"></sp-slider><span id="lookStrengthV">100%</span></div>
-    <div class="slider-row"><sp-detail>MATCH CONTRAST</sp-detail><sp-slider id="matchContrast" min="0" max="100" value="100"></sp-slider><span id="matchContrastV">100%</span></div>
-    <div class="slider-row"><sp-detail>FINISH</sp-detail><sp-slider id="finish" min="0" max="100" value="100"></sp-slider><span id="finishV">100%</span></div>
-    <sp-body size="XS" class="hint">How much of the clip's own exposure, white balance and contrast to even out before the reference's look goes on.</sp-body>
-    <div id="analysis" class="analysis"></div>
-    <div class="row">
-      <sp-action-button id="applyStrength">Apply strength only</sp-action-button>
-    </div>
-    <div class="slider-row"><sp-detail>SPLIT POSITION</sp-detail><sp-slider id="splitPos" min="0" max="100" value="50"></sp-slider><span id="splitPosV">50%</span></div>
-    <sp-divider size="S"></sp-divider>
-    <sp-detail>SHOT MATCHING</sp-detail>
-    <sp-body size="XS" class="hint">Select your best-looking clip and park the playhead on it.</sp-body>
-    <div class="row">
-      <sp-action-button id="heroRef">Use selected clip as reference</sp-action-button>
-      <sp-action-button id="heroMatchSeq">Match sequence to this clip</sp-action-button>
-    </div>
-    <sp-checkbox id="heroGraded" checked>Match to its graded look (keeps exposure, white balance and skin the same across cuts)</sp-checkbox>
+    <!-- before / after: small, right under Advanced, aligned right -->
+    <div class="barow"><div class="babtn" id="beforeAfter" title="Before / after: split the Program monitor, original on the left of the line">A/B</div></div>
   </section>
 
-  <!-- TEXTURE: film texture controls -->
+  <!-- TEXTURE -->
   <section data-panel="texture" hidden>
-    <div class="row">
-      <sp-action-button id="readFilm">Read from selected clip</sp-action-button>
-      <sp-action-button id="resetFilm">Reset</sp-action-button>
+    <div class="sec-label">FILM TEXTURE</div>
+    <div id="textureControls" class="stack"></div>
+    <div class="fold" id="foldMore">
+      <div class="fold-head"><span class="chev">›</span><span class="fold-title">More</span><span class="sub">Fade, softness, weave, flicker, sizes</span></div>
+      <div class="fold-body"><div id="textureMore" class="stack"></div></div>
     </div>
-    <div id="filmControls"></div>
-    <sp-checkbox id="fixBanding">Fix sky banding (smooths rings in skies; also softens fine skin texture and grain)</sp-checkbox>
-    <div class="row">
-      <sp-button id="applyFilm" variant="cta">Apply to selected clips</sp-button>
-      <sp-button id="applyFilmSeq" variant="secondary">Apply to sequence</sp-button>
+    <div class="card">
+      <div class="toggle-row plain"><span>Fix sky banding</span><div class="sw" id="bandSw"></div></div>
+      <div class="hint">Smooths rings in skies. Also softens fine skin texture and grain, so it's off unless a clip needs it.</div>
     </div>
   </section>
 
-  <!-- SAVED: saved looks, import / export -->
-  <section data-panel="saved" hidden>
+  <!-- LIBRARY -->
+  <section data-panel="library" hidden>
+    <div class="sec-label">LIBRARY</div>
+    <div id="savedList" class="list"></div>
     <div class="row">
       <sp-textfield id="lookName" placeholder="Look name" class="grow"></sp-textfield>
-      <sp-button id="saveLook" variant="cta">Save current look</sp-button>
+      <div class="btn-o" id="saveLook">+ Save current look</div>
     </div>
-    <sp-body size="XS" class="hint">Saves the Texture tab, the match and source settings and the selected reference.</sp-body>
-    <div id="savedList" class="list"></div>
-    <sp-divider size="S"></sp-divider>
-    <sp-detail>EXPORT .CUBE (FOR LUMETRI / OTHER APPS)</sp-detail>
-    <div class="row">
-      <sp-textfield id="cubePath" placeholder="/path/to/MyLook.cube" class="grow"></sp-textfield>
-      <sp-action-button id="exportCube">Export LUT</sp-action-button>
-    </div>
-    <sp-body size="XS" class="hint">Exports the selected clip's colour (input, match, fade). Grain and other texture can't go in a LUT.</sp-body>
-    <sp-divider size="S"></sp-divider>
-    <sp-detail>IMPORT / EXPORT (.lmlook)</sp-detail>
-    <div class="row">
-      <sp-textfield id="lookFile" placeholder="/path/to/look.lmlook, or a folder to export into" class="grow"></sp-textfield>
-      <sp-action-button id="importLook">Import</sp-action-button>
-    </div>
-  </section>
-
-  <!-- TOOLS: diagnostics and self-test -->
-  <section data-panel="tools" hidden>
-    <div class="row">
-      <sp-action-button id="selfTest">Run self-test</sp-action-button>
-      <sp-action-button id="showLog">Show effect log</sp-action-button>
-      <sp-action-button id="probe">Probe selection</sp-action-button>
-    </div>
-    <pre id="console" class="console"></pre>
+    <div class="hint">Saves the reference, the grade, source and texture settings. Looks stay inside Komodo.</div>
   </section>
 
   </main>
+
 
   <script src="main.js"></script>
 </body>

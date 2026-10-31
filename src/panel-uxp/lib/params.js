@@ -7,9 +7,9 @@ const P = {
   autoSkin: "Auto Skin Protect",
   skinProtect: "Skin Protect",
   footageEncoding: "Footage Encoding",
-  exposure: "Exposure",
-  temperature: "Temperature",
-  tint: "Tint",
+  exposure: "Input Exposure",
+  temperature: "Input Temperature",
+  tint: "Input Tint",
   filmStrength: "Film Strength",
   fade: "Fade",
   halation: "Halation",
@@ -38,9 +38,17 @@ const P = {
   normContrast: "Normalise Contrast",
   lookStrength: "Look Strength",
   matchContrast: "Match Contrast",
-  finish: "Finish",
+  finish: "Finish Band",
   fixBanding: "Fix Sky Banding",
   skinEvening: "Skin Evening",
+  // tone and colour adjustments after the match (Effect Controls "Adjust" group)
+  adjExposure: "Exposure",
+  adjContrast: "Contrast",
+  adjShadows: "Shadows",
+  adjHighlights: "Highlights",
+  adjWhites: "Whites",
+  adjSaturation: "Saturation",
+  adjTemperature: "Temperature",
 };
 
 // Popup controls. The panel uses 1-based values like Effect Controls; Premiere's UXP API reads
@@ -59,6 +67,21 @@ const TEXTURE_DEFAULTS = {
   [P.bloom]: 0, [P.bloomSize]: 1, [P.bloomThreshold]: 0.5, [P.grain]: 0, [P.grainSize]: 1, [P.grainColour]: 30,
   [P.softness]: 0, [P.vignette]: 0, [P.gateWeave]: 0, [P.flicker]: 0, [P.fixBanding]: false, [P.skinEvening]: 50,
 };
+
+// What a new Match resets every slider to (Effect Controls defaults): the grade controls, the
+// adjustments, the source evening and the advanced match controls.
+const GRADE_DEFAULTS = {
+  [P.lookStrength]: 100, [P.matchContrast]: 100, [P.finish]: 100, [P.skinEvening]: 50,
+};
+// Tone and colour adjustments after the match: 0 = untouched.
+const ADJUST_DEFAULTS = {
+  [P.adjExposure]: 0, [P.adjContrast]: 0, [P.adjShadows]: 0, [P.adjHighlights]: 0, [P.adjWhites]: 0,
+  [P.adjSaturation]: 0, [P.adjTemperature]: 0,
+};
+const MATCH_DEFAULTS = Object.assign({}, GRADE_DEFAULTS, ADJUST_DEFAULTS, {
+  [P.normExposure]: 100, [P.normWhite]: 100, [P.normContrast]: 100,
+  [P.matchStrength]: 100, [P.regionMatching]: 100, [P.autoSkin]: true,
+});
 
 // A/B compare on the selected clip: whole frame original (A) or matched (B), through the split view at
 // 100% / 0% (the effect draws no line there). From the clip's current params, the params for the next
@@ -99,4 +122,4 @@ function guessSourceFormat(texts) {
   return 0;
 }
 
-module.exports = { P, POPUPS, SOURCE_FORMATS, TEXTURE_DEFAULTS, guessSourceFormat, sourceFormatReason, abNext };
+module.exports = { P, POPUPS, SOURCE_FORMATS, TEXTURE_DEFAULTS, GRADE_DEFAULTS, ADJUST_DEFAULTS, MATCH_DEFAULTS, guessSourceFormat, sourceFormatReason, abNext };

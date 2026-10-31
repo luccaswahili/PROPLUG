@@ -105,7 +105,7 @@ The Premiere effect calls it when it builds a match. The CPU and GPU paths both 
      follow the overall saturation (×0.75–1.25).
    - Colours rotate and scale about the neutral axis, so none crosses it. Hue moves fade out below chroma 0.015–0.05,
      because a nearly grey wall's hue flips with every 8-bit step.
-7. **Final tone match** (**Match Contrast**, default 100%). The graded result's occupied lightness levels are brought
+7. **Final tone match** (**Match Contrast**, default 100%; hidden since Komodo 1.0, stays at 100%). The graded result's occupied lightness levels are brought
    toward the reference's with the same kind of curve as step 4, on lightness alone (OKLab L; hue and chroma
    untouched). The slope is held between 0.85 and 1.15, and at most 1.03 around skin. Only the shape applies: where
    the anchor sits stays exposure's. No level moves more than 0.15.
@@ -127,7 +127,7 @@ third the identity and two thirds the frame's own value distribution, so the gri
 checks it matches the CPU: 0.000/255. A copy saved into the project (**Save into Project**) is resampled to 33³ on the
 same shaper, to keep projects small. Projects saved by earlier builds load unchanged: their Match Data has no shaper.
 
-8. **Finish** (default 100%). A match lands at the reference's levels, and a dark reference leaves a clip looking
+8. **Finish Band** (shown as Finish before Komodo 1.0, default 100%). A match lands at the reference's levels, and a dark reference leaves a clip looking
    underexposed. Graded by hand, the clips land in the same place whatever the reference: median lightness about
    0.53, the 95th percentile about 0.86, blacks about where they were. So one smooth curve brings the frame to those
    levels: all the way up from below, 70% of the way down from above, with the blacks of a bright clip left alone. Colour

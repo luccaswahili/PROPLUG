@@ -10,6 +10,7 @@
 #import <Metal/Metal.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdarg>
 #include <cstring>
 #include <cstdio>
@@ -28,6 +29,7 @@
 #include "LookMatchParamIds.h"
 #include "MatchData.h"
 #include "PanelFiles.h"
+#include "SlotSource.h"
 #include "engine.h"
 
 namespace {
@@ -123,6 +125,11 @@ public:
     id<MTLBuffer> lutBuffer = nil;
     id<MTLBuffer> srcBuffer = nil;  // unchanged copy of the frame: the kernel grades in place, deband reads neighbours
     std::shared_ptr<const lm::Lut3D> match;
+    lm::Params created;              // the parameters this instance was created for (read at time 0)
+    mutable bool readFailed = false; // set by param() when the host couldn't give a value
+    std::mutex renderLock;           // Premiere can call Render for one instance from several threads;
+                                     // the engine and the LUT upload buffer aren't safe to share
+    long framesRendered = 0;
 
     ~Instance() {
         if (lutBuffer) [lutBuffer release];
@@ -134,6 +141,7 @@ public:
         PrParam p = {};
         prSuiteError e = s.segment->GetParam(nodeID, aeIndex - 1, t, &p);  // GPU filters don't count the input
         if (ok) *ok = PrSuiteErrorSucceeded(e);
+        if (!PrSuiteErrorSucceeded(e)) readFailed = true;
         switch (p.mType) {
             case kPrParamType_Int8: return p.mInt8;
             case kPrParamType_Int16: return p.mInt16;
@@ -142,7 +150,7 @@ public:
             case kPrParamType_Float32: return p.mFloat32;
             case kPrParamType_Float64: return p.mFloat64;
             case kPrParamType_Bool: return p.mBool ? 1 : 0;
-            default: if (ok) *ok = false; return 0;
+            default: if (ok) *ok = false; readFailed = true; return 0;
         }
     }
 
@@ -177,7 +185,34 @@ public:
         p.weave = float(param(P_WEAVE, t));
         p.flicker = float(param(P_FLICKER, t)) / 100.0f;
         p.mix = float(param(P_MIX, t)) / 100.0f;
+        p.adjust.exposure = float(param(P_ADJ_EXPOSURE, t));
+        p.adjust.contrast = float(param(P_ADJ_CONTRAST, t)) / 100.0f;
+        p.adjust.shadows = float(param(P_ADJ_SHADOWS, t)) / 100.0f;
+        p.adjust.highlights = float(param(P_ADJ_HIGHLIGHTS, t)) / 100.0f;
+        p.adjust.whites = float(param(P_ADJ_WHITES, t)) / 100.0f;
+        p.adjust.saturation = float(param(P_ADJ_SATURATION, t)) / 100.0f;
+        p.adjust.temperature = float(param(P_ADJ_TEMPERATURE, t)) / 100.0f;
         return p;
+    }
+
+    // Same as matchSettings() in LookMatch.cpp (popups here are 0-based, the key uses 1-based).
+    lmpanel::MatchSettings matchSettings(PrTime t) const {
+        lmpanel::MatchSettings m;
+        m.lookStrength = float(param(P_LOOK_STRENGTH, t));
+        m.matchContrast = float(param(P_MATCH_CONTRAST, t));
+        m.finish = float(param(P_FINISH, t));
+        m.normExposure = float(param(P_NORM_EXPOSURE, t));
+        m.normWhite = float(param(P_NORM_WB, t));
+        m.normContrast = float(param(P_NORM_CONTRAST, t));
+        m.regionStrength = float(param(P_REGION_STRENGTH, t));
+        m.skinAuto = param(P_SKIN_AUTO, t) != 0 ? 1.0f : 0.0f;
+        m.skinProtect = float(param(P_SKIN_PROTECT, t));
+        m.sourceFormat = float(param(P_SOURCE_FORMAT, t)) + 1;
+        m.inputSpace = float(param(P_INPUT_SPACE, t)) + 1;
+        m.exposure = float(param(P_EXPOSURE, t));
+        m.temperature = float(param(P_TEMPERATURE, t));
+        m.tint = float(param(P_TINT, t));
+        return m;
     }
 
     // The match this clip uses, mirroring Render in LookMatch.cpp: a newer panel slot wins over
@@ -194,8 +229,14 @@ public:
         gpuLog("node %d match: Match Data %s (type %d, %s), slot %ld, %s", int(nodeID), haveData ? "read" : "unreadable",
                int(mp.mType), md ? (md->hasMatch ? "has match" : "empty") : "invalid", slot, slotWins ? "slot wins" : "Match Data wins");
         if (slotWins) {
-            match = lmpanel::readSlotLut(lmpanel::refsDir() + std::to_string(slot) + ".lut");
-            if (!match) why = "panel match not built yet";
+            // refs/<slot>.lut holds the newest build; if a grade slider moved since, the CPU render rebuilds
+            // it from the slot's frame (LookMatch.cpp slotLut) and the next instance picks it up
+            const std::string base = lmpanel::refsDir() + std::to_string(slot);
+            const std::string onDisk = lmpanel::fileLine(base + ".key");
+            if (!onDisk.empty() && onDisk != lmpanel::keyHex(lmpanel::settingsKey(matchSettings(t))))
+                why = "panel match settings changed";
+            else if (!(match = lmpanel::readSlotLut(base + ".lut")))
+                why = "panel match not built yet";
         } else if (md) {
             match = md->hasMatch ? lmpanel::lutFromMatch(md) : nullptr;
         } else if (!haveData || slot <= 0) {
@@ -206,10 +247,10 @@ public:
         return why.empty();
     }
 
-    // Panel requests (capture, export) are answered by the CPU render; leave those to it.
+    // Panel requests (capture) are answered by the CPU render; leave those to it.
     bool panelRequestPending(PrTime t, std::string& why) const {
         struct { int param; const char* kind; } reqs[] = {
-            {P_CAPTURE_SLOT, "capture"}, {P_EXPORT_SLOT, "export"}};
+            {P_CAPTURE_SLOT, "capture"}};
         for (auto& r : reqs) {
             long slot = long(param(r.param, t));
             if (slot > 0 && !lmpanel::fileExists(lmpanel::refsDir() + r.kind + "-" + std::to_string(slot) + ".done")) {
@@ -239,6 +280,7 @@ prSuiteError CreateInstance(PrGPUFilterInstance* io) {
     const PrTime t0 = 0;
     std::string why;
     lm::Params p = inst->params(t0);
+    inst->created = p;
     lm::FinishParams fp;
     inst->engine.setParams(p);
     if (p.input != lm::InputSpace::Rec709) why = "log footage";
@@ -285,10 +327,21 @@ prSuiteError Render(PrGPUFilterInstance* io, const PrGPUFilterRenderParams* rp, 
                     csSDK_size_t inFrameCount, PPixHand* outFrame) {
     Instance* inst = static_cast<Instance*>(io->ioPrivatePluginData);
     if (!inst || !outFrame) return suiteError_Fail;
+    std::lock_guard<std::mutex> lock(inst->renderLock);
+    if (inst->framesRendered < 400 || inst->framesRendered % 50 == 0)
+        gpuLog("node %d Render called: clip time %lld, ticks/frame %lld", int(inst->nodeID), (long long)rp->inClipTime,
+               (long long)rp->inRenderTicksPerFrame);
     @autoreleasepool {
-        // values may be keyframed: read them at this frame
+        const auto t0 = std::chrono::steady_clock::now();
+        // values may be keyframed: read them at this frame. If the host can't give one (a failed read
+        // comes back as 0, which would mean Mix 0% = no effect at all), keep the values the instance was
+        // created with instead.
+        inst->readFailed = false;
         lm::Params p = inst->params(rp->inClipTime);
+        const bool readOk = !inst->readFailed;
+        if (!readOk) p = inst->created;
         inst->engine.setParams(p);
+        const bool wasDirty = inst->engine.directLutStale();
         prRect bounds = {};
         inst->s.ppix->GetBounds(*outFrame, &bounds);
         const int w = bounds.right - bounds.left, h = bounds.bottom - bounds.top;
@@ -350,9 +403,15 @@ prSuiteError Render(PrGPUFilterInstance* io, const PrGPUFilterRenderParams* rp, 
         [enc dispatchThreadgroups:grid threadsPerThreadgroup:group];
         [enc endEncoding];
         [cb commit];
-        static std::atomic<int> logged{0};
-        if (logged.fetch_add(1) < 3)
-            gpuLog("node %d frame %ld %dx%d %s pitch %d", int(inst->nodeID), frame, w, h, f32 ? "32f" : "16f", pitch);
+        // the first 400 frames of every instance, then one in 50 (only when LOOKMATCH_LOG=1)
+        const long n = inst->framesRendered++;
+        if (n < 400 || n % 50 == 0) {
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            gpuLog("node %d frame %ld (#%ld) %dx%d %s pitch %d: params %s, mix %.0f, match %s, look lut %s, %.1f ms",
+                   int(inst->nodeID), frame, n, w, h, f32 ? "32f" : "16f", pitch,
+                   readOk ? "read" : "UNREADABLE (using creation values)", p.mix * 100, inst->match ? "yes" : "none",
+                   wasDirty ? "rebuilt" : "reused", ms);
+        }
     }
     return suiteError_NoError;
 }

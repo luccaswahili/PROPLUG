@@ -65,6 +65,12 @@ target_include_directories(reference_tests PRIVATE third_party)
 target_compile_definitions(reference_tests PRIVATE LOOKMATCH_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_link_libraries(reference_tests PRIVATE lookmatch_core)
 add_test(NAME reference_tests COMMAND reference_tests)
+add_executable(slot_source_tests tests/slot_source_tests.cpp)
+target_link_libraries(slot_source_tests PRIVATE lookmatch_core)
+add_test(NAME slot_source_tests COMMAND slot_source_tests)
+add_executable(adjust_tests tests/adjust_tests.cpp)
+target_include_directories(adjust_tests PRIVATE src/core)
+add_test(NAME adjust_tests COMMAND adjust_tests)
 
 # GPU kernel (Premiere GPU render) vs CPU engine, and a timing benchmark. macOS / Metal only.
 if(APPLE)

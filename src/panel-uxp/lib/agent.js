@@ -19,7 +19,6 @@ const COMMANDS = {
     return b.applyParams(a.scope, params);
   },
   saveProject: async (b) => { await b.saveProject(); return "saved"; },
-  exportCube: async (b, a) => b.exportCube(String(a.path)),
   captureFrame: async (b, a) => b.captureFrame({ graded: !!a.graded }),
   selectClip: async (b, a) => b.selectClip(Number(a.index) || 0),
   inspectParams: async (b, a) => b.inspectParams(Number(a.limit) || 8),
@@ -37,7 +36,7 @@ function startAgent(fs, dataDir, bridge, log, ui) {
       return { id: a.id, value: ui.element(a.id).value };
     };
     COMMANDS.uiTab = async (b, a) => {
-      if (!["match", "texture", "saved", "tools"].includes(a.tab)) throw new Error(`tab ${a.tab} not allowed`);
+      if (!["match", "texture", "library"].includes(a.tab)) throw new Error(`tab ${a.tab} not allowed`);
       ui.element("tabs").querySelector(`[data-tab="${a.tab}"]`).click();
       return { tab: a.tab };
     };
@@ -45,6 +44,10 @@ function startAgent(fs, dataDir, bridge, log, ui) {
       const v = Math.round(Number(a.value) || 1);
       ui.element("sourceFormat").selectedIndex = Math.max(0, v - 1);
       return { sourceFormat: ui.element("sourceFormat").selectedIndex + 1 };
+    };
+    COMMANDS.uiSlider = async (b, a) => {
+      if (!ui.setSlider) throw new Error("no sliders");
+      return { name: String(a.name), value: ui.setSlider(String(a.name), Number(a.value)) };
     };
     COMMANDS.uiAnalysis = async () => ({ text: ui.analysis ? ui.analysis() : "" });
     COMMANDS.uiMetrics = async () => {

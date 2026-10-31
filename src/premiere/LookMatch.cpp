@@ -32,6 +32,7 @@
 #include "parallel.h"
 #include "PanelFiles.h"
 #include "MatchCache.h"
+#include "SlotSource.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_WINDOWS_UTF8
@@ -131,7 +132,34 @@ lm::Params readParams(PF_ParamDef* params[]) {
     p.weave = F(params, P_WEAVE);
     p.flicker = F(params, P_FLICKER) / 100.0f;
     p.mix = F(params, P_MIX) / 100.0f;
+    p.adjust.exposure = F(params, P_ADJ_EXPOSURE);
+    p.adjust.contrast = F(params, P_ADJ_CONTRAST) / 100.0f;
+    p.adjust.shadows = F(params, P_ADJ_SHADOWS) / 100.0f;
+    p.adjust.highlights = F(params, P_ADJ_HIGHLIGHTS) / 100.0f;
+    p.adjust.whites = F(params, P_ADJ_WHITES) / 100.0f;
+    p.adjust.saturation = F(params, P_ADJ_SATURATION) / 100.0f;
+    p.adjust.temperature = F(params, P_ADJ_TEMPERATURE) / 100.0f;
     return p;
+}
+
+// The match settings a panel slot's LUT is built with (see SlotSource.h).
+lmpanel::MatchSettings matchSettings(PF_ParamDef* params[]) {
+    lmpanel::MatchSettings m;
+    m.lookStrength = F(params, P_LOOK_STRENGTH);
+    m.matchContrast = F(params, P_MATCH_CONTRAST);
+    m.finish = F(params, P_FINISH);
+    m.normExposure = F(params, P_NORM_EXPOSURE);
+    m.normWhite = F(params, P_NORM_WB);
+    m.normContrast = F(params, P_NORM_CONTRAST);
+    m.regionStrength = F(params, P_REGION_STRENGTH);
+    m.skinAuto = params[P_SKIN_AUTO]->u.bd.value ? 1.0f : 0.0f;
+    m.skinProtect = F(params, P_SKIN_PROTECT);
+    m.sourceFormat = float(params[P_SOURCE_FORMAT]->u.pd.value);
+    m.inputSpace = float(params[P_INPUT_SPACE]->u.pd.value);
+    m.exposure = F(params, P_EXPOSURE);
+    m.temperature = F(params, P_TEMPERATURE);
+    m.tint = F(params, P_TINT);
+    return m;
 }
 
 void setError(PF_OutData* out_data, const char* msg) {
@@ -426,12 +454,13 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     static std::string negs = stockChoices(true), prints = stockChoices(false), sources = sourceChoices();
 
     AEFX_CLR_STRUCT(def);
-    PF_ADD_TOPIC("Look Match", D_MATCH_TOPIC);
+    PF_ADD_TOPIC("Match", D_MATCH_TOPIC);
     AEFX_CLR_STRUCT(def);
     PF_ADD_BUTTON("Reference", "Load Reference...", 0, PF_ParamFlag_SUPERVISE, D_LOAD_REF);
     AEFX_CLR_STRUCT(def);
     PF_ADD_BUTTON("Footage frame", "Match to This Frame", 0, PF_ParamFlag_SUPERVISE, D_REMATCH);
     AEFX_CLR_STRUCT(def);
+    def.ui_flags = PF_PUI_INVISIBLE;  // removed from the UI (Look Strength does this job); stays at 100%
     PF_ADD_FLOAT_SLIDERX("Match Strength", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_MATCH_STRENGTH);
     AEFX_CLR_STRUCT(def);
     PF_ADD_FLOAT_SLIDERX("Region Matching", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_REGION_STRENGTH);
@@ -443,37 +472,53 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     PF_END_TOPIC(D_MATCH_TOPIC_END);
 
     AEFX_CLR_STRUCT(def);
+    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
     PF_ADD_TOPIC("Input", D_INPUT_TOPIC);
     AEFX_CLR_STRUCT(def);
+    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
     PF_ADD_POPUP("Footage Encoding", int(lm::InputSpace::Count), 1, kInputChoices, D_INPUT_SPACE);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_FLOAT_SLIDERX("Exposure", -4, 4, -2, 2, 0, PF_Precision_HUNDREDTHS, 0, 0, D_EXPOSURE);
+    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
+    PF_ADD_FLOAT_SLIDERX("Input Exposure", -4, 4, -2, 2, 0, PF_Precision_HUNDREDTHS, 0, 0, D_EXPOSURE);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_FLOAT_SLIDERX("Temperature", -100, 100, -100, 100, 0, PF_Precision_TENTHS, 0, 0, D_TEMPERATURE);
+    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
+    PF_ADD_FLOAT_SLIDERX("Input Temperature", -100, 100, -100, 100, 0, PF_Precision_TENTHS, 0, 0, D_TEMPERATURE);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_FLOAT_SLIDERX("Tint", -100, 100, -100, 100, 0, PF_Precision_TENTHS, 0, 0, D_TINT);
+    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
+    PF_ADD_FLOAT_SLIDERX("Input Tint", -100, 100, -100, 100, 0, PF_Precision_TENTHS, 0, 0, D_TINT);
     AEFX_CLR_STRUCT(def);
+    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
     PF_END_TOPIC(D_INPUT_TOPIC_END);
 
     AEFX_CLR_STRUCT(def);
+    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
     PF_ADD_TOPIC("Film Print", D_FILM_TOPIC);
     AEFX_CLR_STRUCT(def);
+    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
     PF_ADD_FLOAT_SLIDERX("Film Strength", 0, 100, 0, 100, 0, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_FILM_STRENGTH);
     AEFX_CLR_STRUCT(def);
+    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
     PF_ADD_POPUP("Negative Stock", lm::negativeStockCount(), 2, negs.c_str(), D_NEGATIVE);
     AEFX_CLR_STRUCT(def);
+    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
     PF_ADD_POPUP("Print Stock", lm::printStockCount(), 2, prints.c_str(), D_PRINT);
     AEFX_CLR_STRUCT(def);
+    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
     PF_ADD_FLOAT_SLIDERX("Printer Light R", -24, 24, -12, 12, 0, PF_Precision_TENTHS, 0, 0, D_PRINTER_R);
     AEFX_CLR_STRUCT(def);
+    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
     PF_ADD_FLOAT_SLIDERX("Printer Light G", -24, 24, -12, 12, 0, PF_Precision_TENTHS, 0, 0, D_PRINTER_G);
     AEFX_CLR_STRUCT(def);
+    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
     PF_ADD_FLOAT_SLIDERX("Printer Light B", -24, 24, -12, 12, 0, PF_Precision_TENTHS, 0, 0, D_PRINTER_B);
     AEFX_CLR_STRUCT(def);
+    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
     PF_ADD_FLOAT_SLIDERX("Film Saturation", 0, 200, 0, 200, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_FILM_SAT);
     AEFX_CLR_STRUCT(def);
+    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
     PF_ADD_FLOAT_SLIDERX("Fade", 0, 100, 0, 100, 0, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_FADE);
     AEFX_CLR_STRUCT(def);
+    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
     PF_END_TOPIC(D_FILM_TOPIC_END);
 
     AEFX_CLR_STRUCT(def);
@@ -510,7 +555,7 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     AEFX_CLR_STRUCT(def);
     PF_ADD_FLOAT_SLIDERX("Mix", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_MIX);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_BUTTON("Lumetri LUT", "Export .cube...", 0, PF_ParamFlag_SUPERVISE, D_EXPORT_LUT);
+    PF_ADD_BUTTON("Lumetri LUT", "Export .cube...", PF_PUI_INVISIBLE, PF_ParamFlag_SUPERVISE, D_EXPORT_LUT);
     AEFX_CLR_STRUCT(def);
     PF_Handle matchDefault = newMatchHandle(in_data);
     if (!matchDefault) return PF_Err_OUT_OF_MEMORY;
@@ -518,19 +563,23 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
                       nullptr);
     AEFX_CLR_STRUCT(def);
     def.flags = PF_ParamFlag_START_COLLAPSED;
-    PF_ADD_TOPIC("Panel Link", D_PANEL_TOPIC);
+    PF_ADD_TOPIC("Project", D_PANEL_TOPIC);
     AEFX_CLR_STRUCT(def);
+    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
     PF_ADD_FLOAT_SLIDERX("Reference Slot", 0, 999999, 0, 999999, 0, PF_Precision_INTEGER, 0,
                          PF_ParamFlag_SUPERVISE | PF_ParamFlag_CANNOT_TIME_VARY, D_REF_SLOT);
     AEFX_CLR_STRUCT(def);
     PF_ADD_BUTTON("Panel match", "Save into Project", 0, PF_ParamFlag_SUPERVISE, D_BAKE);
     AEFX_CLR_STRUCT(def);
+    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
     PF_ADD_FLOAT_SLIDERX("LUT Export Slot", 0, 999999, 0, 999999, 0, PF_Precision_INTEGER, 0,
                          PF_ParamFlag_CANNOT_TIME_VARY, D_EXPORT_SLOT);
     AEFX_CLR_STRUCT(def);
+    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
     PF_ADD_FLOAT_SLIDERX("Capture Slot", 0, 999999, 0, 999999, 0, PF_Precision_INTEGER, 0,
                          PF_ParamFlag_CANNOT_TIME_VARY, D_CAPTURE_SLOT);
     AEFX_CLR_STRUCT(def);
+    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
     PF_ADD_FLOAT_SLIDERX("Thumbs Slot", 0, 999999, 0, 999999, 0, PF_Precision_INTEGER, 0,
                          PF_ParamFlag_CANNOT_TIME_VARY, D_THUMBS_SLOT);
     AEFX_CLR_STRUCT(def);
@@ -564,13 +613,34 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     AEFX_CLR_STRUCT(def);
     PF_END_TOPIC(D_SOURCE_TOPIC_END);
     AEFX_CLR_STRUCT(def);
+    def.ui_flags = PF_PUI_INVISIBLE;  // removed from the UI; stays at 100%, kept so older projects load
     PF_ADD_FLOAT_SLIDERX("Match Contrast", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_MATCH_CONTRAST);
     AEFX_CLR_STRUCT(def);
     PF_ADD_CHECKBOXX("Fix Sky Banding", FALSE, 0, D_FIX_BANDING);
     AEFX_CLR_STRUCT(def);
     PF_ADD_FLOAT_SLIDERX("Skin Evening", 0, 100, 0, 100, 50, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_SKIN_EVENING);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_FLOAT_SLIDERX("Finish", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_FINISH);
+    PF_ADD_FLOAT_SLIDERX("Finish Band", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_FINISH);
+
+    // tone and colour adjustments after the match (src/core/adjust.h); render-time, no match rebuild
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_TOPIC("Adjust", D_ADJUST_TOPIC);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Exposure", -4, 4, -4, 4, 0, PF_Precision_HUNDREDTHS, 0, 0, D_ADJ_EXPOSURE);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Contrast", -100, 100, -100, 100, 0, PF_Precision_TENTHS, 0, 0, D_ADJ_CONTRAST);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Shadows", -100, 100, -100, 100, 0, PF_Precision_TENTHS, 0, 0, D_ADJ_SHADOWS);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Highlights", -100, 100, -100, 100, 0, PF_Precision_TENTHS, 0, 0, D_ADJ_HIGHLIGHTS);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Whites", -100, 100, -100, 100, 0, PF_Precision_TENTHS, 0, 0, D_ADJ_WHITES);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Saturation", -100, 100, -100, 100, 0, PF_Precision_TENTHS, 0, 0, D_ADJ_SATURATION);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Temperature", -100, 100, -100, 100, 0, PF_Precision_TENTHS, 0, 0, D_ADJ_TEMPERATURE);
+    AEFX_CLR_STRUCT(def);
+    PF_END_TOPIC(D_ADJUST_TOPIC_END);
 
     out_data->num_params = P_NUM_PARAMS;
     return err;
@@ -601,14 +671,69 @@ bool isMediaPending(const std::vector<float>& buf, int width, int height) {
 void writeSlotLut(const std::string& file, const lm::Lut3D& lut);
 void writeTextFile(const std::string& file, const std::string& text);
 
-// refPath: one reference still, or several (2-5 frames of one look), one path per line
-bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, int height, PF_ParamDef* params[],
-                lm::Lut3D& lutOut, std::string& error, std::string* analysis = nullptr) {
+// The frame a match is built from, as the matcher reads it: Input group applied, log curve detected from
+// the full frame, downsampled. Fails with a user-facing message for a loading, black or blank frame.
+bool prepareSource(const std::vector<float>& buf, int width, int height, PF_ParamDef* params[], lmpanel::SlotSource& out,
+                   std::string& error) {
     if (isMediaPending(buf, width, height)) {
-        error = "LookMatch: Premiere is still loading this clip (Media pending). Try again in a moment.";
+        error = "Komodo: Premiere is still loading this clip (Media pending). Try again in a moment.";
         lmLog("buildMatch: frame is Premiere's Media pending card, not matching");
         return false;
     }
+    // the footage as the match sees it: Input group (encoding, exposure, temperature, tint) applied
+    lm::Engine e;
+    e.setParams(readParams(params));
+    lm::Image& src = out.src;
+    src.width = width; src.height = height;
+    src.px.resize(size_t(width) * height);
+    lm::parallelFor(0, height, [&](int y) {
+        for (int x = 0; x < width; ++x) {
+            const float* p = &buf[(size_t(y) * width + x) * 4];
+            src.px[size_t(y) * width + x] = e.neutralDisplay({p[0], p[1], p[2]});
+        }
+    });
+    // For Source Format on Auto: which log curve, read from the full frame, whose grain the detector reads.
+    // Always detected (it's kept with the slot's frame, and the format may be set to Auto later).
+    std::string& logGuess = out.logGuess;
+    int& detected = out.detected;
+    detected = -1;
+    logGuess.clear();
+    if (!src.px.empty() && lm::isLog(lm::detectTransfer(lm::downsample(src, 480)).transfer)) {
+        const lm::LogRank rank = lm::rankLogCurves({&src});
+        detected = int(rank.transfer);
+        logGuess = rank.label();
+    }
+    src = lm::downsample(src, 640);
+    if (src.px.empty()) {
+        error = "Komodo: no footage under the playhead to match.";
+        return false;
+    }
+    // A black, blank or unreadable frame would make the matcher stretch noise into a wild LUT
+    // (posterised, oversaturated colour), so refuse to build a match from it.
+    double sum[3] = {0, 0, 0}, sq = 0;
+    for (const lm::Vec3& v : src.px) {
+        sum[0] += v.r; sum[1] += v.g; sum[2] += v.b;
+        double l = 0.2126 * v.r + 0.7152 * v.g + 0.0722 * v.b;
+        sq += l * l;
+    }
+    const double cnt = double(src.px.size());
+    const double meanL = (0.2126 * sum[0] + 0.7152 * sum[1] + 0.0722 * sum[2]) / cnt;
+    const double sdL = std::sqrt(std::max(0.0, sq / cnt - meanL * meanL));
+    lmLog("buildMatch: source %dx%d mean RGB %.3f %.3f %.3f, luma sd %.4f", width, height, sum[0] / cnt, sum[1] / cnt,
+          sum[2] / cnt, sdL);
+    if (meanL < 0.01 || sdL < 0.01) {
+        error = "Komodo: the frame under the playhead is black or blank, so there is nothing to match. "
+                "Move the playhead onto a normal frame and match again.";
+        return false;
+    }
+
+    return true;
+}
+
+// Builds a match LUT from reference stills and a prepared frame (see prepareSource).
+// refPath: one reference still, or several (2-5 frames of one look), one path per line
+bool buildFromSource(const char* refPath, const lmpanel::SlotSource& source, PF_ParamDef* params[], lm::Lut3D& lutOut,
+                     std::string& error, std::string* analysis = nullptr) {
     std::vector<lm::Image> refs;
     std::vector<std::string> refPaths;
     {
@@ -634,51 +759,7 @@ bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, i
         }
     }
     if (refs.empty()) {
-        error = "LookMatch: could not read the reference image (PNG, JPEG, TGA or BMP).";
-        return false;
-    }
-
-    // the footage as the match sees it: Input group (encoding, exposure, temperature, tint) applied
-    lm::Engine e;
-    e.setParams(readParams(params));
-    lm::Image src;
-    src.width = width; src.height = height;
-    src.px.resize(size_t(width) * height);
-    lm::parallelFor(0, height, [&](int y) {
-        for (int x = 0; x < width; ++x) {
-            const float* p = &buf[(size_t(y) * width + x) * 4];
-            src.px[size_t(y) * width + x] = e.neutralDisplay({p[0], p[1], p[2]});
-        }
-    });
-    // Source Format on Auto and nothing in the metadata: which log comes from the full frame, whose grain the detector reads
-    std::string logGuess;
-    int detected = -1;
-    if (!src.px.empty() && params[P_SOURCE_FORMAT]->u.pd.value - 2 < 0 && lm::isLog(lm::detectTransfer(lm::downsample(src, 480)).transfer)) {
-        const lm::LogRank rank = lm::rankLogCurves({&src});
-        detected = int(rank.transfer);
-        logGuess = rank.label();
-    }
-    src = lm::downsample(src, 640);
-    if (src.px.empty()) {
-        error = "LookMatch: no footage under the playhead to match.";
-        return false;
-    }
-    // A black, blank or unreadable frame would make the matcher stretch noise into a wild LUT
-    // (posterised, oversaturated colour), so refuse to build a match from it.
-    double sum[3] = {0, 0, 0}, sq = 0;
-    for (const lm::Vec3& v : src.px) {
-        sum[0] += v.r; sum[1] += v.g; sum[2] += v.b;
-        double l = 0.2126 * v.r + 0.7152 * v.g + 0.0722 * v.b;
-        sq += l * l;
-    }
-    const double cnt = double(src.px.size());
-    const double meanL = (0.2126 * sum[0] + 0.7152 * sum[1] + 0.0722 * sum[2]) / cnt;
-    const double sdL = std::sqrt(std::max(0.0, sq / cnt - meanL * meanL));
-    lmLog("buildMatch: source %dx%d mean RGB %.3f %.3f %.3f, luma sd %.4f", width, height, sum[0] / cnt, sum[1] / cnt,
-          sum[2] / cnt, sdL);
-    if (meanL < 0.01 || sdL < 0.01) {
-        error = "LookMatch: the frame under the playhead is black or blank, so there is nothing to match. "
-                "Move the playhead onto a normal frame and match again.";
+        error = "Komodo: could not read the reference image (PNG, JPEG, TGA or BMP).";
         return false;
     }
 
@@ -689,8 +770,9 @@ bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, i
     // Footage Encoding set to a log curve: the Input group already decoded it, so the match sees display
     const bool decoded = params[P_INPUT_SPACE]->u.pd.value > 1;
     const int format = params[P_SOURCE_FORMAT]->u.pd.value - 2;  // -1 = Auto
-    mo.transfer = decoded ? int(lm::Transfer::Rec709) : detected >= 0 ? detected : format;
-    mo.transferGuess = logGuess;
+    const bool useDetected = format < 0 && source.detected >= 0;
+    mo.transfer = decoded ? int(lm::Transfer::Rec709) : useDetected ? source.detected : format;
+    mo.transferGuess = useDetected ? source.logGuess : std::string();
     mo.exposure = F(params, P_NORM_EXPOSURE) / 100.0f;
     mo.whiteBalance = F(params, P_NORM_WB) / 100.0f;
     mo.contrast = F(params, P_NORM_CONTRAST) / 100.0f;
@@ -698,7 +780,7 @@ bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, i
     mo.matchContrast = F(params, P_MATCH_CONTRAST) / 100.0f;
     mo.finish = F(params, P_FINISH) / 100.0f;
     const std::string cacheDir = refsDir().empty() ? "" : refsDir() + "cache/";
-    const std::string key = cacheDir.empty() ? "" : lmpanel::matchCacheKey(refPaths, src, mo, kMatchVersion, LM_ENGINE_HASH);
+    const std::string key = cacheDir.empty() ? "" : lmpanel::matchCacheKey(refPaths, source.src, mo, kMatchVersion, LM_ENGINE_HASH);
     if (!key.empty()) {
         if (std::shared_ptr<const lm::Lut3D> hit = readSlotLut(cacheDir + key + ".lut")) {
             lutOut = *hit;
@@ -710,7 +792,7 @@ bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, i
             return true;
         }
     }
-    lm::SceneMatch m = lm::matchScene(refs, src, mo);
+    lm::SceneMatch m = lm::matchScene(refs, source.src, mo);
     lutOut = std::move(m.lut);
     lmLog("buildMatch: %s", m.report.c_str());
     const std::string json = "{\"source\":" + m.source.json() + ",\"reference\":" + m.reference.json() + ",\"result\":" + m.result.json() +
@@ -730,6 +812,13 @@ bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, i
         lmLog("buildMatch: LUT grey %.2f -> %.3f %.3f %.3f", g, v.r, v.g, v.b);
     }
     return true;
+}
+
+bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, int height, PF_ParamDef* params[],
+                lm::Lut3D& lutOut, std::string& error, std::string* analysis = nullptr) {
+    lmpanel::SlotSource source;
+    return prepareSource(buf, width, height, params, source, error) &&
+           buildFromSource(refPath, source, params, lutOut, error, analysis);
 }
 
 PF_Err storeMatch(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], const lm::Lut3D& lut,
@@ -752,8 +841,8 @@ PF_Err ComputeMatch(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* param
     if (world->data && fmt != Fmt::Unsupported) worldToFloat(world, fmt, width, height, buf);
     PF_CHECKIN_PARAM(in_data, &layer);
     if (buf.empty()) {
-        std::string msg = world->data ? "LookMatch: this clip's pixel format (" + fourcc(rawFmt) + ") isn't supported yet."
-                                      : "LookMatch: no footage under the playhead to match.";
+        std::string msg = world->data ? "Komodo: this clip's pixel format (" + fourcc(rawFmt) + ") isn't supported yet."
+                                      : "Komodo: no footage under the playhead to match.";
         setError(out_data, msg.c_str());
         return PF_Err_NONE;
     }
@@ -884,39 +973,78 @@ void writeTextFile(const std::string& file, const std::string& text) {
 // Reads the frame to match into buf (RGBA float); returns false if there is none.
 using FrameSource = std::function<bool(std::vector<float>& buf, int& width, int& height)>;
 
-std::shared_ptr<const lm::Lut3D> slotLut(long slot, const FrameSource& getFrame, PF_ParamDef* params[]) {
+// The match for a panel Reference Slot with the clip's current match settings. The first build reads the
+// frame (getFrame: this render's input) and keeps it as refs/<slot>.src; a change of Look Strength, Match
+// Contrast, Finish or another match setting rebuilds from that same frame, so the grade sliders are live.
+// refs/<slot>.lut and .key always hold the newest build (the GPU filter, Save into Project and later
+// sessions read them). `idOut` names the LUT for the engine pool.
+std::shared_ptr<const lm::Lut3D> slotLut(long slot, const FrameSource& getFrame, PF_ParamDef* params[], uint64_t& idOut) {
     static std::mutex m;
-    static std::map<long, std::shared_ptr<const lm::Lut3D>> cache;  // null entry = failed, don't retry every frame
+    static std::map<std::pair<long, uint64_t>, std::shared_ptr<const lm::Lut3D>> cache;  // null = failed, don't retry every frame
+    static std::map<long, std::shared_ptr<const lmpanel::SlotSource>> sources;
+    const uint64_t skey = lmpanel::settingsKey(matchSettings(params));
+    idOut = (uint64_t(slot) * 0x9E3779B97F4A7C15ull) ^ skey;
     std::lock_guard<std::mutex> lock(m);
-    auto it = cache.find(slot);
+    auto it = cache.find({slot, skey});
     if (it != cache.end()) return it->second;
-    const std::string file = refsDir() + std::to_string(slot) + ".lut";
-    std::shared_ptr<const lm::Lut3D> lut = readSlotLut(file);
+    if (cache.size() > 256) cache.clear();
+    const std::string base = refsDir() + std::to_string(slot);
+    const std::string file = base + ".lut", keyText = lmpanel::keyHex(skey);
+    // the newest build on disk, if it has these settings (a build from before 1.0 has no .key: the
+    // settings it was matched with are the ones the panel set with its slot, so take it as is)
+    std::shared_ptr<const lm::Lut3D> lut;
+    const std::string onDisk = fileLine(base + ".key");
+    if (onDisk == keyText || (onDisk.empty() && !lmpanel::fileExists(base + ".src"))) lut = readSlotLut(file);
     if (lut) {
         lmLog("Render: slot %ld loaded from %s", slot, file.c_str());
-    } else {
-        std::string ref = panelReferencePath(slot), error;
-        auto built = std::make_shared<lm::Lut3D>(kSlotLutSize);
+        if (onDisk.empty()) writeTextFile(base + ".key", keyText);
+        cache[{slot, skey}] = lut;
+        return lut;
+    }
+    const std::string ref = panelReferencePath(slot);
+    if (ref.empty()) {
+        lmLog("Render: slot %ld could not be matched: no reference file", slot);
+        cache[{slot, skey}] = nullptr;
+        return nullptr;
+    }
+    std::shared_ptr<const lmpanel::SlotSource> source;
+    if (auto s = sources.find(slot); s != sources.end()) source = s->second;
+    if (!source) source = lmpanel::readSlotSource(base + ".src");
+    std::string error;
+    if (!source) {
         std::vector<float> frame;
         int width = 0, height = 0;
-        if (!ref.empty() && !getFrame(frame, width, height)) error = "could not read the frame";
-        if (error.empty() && !ref.empty() && isMediaPending(frame, width, height)) {
+        if (!getFrame(frame, width, height)) error = "could not read the frame";
+        else if (isMediaPending(frame, width, height)) {
             lmLog("Render: slot %ld waits: the frame is Premiere's Media pending card", slot);
             return nullptr;  // not cached: try again on the next render
-        }
-        else if (logEnabled() && !ref.empty()) dumpFrame(refsDir() + std::to_string(slot) + "-source.png", frame, width, height);
-        std::string analysis;
-        if (!ref.empty() && error.empty() && buildMatch(ref.c_str(), frame, width, height, params, *built, error, &analysis)) {
-            writeSlotLut(file, *built);
-            writeTextFile(refsDir() + std::to_string(slot) + ".json", analysis);
-            lut = built;
-            lmLog("Render: slot %ld matched to %s", slot, ref.c_str());
         } else {
-            lmLog("Render: slot %ld could not be matched: %s", slot, ref.empty() ? "no reference file" : error.c_str());
-            if (!ref.empty()) writeTextFile(refsDir() + std::to_string(slot) + ".json", "{\"error\":\"" + error + "\"}");
+            if (logEnabled()) dumpFrame(base + "-source.png", frame, width, height);
+            auto prepared = std::make_shared<lmpanel::SlotSource>();
+            if (prepareSource(frame, width, height, params, *prepared, error)) {
+                lmpanel::writeSlotSource(base + ".src", *prepared);
+                source = prepared;
+            }
         }
     }
-    cache[slot] = lut;
+    if (source) {
+        sources[slot] = source;
+        if (sources.size() > 64) sources.erase(sources.begin());
+        auto built = std::make_shared<lm::Lut3D>(kSlotLutSize);
+        std::string analysis;
+        if (buildFromSource(ref.c_str(), *source, params, *built, error, &analysis)) {
+            writeSlotLut(file, *built);
+            writeTextFile(base + ".key", keyText);
+            writeTextFile(base + ".json", analysis);
+            lut = built;
+            lmLog("Render: slot %ld matched to %s (settings %s)", slot, ref.c_str(), keyText.c_str());
+        }
+    }
+    if (!lut) {
+        lmLog("Render: slot %ld could not be matched: %s", slot, error.c_str());
+        writeTextFile(base + ".json", "{\"error\":\"" + error + "\"}");
+    }
+    cache[{slot, skey}] = lut;
     return lut;
 }
 
@@ -934,7 +1062,7 @@ PF_Err UserChangedParam(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* p
                 path = md->referencePath;
                 PF_UNLOCK_HANDLE(mh);
             }
-            if (path.empty()) { setError(out_data, "LookMatch: load a reference image first."); return PF_Err_NONE; }
+            if (path.empty()) { setError(out_data, "Komodo: load a reference image first."); return PF_Err_NONE; }
             return ComputeMatch(in_data, out_data, params, path.c_str());
         }
         case P_REF_SLOT: {
@@ -942,15 +1070,15 @@ PF_Err UserChangedParam(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* p
             lmLog("UserChangedParam: Reference Slot = %ld", slot);
             if (slot <= 0) return PF_Err_NONE;
             std::string path = panelReferencePath(slot);
-            if (path.empty()) { setError(out_data, "LookMatch: the panel's reference for this clip is missing."); return PF_Err_NONE; }
+            if (path.empty()) { setError(out_data, "Komodo: the panel's reference for this clip is missing."); return PF_Err_NONE; }
             return ComputeMatch(in_data, out_data, params, path.c_str());
         }
         case P_BAKE: {
             long slot = long(F(params, P_REF_SLOT));
-            if (slot <= 0) { setError(out_data, "LookMatch: this clip has no match from the panel to save."); return PF_Err_NONE; }
+            if (slot <= 0) { setError(out_data, "Komodo: this clip has no match from the panel to save."); return PF_Err_NONE; }
             std::shared_ptr<const lm::Lut3D> lut = readSlotLut(refsDir() + std::to_string(slot) + ".lut");
             if (!lut) {
-                setError(out_data, "LookMatch: the panel's match isn't built yet. Play over the clip once, then click "
+                setError(out_data, "Komodo: the panel's match isn't built yet. Play over the clip once, then click "
                                    "Save into Project again.");
                 return PF_Err_NONE;
             }
@@ -958,20 +1086,8 @@ PF_Err UserChangedParam(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* p
             lmLog("Bake: slot %ld -> Match Data", slot);
             return storeMatch(in_data, out_data, params, *lut, ref.c_str());
         }
-        case P_EXPORT_LUT: {
-            char path[1024] = {0};
-            if (!LM_SaveCubeDialog(path, sizeof path)) return PF_Err_NONE;
-            lm::Engine e;
-            e.setParams(readParams(params));
-            PF_Handle mh = params[P_MATCH_DATA]->u.arb_d.value;
-            if (MatchData* md = lockMatch(in_data, mh)) {
-                if (md->hasMatch) e.setMatchLut(lutFromMatch(md));
-                PF_UNLOCK_HANDLE(mh);
-            }
-            if (!e.bakeExportLut(65).writeCube(path, "LookMatch"))
-                setError(out_data, "LookMatch: could not write the LUT file.");
+        case P_EXPORT_LUT:  // hidden: Komodo looks aren't exported
             return PF_Err_NONE;
-        }
         default:
             return PF_Err_NONE;
     }
@@ -988,7 +1104,7 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
               input->height, int(input->rowbytes), fourcc(rawOut).c_str(), output->width, output->height,
               int(output->rowbytes));
     if (!canWrite(fmt) || inFmt != fmt) {
-        setError(out_data, "LookMatch: unsupported pixel format.");
+        setError(out_data, "Komodo: unsupported pixel format.");
         return PF_Err_BAD_CALLBACK_PARAM;
     }
     const int w = std::min(input->width, output->width), h = std::min(input->height, output->height);
@@ -1009,10 +1125,10 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
     std::shared_ptr<const lm::Lut3D> lut = id && id != pe->matchId ? lutFromMatch(md) : nullptr;
     if (md) PF_UNLOCK_HANDLE(mh);
     if (slotWins) {
-        constexpr uint64_t kSlotIdBase = 0x534C4F5400000000ull;  // 'SLOT'
         // Match from the frame this render is drawing for this clip (Render's input, before grading).
         // Checking out the layer at current_time is wrong here: in Premiere it returns whatever is on
         // the track at that sequence time, which for a clip that isn't under the playhead is another clip.
+        uint64_t slotId = 0;
         lut = slotLut(slot, [&](std::vector<float>& f, int& fw, int& fh) {
                           f = buf;
                           fw = w;
@@ -1020,30 +1136,14 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
                           lmLog("Render: slot %ld source = this render's input (t=%d/%u, %dx%d)", slot,
                                 int(in_data->current_time), unsigned(in_data->time_scale), w, h);
                           return true;
-                      }, params);
-        id = lut ? kSlotIdBase | uint64_t(slot) : 0;
+                      }, params, slotId);
+        id = lut ? slotId : 0;
     }
     if (id != pe->matchId) {
         pe->lut = id ? lut : nullptr;
         pe->engine.setMatchLut(pe->lut);
         pe->matchId = id;
         lmLog("Render: now using match %016llx", (unsigned long long)id);
-    }
-    // Panel "Export .cube": a new LUT Export Slot means write the current look to the path the panel
-    // left in refs/export-<slot>.txt, once per slot, and report in refs/export-<slot>.done.
-    const long exportSlot = long(F(params, P_EXPORT_SLOT));
-    if (exportSlot > 0) {
-        static std::mutex em;
-        static std::set<long> done;
-        std::lock_guard<std::mutex> lock(em);
-        if (done.insert(exportSlot).second) {
-            const std::string base = refsDir() + "export-" + std::to_string(exportSlot);
-            std::string target = fileLine(base + ".txt"), result = "ok";
-            if (target.empty()) result = "no export path";
-            else if (!pe->engine.bakeExportLut(65).writeCube(target, "LookMatch")) result = "could not write " + target;
-            if (FILE* f = std::fopen((base + ".done").c_str(), "wb")) { std::fputs(result.c_str(), f); std::fclose(f); }
-            lmLog("Render: export slot %ld -> %s (%s)", exportSlot, target.c_str(), result.c_str());
-        }
     }
     // Panel "hero clip": a new Capture Slot means save this clip's frame as a PNG the panel then uses
     // as the reference for other clips. Once per slot. Ungraded by default; with "graded" in

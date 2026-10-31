@@ -28,7 +28,7 @@ function makeComponent(matchName, params) {
 }
 
 function lookMatchComponent() {
-  const { TEXTURE_DEFAULTS, P } = require("../lib/params.js");
+  const { TEXTURE_DEFAULTS, ADJUST_DEFAULTS, P } = require("../lib/params.js");
   // popups are 0-based in Premiere's UXP API (Effect Controls shows them 1-based)
   return makeComponent("AE.PROPLUGS LookMatch", Object.assign({
     "Look Match": undefined, Reference: undefined, [P.matchStrength]: 100, [P.regionMatching]: 100,
@@ -36,7 +36,7 @@ function lookMatchComponent() {
     [P.filmStrength]: 0, "Negative Stock": 1, "Print Stock": 1, "Film Saturation": 100,
     [P.mix]: 100, [P.referenceSlot]: 0, [P.exportSlot]: 0, [P.captureSlot]: 0, "Thumbs Slot": 0, [P.split]: false, [P.splitPos]: 50, [P.splitAngle]: 0,
     [P.sourceFormat]: 0, [P.normExposure]: 100, [P.normWhite]: 100, [P.normContrast]: 100, [P.lookStrength]: 100, [P.matchContrast]: 100, [P.finish]: 100,
-  }, TEXTURE_DEFAULTS));
+  }, TEXTURE_DEFAULTS, ADJUST_DEFAULTS));
 }
 
 function makeItem(name, video, withLookMatch) {

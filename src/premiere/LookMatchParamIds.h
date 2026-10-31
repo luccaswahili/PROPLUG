@@ -77,7 +77,17 @@ enum ParamId {
     P_MATCH_CONTRAST,   // %: final tone match of the graded result to the reference's levels
     P_FIX_BANDING,      // checkbox: deband the source (skies), off by default
     P_SKIN_EVENING,     // %: pull skin's colour toward the skin around it
-    P_FINISH,           // %: lift the match to where a finished grade lands
+    P_FINISH,           // %: lift the match to where a finished grade lands ("Finish Band")
+    // tone and colour adjustments after the match (src/core/adjust.h)
+    P_ADJUST_TOPIC,
+    P_ADJ_EXPOSURE,     // stops
+    P_ADJ_CONTRAST,     // -100 .. 100
+    P_ADJ_SHADOWS,      // -100 .. 100
+    P_ADJ_HIGHLIGHTS,   // -100 .. 100
+    P_ADJ_WHITES,       // -100 .. 100
+    P_ADJ_SATURATION,   // -100 .. 100
+    P_ADJ_TEMPERATURE,  // -100 .. 100
+    P_ADJUST_TOPIC_END,
     P_NUM_PARAMS
 };
 
@@ -94,5 +104,7 @@ enum DiskId {
     D_MATCH_CONTRAST,
     D_FIX_BANDING,
     D_SKIN_EVENING,
-    D_FINISH
+    D_FINISH,
+    D_ADJUST_TOPIC, D_ADJ_EXPOSURE, D_ADJ_CONTRAST, D_ADJ_SHADOWS, D_ADJ_HIGHLIGHTS, D_ADJ_WHITES, D_ADJ_SATURATION,
+    D_ADJ_TEMPERATURE, D_ADJUST_TOPIC_END
 };

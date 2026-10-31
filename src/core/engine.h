@@ -4,7 +4,8 @@
 //   1. gate weave (sub-pixel shift)          - spatial, full res
 //   2. decode input -> scene linear Rec.709, exposure / white balance / flicker gain
 //   3. halation, bloom, softness              - spatial, in scene linear (where light actually spreads)
-//   4. colour LUT                              - neutral display transform, look match, film negative+print, fade
+//   4. colour LUT                              - neutral display transform, look match, film negative+print,
+//                                                tone/colour adjustments (adjust.h), fade
 //                                                baked into one 3D LUT whenever colour settings change
 //   5. grain, vignette, mix                    - display space
 //
@@ -12,6 +13,7 @@
 #pragma once
 #include <memory>
 #include <vector>
+#include "adjust.h"
 #include "film.h"
 #include "lut3d.h"
 
@@ -29,6 +31,9 @@ struct Params {
     float filmStrength = 0;  // 0 = off, 1 = full print emulation
     FilmSettings film;
     float fade = 0;  // black lift 0..1
+    // tone and colour adjustments after the match and film (adjust.h): Exposure, Contrast, Shadows,
+    // Highlights, Whites, Saturation, Temperature
+    Adjust adjust;
     // film texture
     float halation = 0, halationRadius = 1, halationThreshold = 0.6f;
     float bloom = 0, bloomRadius = 1, bloomThreshold = 0.5f;
@@ -100,6 +105,7 @@ public:
     Engine();
     void setParams(const Params& p);  // cheap when only spatial settings change
     void setMatchLut(std::shared_ptr<const Lut3D> lut);
+    bool directLutStale() const { return directDirty_; }  // prepareDirect will rebuild the GPU LUT
     bool grades() const;  // the colour chain changes the picture (deband runs only then)
     const Params& params() const { return p_; }
 

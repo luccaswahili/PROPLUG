@@ -11,7 +11,7 @@
 resource 'PiPL' (16000) {
 	{
 		Kind { AEEffect },
-		Name { "LookMatch" },
+		Name { "Komodo" },
 		Category { "PRO PLUGS" },
 #ifdef AE_OS_WIN
 	#if defined(AE_PROC_INTELx64)
