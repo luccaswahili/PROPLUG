@@ -44,7 +44,7 @@ int main() {
 
     // they do what they say
     { Adjust a; a.contrast = 1; CHECK(adjustLightness(0.25f, a) < 0.25f && adjustLightness(0.75f, a) > 0.75f, "contrast"); }
-    { Adjust a; a.shadows = 1; CHECK(adjustLightness(0.3f, a) > 0.33f && std::fabs(adjustLightness(0.8f, a) - 0.8f) < 1e-6f, "shadows"); }
+    { Adjust a; a.shadows = 1; CHECK(adjustLightness(0.3f, a) > 0.45f && std::fabs(adjustLightness(0.8f, a) - 0.8f) < 1e-6f, "shadows"); }
     { Adjust a; a.highlights = -1; CHECK(adjustLightness(0.7f, a) < 0.67f && std::fabs(adjustLightness(0.3f, a) - 0.3f) < 1e-6f, "highlights"); }
     { Adjust a; a.whites = -1; CHECK(adjustLightness(1, a) < 0.92f && std::fabs(adjustLightness(0.4f, a) - 0.4f) < 1e-6f, "whites"); }
 
@@ -97,13 +97,13 @@ int main() {
     // Saturation: -1 is grey, +1 roughly doubles chroma, neutral stays neutral
     {
         const Vec3 s = {0.7f, 0.45f, 0.35f};
-        Adjust g; g.saturation = -1;
+        Adjust g; g.saturation = -0.5f;
         const Vec3 o = applyAdjust(s, g);
-        CHECK(std::fabs(o.r - o.g) < 0.003f && std::fabs(o.g - o.b) < 0.003f, "saturation -1 grey");
+        CHECK(std::fabs(o.r - o.g) < 0.003f && std::fabs(o.g - o.b) < 0.003f, "saturation -50 grey");
         Adjust d; d.saturation = 1;
         const Vec3 l0 = rgbToOklab(s), l1 = rgbToOklab(applyAdjust(s, d));
         const float c0 = std::hypot(l0.g, l0.b), c1 = std::hypot(l1.g, l1.b);
-        CHECK(c1 > 1.8f * c0 && c1 < 2.2f * c0, "saturation +1: %g -> %g", c0, c1);
+        CHECK(c1 > 1.6f * c0, "saturation +1: %g -> %g", c0, c1);  // 3x asked, gamut compression caps the top
         const Vec3 n = applyAdjust({0.5f, 0.5f, 0.5f}, d);
         CHECK(maxDiff(n, {0.5f, 0.5f, 0.5f}) < 0.003f, "neutral stays neutral");
     }

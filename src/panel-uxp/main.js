@@ -158,7 +158,7 @@ const GRADE = [
 ];
 // Tone and colour adjustments after the match: instant (no rebuild), 0 = untouched.
 const ADJUST = [
-  { param: P.adjExposure, title: "Exposure", min: -2, max: 2, step: 0.01, unit: "ev", def: 0,
+  { param: P.adjExposure, title: "Exposure", min: -4, max: 4, step: 0.01, unit: "ev", def: 0,
     desc: "Brightens or darkens the whole picture, in stops. Highlights roll into white instead of clipping." },
   { param: P.adjContrast, title: "Contrast", min: -100, max: 100, unit: "±", def: 0,
     desc: "Spreads or flattens the tones around mid grey. Black and white stay put; colours keep their hue." },
@@ -169,7 +169,7 @@ const ADJUST = [
   { param: P.adjWhites, title: "Whites", min: -100, max: 100, unit: "±", def: 0,
     desc: "Moves the white point: up for brighter whites, down for softer, creamier whites." },
   { param: P.adjSaturation, title: "Saturation", min: -100, max: 100, unit: "±", def: 0,
-    desc: "More or less colour everywhere. -100 is black and white." },
+    desc: "More or less colour everywhere. -50 and below is black and white; +100 is triple the colour." },
   { param: P.adjTemperature, title: "Temperature", min: -100, max: 100, unit: "±", def: 0,
     desc: "Warmer (right) or cooler (left), keeping brightness the same." },
 ];

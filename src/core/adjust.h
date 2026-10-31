@@ -19,12 +19,12 @@
 namespace lm {
 
 struct Adjust {
-    float exposure = 0;     // stops, -3 .. 3
+    float exposure = 0;     // stops, -4 .. 4
     float contrast = 0;     // -1 .. 1
     float shadows = 0;      // -1 .. 1
     float highlights = 0;   // -1 .. 1
     float whites = 0;       // -1 .. 1
-    float saturation = 0;   // -1 (grey) .. 1 (double chroma)
+    float saturation = 0;   // -1 .. 1: chroma x (1 + 2s), so -0.5 and below is grey, 1 is triple chroma
     float temperature = 0;  // -1 (cool) .. 1 (warm)
 
     bool active() const {
@@ -53,23 +53,28 @@ inline float bump(float x, float a, float b) {
 // setting in range, so tones never cross over (no solarised patches, no new contours).
 inline float adjustLightness(float L, const Adjust& a) {
     using adjust_detail::bump;
-    // Contrast: an S around mid grey that leaves black and white where they are.
-    // slope 1 + 0.45c at the pivot, 1 - 0.9c at the ends (>= 0.1).
-    if (a.contrast != 0) {
-        const float p = 0.5f;
-        const float x = std::clamp(L, 0.0f, 1.0f);
-        L = L + a.contrast * 0.45f * (x - p) * x * (1 - x) * 4;
+    // Each step is applied twice (strength doubled after Lucas's first test in Premiere, 2026-10-31). A curve
+    // that is monotonic applied to itself is still monotonic, so doubling this way can't make tones cross.
+    for (int pass = 0; pass < 2; ++pass) {
+        // Contrast: an S around mid grey that leaves black and white where they are.
+        // slope 1 + 0.45c at the pivot, 1 - 0.9c at the ends (>= 0.1).
+        if (a.contrast != 0) {
+            const float p = 0.5f;
+            const float x = std::clamp(L, 0.0f, 1.0f);
+            L = L + a.contrast * 0.45f * (x - p) * x * (1 - x) * 4;
+        }
+        // Shadows / Highlights: lift or lower the dark or bright half, black and white points kept.
+        // Amplitude 0.12 keeps the slope above ~0.38.
+        if (a.shadows != 0) L += 0.12f * a.shadows * bump(L, 0.0f, 0.62f);
+        if (a.highlights != 0) L += 0.12f * a.highlights * bump(L, 0.38f, 1.0f);
+        // Whites: moves the white end (and the top of the range with it), smoothly from L = 0.55 up.
+        if (a.whites != 0) {
+            const float t = std::clamp((L - 0.55f) / 0.45f, 0.0f, 1.0f);
+            L += 0.1f * a.whites * t * t;
+        }
+        L = std::clamp(L, 0.0f, 1.0f);
     }
-    // Shadows / Highlights: lift or lower the dark or bright half, black and white points kept.
-    // Amplitude 0.12 keeps the slope above ~0.38.
-    if (a.shadows != 0) L += 0.12f * a.shadows * bump(L, 0.0f, 0.62f);
-    if (a.highlights != 0) L += 0.12f * a.highlights * bump(L, 0.38f, 1.0f);
-    // Whites: moves the white end (and the top of the range with it), smoothly from L = 0.55 up.
-    if (a.whites != 0) {
-        const float t = std::clamp((L - 0.55f) / 0.45f, 0.0f, 1.0f);
-        L += 0.1f * a.whites * t * t;
-    }
-    return std::clamp(L, 0.0f, 1.0f);
+    return L;
 }
 
 // display Rec.709 code values in, display code values out
@@ -79,7 +84,7 @@ inline Vec3 applyAdjust(Vec3 code, const Adjust& a) {
     if (a.exposure != 0 || a.temperature != 0) {
         Vec3 lin = {rec709Decode(c.r), rec709Decode(c.g), rec709Decode(c.b)};
         // warm = more red / less blue, normalised so brightness stays the same (same as the input gain)
-        Vec3 g(std::exp2(0.3f * a.temperature), 1.0f, std::exp2(-0.3f * a.temperature));
+        Vec3 g(std::exp2(0.6f * a.temperature), 1.0f, std::exp2(-0.6f * a.temperature));
         g = g * (std::exp2(a.exposure) / luma709(g));
         lin = lin * g;
         // When a gain goes above 1, roll that channel's top into white instead of clipping it flat:
@@ -99,7 +104,7 @@ inline Vec3 applyAdjust(Vec3 code, const Adjust& a) {
     if (a.contrast != 0 || a.shadows != 0 || a.highlights != 0 || a.whites != 0 || a.saturation != 0) {
         Vec3 lab = rgbToOklab(clamp01(c));
         lab.r = adjustLightness(lab.r, a);
-        const float chroma = std::max(0.0f, 1 + a.saturation);
+        const float chroma = std::max(0.0f, 1 + 2 * a.saturation);  // +100 = 3x chroma, -50 and below = grey
         lab.g *= chroma;
         lab.b *= chroma;
         c = oklabToRgbCompressed(lab, true);

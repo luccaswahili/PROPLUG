@@ -626,7 +626,7 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     AEFX_CLR_STRUCT(def);
     PF_ADD_TOPIC("Adjust", D_ADJUST_TOPIC);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_FLOAT_SLIDERX("Exposure", -3, 3, -2, 2, 0, PF_Precision_HUNDREDTHS, 0, 0, D_ADJ_EXPOSURE);
+    PF_ADD_FLOAT_SLIDERX("Exposure", -4, 4, -4, 4, 0, PF_Precision_HUNDREDTHS, 0, 0, D_ADJ_EXPOSURE);
     AEFX_CLR_STRUCT(def);
     PF_ADD_FLOAT_SLIDERX("Contrast", -100, 100, -100, 100, 0, PF_Precision_TENTHS, 0, 0, D_ADJ_CONTRAST);
     AEFX_CLR_STRUCT(def);
