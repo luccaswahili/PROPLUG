@@ -60,7 +60,7 @@ section[hidden] { display: none; }
 #drop.over { border-color: #a78bfa; background-color: #1a1230; }
 
 .matchrow { display: flex; align-items: center; gap: 8px; }
-.matchrow .source { flex: 1 1 0; min-width: 0; }
+.matchrow .source { flex: 0 0 128px; width: 128px; min-width: 0; }
 .matchrow .matchbtn { flex: 1 1 0; }
 .matchbtn { text-align: center; padding: 9px 0; border-radius: 12px; font-weight: 800; font-size: 14px; color: #ffffff;
             background-color: #7c3aed; cursor: pointer; letter-spacing: 0.5px; }
