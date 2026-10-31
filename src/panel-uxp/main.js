@@ -157,11 +157,6 @@ const GRADE = [
   { param: P.finish, title: "Finish", icon: "finish", def: 100, desc: "Lands the match at the levels of a finished grade: open highlights, firm blacks." },
   { param: P.skinEvening, title: "Skin Evening", icon: "skin", def: 50, desc: "Evens patchy skin tone toward the skin around it. No smoothing." },
 ];
-const SOURCE = [
-  { param: P.normExposure, title: "Even out exposure", desc: "How much of the clip's own exposure to even out before the look", def: 100 },
-  { param: P.normWhite, title: "Even out white balance", desc: "How much of the clip's own white balance to even out before the look", def: 100 },
-  { param: P.normContrast, title: "Even out contrast", desc: "How much of the clip's own contrast and saturation to even out before the look", def: 100 },
-];
 const updateAdvSub = () => {
   $("advSub").textContent = `Match ${Math.round(sliders.get(P.matchStrength).get())}% · Regions ${Math.round(sliders.get(P.regionMatching).get())}%`;
 };
@@ -189,7 +184,6 @@ const TEXTURE_MORE = [
 ].map((c) => Object.assign({ def: TEXTURE_DEFAULTS[c.param] }, c));
 
 for (const c of GRADE) $("gradeControls").appendChild(makeSlider(c));
-for (const c of SOURCE) $("sourceControls").appendChild(makeSlider(Object.assign({ mini: true }, c)));
 for (const c of ADVANCED) $("advancedControls").appendChild(makeSlider(Object.assign({ mini: true }, c)));
 for (const c of TEXTURE) $("textureControls").appendChild(makeSlider(c));
 for (const c of TEXTURE_MORE) $("textureMore").appendChild(makeSlider(Object.assign({ mini: true }, c)));
