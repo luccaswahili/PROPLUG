@@ -19,7 +19,7 @@ const char* transferName(Transfer t);       // "Sony S-Log3 / S-Gamut3.Cine"
 const char* transferShortName(Transfer t);  // "S-Log3"
 inline bool isLog(Transfer t) { return t != Transfer::Rec709 && t != Transfer::SRGB; }
 // the curve a frame detected as log is decoded with when nothing names its curve
-constexpr Transfer kGuessedLog = Transfer::SLog3;
+constexpr Transfer kGuessedLog = Transfer::FLog;
 
 float transferDecode(Transfer t, float code);   // code value 0..1 -> linear (camera primaries)
 float transferEncode(Transfer t, float linear);  // and back
@@ -71,10 +71,24 @@ struct TransferGuess {
 // clipping, low saturation and a histogram bunched in the middle are log.
 TransferGuess detectTransfer(const Image& codes);
 
+// Which log curve, from the pixels, for footage with nothing in its metadata. `frames` should be at full
+// resolution: the noise cue needs real grain. Every candidate gets a score from its black floor, its highlight
+// clip level, how well its decode fits sensor noise (shot + read) across levels, whether the decode is exposed
+// sensibly and whether skin lands on the skin line.
+struct LogRank {
+    Transfer transfer = kGuessedLog;  // the curve to use: the best, or kGuessedLog if nothing stands out
+    bool detected = false;            // false: fell back to kGuessedLog
+    float confidence = 0;             // 0..1, the best candidate's share of the score
+    std::vector<std::pair<Transfer, float>> ranked;  // best first
+    std::string label() const;        // "F-Log 72%", "F-Log (default)"
+};
+LogRank rankLogCurves(const std::vector<const Image*>& frames);
+
 struct SceneAnalysis {
     Transfer transfer = Transfer::Rec709;
     float logScore = 0;
     bool transferFromUser = false;  // set by an override / metadata rather than detected
+    std::string transferGuess;      // the log detector's verdict, when it chose the curve
     float exposure = 0;             // stops: scene key vs 18% grey (after white balance)
     float whiteX = kD65x, whiteY = kD65y;  // chromaticity neutral objects have in the frame
     float cct = 6504, tint = 0;

@@ -10,7 +10,7 @@ const { Library, joinPath, baseName } = require("./lib/library.js");
 const { Bridge } = require("./lib/bridge.js");
 const { runSelfTest } = require("./lib/selftest.js");
 
-const VERSION = "0.7.0";  // kept equal to manifest.json by build_panel.sh
+const VERSION = "0.9.0";  // kept equal to manifest.json by build_panel.sh
 const DATA_DIR = os.platform() === "win32"
   ? joinPath(process.env.APPDATA || "", "PRO PLUGS\\LookMatch")
   : joinPath(os.homedir(), "Library/Application Support/PRO PLUGS/LookMatch");
@@ -178,6 +178,7 @@ bindSlider("normWhite", "normWhiteV");
 bindSlider("normContrast", "normContrastV");
 bindSlider("lookStrength", "lookStrengthV");
 bindSlider("matchContrast", "matchContrastV");
+bindSlider("finish", "finishV");
 
 // Source Format picker: 1 = Auto, then the effect's popup order
 const sourceMenu = $("sourceMenu");
@@ -200,6 +201,7 @@ function matchSettings() {
     [P.normContrast]: Number($("normContrast").value),
     [P.lookStrength]: Number($("lookStrength").value),
     [P.matchContrast]: Number($("matchContrast").value),
+    [P.finish]: Number($("finish").value),
   };
 }
 
@@ -208,7 +210,7 @@ function matchSettings() {
 const fmtStops = (v) => (v >= 0 ? "+" : "") + v.toFixed(2);
 const fmtTint = (v) => (v >= 0 ? "+" : "") + v.toFixed(1);
 function analysisTable(a) {
-  const col = (x) => x ? [x.transfer + (x.log ? " (log)" : ""), fmtStops(x.exposure), `${Math.round(x.cct)} K`, fmtTint(x.tint),
+  const col = (x) => x ? [(x.guess || x.transfer) + (x.log ? " (log)" : ""), fmtStops(x.exposure), `${Math.round(x.cct)} K`, fmtTint(x.tint),
                           `${x.contrast.toFixed(1)} st`] : ["", "", "", "", ""];
   const rows = ["Format", "Exposure", "Temperature", "Tint", "Contrast"];
   const s = col(a.source), r = col(a.result), f = col(a.reference);
@@ -340,7 +342,7 @@ const FILM_CONTROLS = [
   [P.halation, 0, 200, 1, "%"], [P.halationSize, 0.25, 3, 0.05, ""], [P.halationThreshold, 0.1, 2, 0.05, ""],
   [P.bloom, 0, 200, 1, "%"], [P.bloomSize, 0.25, 3, 0.05, ""], [P.bloomThreshold, 0.1, 2, 0.05, ""],
   [P.grain, 0, 200, 1, "%"], [P.grainSize, 0.5, 4, 0.05, ""], [P.grainColour, 0, 100, 1, "%"],
-  [P.softness, 0, 100, 1, "%"], [P.vignette, 0, 100, 1, "%"], [P.gateWeave, 0, 4, 0.05, ""], [P.flicker, 0, 100, 1, "%"],
+  [P.skinEvening, 0, 100, 1, "%"], [P.softness, 0, 100, 1, "%"], [P.vignette, 0, 100, 1, "%"], [P.gateWeave, 0, 4, 0.05, ""], [P.flicker, 0, 100, 1, "%"],
 ];
 const filmInputs = new Map();
 
@@ -386,7 +388,7 @@ $("readFilm").addEventListener("click", () => run("Read clip", async () => {
   if (!cur) throw new Error("Select a clip with LookMatch.");
   setFilmControls(cur.params);
   if (cur.params[P.matchStrength] !== undefined) $("strength").value = cur.params[P.matchStrength];
-  for (const [id, name] of [["normExposure", P.normExposure], ["normWhite", P.normWhite], ["normContrast", P.normContrast], ["lookStrength", P.lookStrength], ["matchContrast", P.matchContrast]])
+  for (const [id, name] of [["normExposure", P.normExposure], ["normWhite", P.normWhite], ["normContrast", P.normContrast], ["lookStrength", P.lookStrength], ["matchContrast", P.matchContrast], ["finish", P.finish]])
     if (cur.params[name] !== undefined) { $(id).value = cur.params[name]; $(`${id}V`).textContent = `${Math.round(cur.params[name])}%`; }
   if (cur.params[P.sourceFormat] !== undefined) $("sourceFormat").selectedIndex = Math.max(0, cur.params[P.sourceFormat] - 1);
   return `Read ${cur.name}`;
@@ -528,7 +530,7 @@ $("selfTest").addEventListener("click", () => run("Self-test", async () => {
     // dev builds only: lib/agent.js is left out of release packages
     require("./lib/agent.js").startAgent(fs, DATA_DIR, bridge, log, {
       // UI driving for tests: only these elements, only set value / click
-      fields: ["refPath", "lookName", "lookFile", "cubePath", "normExposure", "normWhite", "normContrast", "lookStrength", "matchContrast"],  // plus tab switching (uiTab)
+      fields: ["refPath", "lookName", "lookFile", "cubePath", "normExposure", "normWhite", "normContrast", "lookStrength", "matchContrast", "finish"],  // plus tab switching (uiTab)
       buttons: ["addRef", "matchSel", "matchSeq", "applyStrength", "beforeAfter", "abCompare", "heroRef", "heroMatchSeq", "readFilm", "resetFilm",
                 "applyFilm", "saveLook", "importLook", "exportCube", "selfTest", "probe", "showLog"],
       status: () => ({ text: $("status").textContent, kind: $("status").className }),

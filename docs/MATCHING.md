@@ -18,10 +18,15 @@ The Premiere effect calls it when it builds a match. The CPU and GPU paths both 
    LogC3 / AWG3, LogC4 / AWG4, Canon Log 3 / Cinema Gamut, V-Log / V-Gamut, F-Log and F-Log2 / F-Gamut,
    Apple Log / Rec.2020, Blackmagic Film Gen5 / Wide Gamut, RED Log3G10 / REDWideGamutRGB, DJI D-Log / D-Gamut and
    DaVinci Intermediate / DaVinci Wide Gamut, plus Rec.709 and sRGB. Gamut matrices are derived from the published primaries; the AWG3 one is checked against
-   ARRI's matrix in `engine_tests`. Which log curve a frame uses can't be told from the picture: the curves differ by
-   about an exposure and contrast change. So a detected log clip is decoded with S-Log3 unless metadata, the file
-   name or the user says otherwise, and the following steps absorb most of the difference. S-Log3 sits in the middle
-   of the curve family; F-Log as the fallback raised the harness mean from 1.48 to 1.92 ΔE00.
+   ARRI's matrix in `engine_tests`. Which log curve a frame uses is hard to tell from the picture: the curves differ by
+   about an exposure and contrast change. Metadata, the file name or the user decide first. Otherwise `rankLogCurves`
+   scores every curve on the full frame: black floor, highlight clip level, how well the decode fits shot and read
+   noise, exposure and skin hue. A curve needs 80% of the score to be used, and the panel shows it ("F-Log 92%").
+   Below that, or if it doesn't win on most frames, the default is F-Log (`kGuessedLog`). It takes several frames, with
+   their scores averaged, not added. On noisy synthetic scenes of 12 curves it is right on 16 of 48 and never wrong,
+   and falls back on the rest. Real clips have no ground truth. Uncalibrated it read Artlist clip 587966 as Canon Log
+   3 at 92%, though F-Log puts skin on the skin line (44 deg against 53) and clips less. It now falls back on all five
+   real clips tried, and the Artlist file name rule still comes first.
    - **Artlist "LOG" clips** are re-exported through DaVinci Resolve as ProRes 422 HQ, tagged Rec.709, with no
      camera make, model or log tag. On six of them, F-Log reads closest to normal exposure: mean |exposure| 0.62 stops,
      against 0.91 for V-Log, 0.92 for S-Log3, 1.03 for LogC3 and Canon Log 3, and 1.41 for DaVinci Intermediate. That
@@ -40,8 +45,11 @@ The Premiere effect calls it when it builds a match. The CPU and GPU paths both 
    Planckian locus ×1000, positive = magenta, relative to D65 (so D65 reads 6504 K / 0). The clip is adapted to D65
    with Bradford. How far is scaled by how neutral those pixels really are. A scene with nothing grey in it (a
    blue-hour sky, a red-lit stage) keeps its colour rather than having it taken for a cast. That measure doesn't
-   change with a cast. An estimate that is both warm and magenta sits where skin does, not where light sources do,
-   so only half of such a cast is taken out. Otherwise a close-up's face would be neutralised.
+   change with a cast. An estimate that is both warm and magenta sits where skin and beige do, not where light sources
+   do, so hardly any of such a cast is taken out: 5% once it reads 10 tint and 4600 K or warmer, fading back to all of it
+   at 3 tint or 5600 K. On portrait 6439240 (3987 K, +13.8) taking out half turned the face ashy, doubled the colour
+   variation on the cheek (grey flecks) and made 45% of the dark eye pixels cyan. Now it is 1.3× the plain decode and
+   2.7%. A warm light on the locus, or a warm backdrop that reads as one, is still corrected in full.
    Before any of this, black bars are taken off the frame and off the reference (`cropBars`): rows and columns at
    the edges that are at least 99% below 0.03. A sequence can hand the effect a clip with pillarbox or letterbox
    bars. Read as picture, 6% of bars turned a 3.4-stop clip into 11 stops, bent the tone curve and made skin
@@ -118,6 +126,13 @@ third the identity and two thirds the frame's own value distribution, so the gri
 (shadows of a dark clip, the middle band of log). The GPU filter applies the same shaper and LUT, and `gpu_tests`
 checks it matches the CPU: 0.000/255. A copy saved into the project (**Save into Project**) is resampled to 33³ on the
 same shaper, to keep projects small. Projects saved by earlier builds load unchanged: their Match Data has no shaper.
+
+8. **Finish** (default 100%). A match lands at the reference's levels, and a dark reference leaves a clip looking
+   underexposed. Graded by hand, the clips land in the same place whatever the reference: median lightness about
+   0.53, the 95th percentile about 0.86, blacks about where they were. So one smooth curve brings the frame to those
+   levels: all the way up from below, 70% of the way down from above, with the blacks of a bright clip left alone. Colour
+   follows the brightness and fades into white. Its slope is well above the tone curve's limits, so a big lift shows
+   more of the clip's noise and skin patches.
 
 ## Deband (contour rings in skies)
 
@@ -427,3 +442,17 @@ still miss the target:
   right curve from metadata, or with **Source Format**, removes it: with the true curve, every log encoding is
   ≤ 0.2 / 0.7.
 - **Clipped extremes** (+2 stops, 3200 K): information is gone.
+
+## Skin tone evening
+
+Pink and grey patches in skin are in the clip: they stay put from frame to frame, and brighter bumps are greyer. A lift
+makes them easier to see. With a match on, **Skin Evening** (default 50%) moves each skin pixel's colour part of the way
+to the skin around it, in the source code values before the grade, on the CPU and the GPU alike:
+
+- Colour here is the pixel minus its mean of R, G and B, so brightness doesn't change and pores and texture stay.
+- The average is over 24 neighbours on a disc of 240 px at 8K, scaled with frame height. A neighbour counts only if it
+  is skin, close in brightness and close in colour.
+- The mask is by colour only: warm, between lips' red and wood's yellow, with a little colour. A flat beige backdrop
+  inside it evens toward itself, so it hardly moves.
+
+The match cache key includes a hash of `src/core`, so an engine change misses the cache.

@@ -115,6 +115,7 @@ lm::Params readParams(PF_ParamDef* params[]) {
     p.film.printerPoints[2] = F(params, P_PRINTER_B);
     p.film.saturation = F(params, P_FILM_SAT) / 100.0f;
     p.deband = params[P_FIX_BANDING]->u.bd.value ? 1.0f : 0.0f;
+    p.skinEven = F(params, P_SKIN_EVENING) / 100.0f;
     p.fade = F(params, P_FADE) / 100.0f;
     p.halation = F(params, P_HALATION) / 100.0f;
     p.halationRadius = F(params, P_HALATION_RADIUS);
@@ -566,6 +567,10 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     PF_ADD_FLOAT_SLIDERX("Match Contrast", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_MATCH_CONTRAST);
     AEFX_CLR_STRUCT(def);
     PF_ADD_CHECKBOXX("Fix Sky Banding", FALSE, 0, D_FIX_BANDING);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Skin Evening", 0, 100, 0, 100, 50, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_SKIN_EVENING);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Finish", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_FINISH);
 
     out_data->num_params = P_NUM_PARAMS;
     return err;
@@ -645,6 +650,14 @@ bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, i
             src.px[size_t(y) * width + x] = e.neutralDisplay({p[0], p[1], p[2]});
         }
     });
+    // Source Format on Auto and nothing in the metadata: which log comes from the full frame, whose grain the detector reads
+    std::string logGuess;
+    int detected = -1;
+    if (!src.px.empty() && params[P_SOURCE_FORMAT]->u.pd.value - 2 < 0 && lm::isLog(lm::detectTransfer(lm::downsample(src, 480)).transfer)) {
+        const lm::LogRank rank = lm::rankLogCurves({&src});
+        detected = int(rank.transfer);
+        logGuess = rank.label();
+    }
     src = lm::downsample(src, 640);
     if (src.px.empty()) {
         error = "LookMatch: no footage under the playhead to match.";
@@ -676,14 +689,16 @@ bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, i
     // Footage Encoding set to a log curve: the Input group already decoded it, so the match sees display
     const bool decoded = params[P_INPUT_SPACE]->u.pd.value > 1;
     const int format = params[P_SOURCE_FORMAT]->u.pd.value - 2;  // -1 = Auto
-    mo.transfer = decoded ? int(lm::Transfer::Rec709) : format;
+    mo.transfer = decoded ? int(lm::Transfer::Rec709) : detected >= 0 ? detected : format;
+    mo.transferGuess = logGuess;
     mo.exposure = F(params, P_NORM_EXPOSURE) / 100.0f;
     mo.whiteBalance = F(params, P_NORM_WB) / 100.0f;
     mo.contrast = F(params, P_NORM_CONTRAST) / 100.0f;
     mo.lookStrength = F(params, P_LOOK_STRENGTH) / 100.0f;
     mo.matchContrast = F(params, P_MATCH_CONTRAST) / 100.0f;
+    mo.finish = F(params, P_FINISH) / 100.0f;
     const std::string cacheDir = refsDir().empty() ? "" : refsDir() + "cache/";
-    const std::string key = cacheDir.empty() ? "" : lmpanel::matchCacheKey(refPaths, src, mo, kMatchVersion, LM_DESCRIPTION);
+    const std::string key = cacheDir.empty() ? "" : lmpanel::matchCacheKey(refPaths, src, mo, kMatchVersion, LM_ENGINE_HASH);
     if (!key.empty()) {
         if (std::shared_ptr<const lm::Lut3D> hit = readSlotLut(cacheDir + key + ".lut")) {
             lutOut = *hit;

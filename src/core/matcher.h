@@ -36,12 +36,14 @@ MatchResult matchLook(const std::vector<Vec3>& reference, const std::vector<Vec3
 struct SceneMatchOptions {
     MatchOptions look;   // region strength, skin protect, balance, LUT size
     int transfer = -1;   // source encoding (Transfer index), -1 = detect
+    std::string transferGuess;  // the log detector's verdict, when it set `transfer`
     float exposure = 1;      // 0..1: how much to normalise exposure
     float whiteBalance = 1;  // 0..1: how much to neutralise the source's white balance
     float contrast = 1;      // 0..1: how much to undo the source's tone curve and saturation
     float lookStrength = 1;  // 0..1: how much of the reference's look to apply on top
     float matchContrast = 1; // 0..1: how far the graded result's blacks, shadows, mids, highlights and
                              // whites are brought to the reference's (final tone match)
+    float finish = 1;        // 0..1: how far the result is lifted to where a finished grade lands
     // how the look is carried over (internal; for the benchmark in tests/consistency_tests.cpp):
     // 0 = thing by thing (neutral axis, skin, hue sectors), 1 = statistical HM-MKL-HM transfer
     // (histogram match on lightness, Monge-Kantorovich linear map of the OKLab distribution, histogram

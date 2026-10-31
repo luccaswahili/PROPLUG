@@ -38,7 +38,9 @@ const P = {
   normContrast: "Normalise Contrast",
   lookStrength: "Look Strength",
   matchContrast: "Match Contrast",
+  finish: "Finish",
   fixBanding: "Fix Sky Banding",
+  skinEvening: "Skin Evening",
 };
 
 // Popup controls. The panel uses 1-based values like Effect Controls; Premiere's UXP API reads
@@ -55,7 +57,7 @@ const SOURCE_FORMATS = ["Auto (detect)", "Rec.709", "sRGB", "Sony S-Log3 / S-Gam
 const TEXTURE_DEFAULTS = {
   [P.fade]: 0, [P.halation]: 0, [P.halationSize]: 1, [P.halationThreshold]: 0.6,
   [P.bloom]: 0, [P.bloomSize]: 1, [P.bloomThreshold]: 0.5, [P.grain]: 0, [P.grainSize]: 1, [P.grainColour]: 30,
-  [P.softness]: 0, [P.vignette]: 0, [P.gateWeave]: 0, [P.flicker]: 0, [P.fixBanding]: false,
+  [P.softness]: 0, [P.vignette]: 0, [P.gateWeave]: 0, [P.flicker]: 0, [P.fixBanding]: false, [P.skinEvening]: 50,
 };
 
 // A/B compare on the selected clip: whole frame original (A) or matched (B), through the split view at

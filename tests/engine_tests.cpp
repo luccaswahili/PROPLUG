@@ -272,6 +272,7 @@ int main() {
         lm::SceneMatchOptions so;
         so.transfer = int(lm::Transfer::FLog);
         so.whiteBalance = 0;  // the backdrop may rightly move the white balance; this is about tone
+        so.finish = 0;
         const lm::SceneMatch small = lm::matchScene(ref, scene(0.3f), so), large = lm::matchScene(ref, scene(0.8f), so);
         auto luma = [](const lm::SceneMatch& m, float st) {
             const lm::Vec3 lin = lm::Vec3(0.70f, 0.50f, 0.42f) * (0.5f * std::exp2(st));
@@ -288,6 +289,173 @@ int main() {
         std::printf("tone: backdrop share 30%% vs 80%% moves skin by %.3f, slope step %.3f per quarter stop\n", worstShare, worstStep);
         CHECK(worstStep < 0.08f, "tone slope jumps by %.3f per quarter stop across skin", worstStep);
         CHECK(worstShare < 0.05f, "the backdrop's pixel share moves the curve by %.3f", worstShare);
+    }
+
+    {
+        // White balance: skin and warm beige are not a cast, a warm light is.
+        Image ref;
+        ref.width = 200; ref.height = 100;
+        for (int i = 0; i < ref.width * ref.height; ++i) {
+            const float v = 0.05f + 0.9f * float(i % ref.width) / float(ref.width);
+            ref.px.push_back({v, v, v});
+        }
+        Image img;  // a close-up against a warm backdrop: nothing in it is grey, it reads like portrait 6439240
+        img.width = 240; img.height = 135;
+        float bx, by;
+        cctTintToXy(3990, 13.8f, bx, by);
+        const Vec3 beige = adaptation(kD65x, kD65y, bx, by) * Vec3(1, 1, 1);
+        for (int y = 0; y < img.height; ++y)
+            for (int x = 0; x < img.width; ++x) {
+                const bool face = std::hypot(x - 120.0f, y - 67.0f) < 45;
+                const float l = 0.16f + 0.10f * float(x + y) / 375.0f, bump = 1 + 0.03f * std::sin(x * 0.7f) * std::sin(y * 0.9f);
+                const Vec3 lin = (face ? Vec3(l * 1.12f, l, l * 0.92f * bump) : Vec3(l, l, l)) * beige;
+                img.px.push_back(encodeFromRec709(Transfer::FLog, lin));
+            }
+        SceneMatchOptions wo;
+        wo.transfer = int(Transfer::FLog);
+        wo.finish = 0;  // the white balance alone
+        SceneMatchOptions off = wo;
+        off.whiteBalance = 0;
+        const SceneMatch on = matchScene(ref, img, wo), none = matchScene(ref, img, off);
+        const Vec3 code = encodeFromRec709(Transfer::FLog, Vec3(0.18f, 0.18f, 0.18f));
+        auto blueOverRed = [](Vec3 c) { return rec709Decode(c.b) / std::max(rec709Decode(c.r), 1e-5f); };
+        float x, y;
+        cctTintToXy(6204, 0, x, y);  // 300 K of cooling, as a gain
+        const Vec3 cool = adaptation(x, y, kD65x, kD65y) * Vec3(1, 1, 1);
+        const float moved = blueOverRed(on.exact(code)) / blueOverRed(none.exact(code));
+        std::printf("white balance: warm close-up reads %.0f K / %+.1f, blue/red moved x%.3f (300 K is x%.3f)\n", on.source.cct, on.source.tint,
+                    moved, cool.b / cool.r);
+        CHECK(on.source.tint > 10 && on.source.cct < 4600, "the warm close-up should read warm and magenta: %.0f K / %.1f", on.source.cct, on.source.tint);
+        CHECK(moved < cool.b / cool.r, "a warm close-up is cooled by more than 300 K: x%.3f", moved);
+        // its skin's colour variation stays about what the clip has
+        auto spread = [&](auto colour) {
+            double sum = 0, sq = 0; int cnt = 0;
+            for (int yy = 45; yy < 90; ++yy)
+                for (int xx = 95; xx < 145; ++xx) {
+                    const Vec3 lab = rgbToOklab(colour(img.px[size_t(yy) * img.width + xx]));
+                    const double C = std::hypot(lab.g, lab.b);
+                    sum += C; sq += C * C; ++cnt;
+                }
+            const double m = sum / cnt;
+            return float(std::sqrt(std::max(sq / cnt - m * m, 0.0)) / m);
+        };
+        const float plainSpread = spread([](Vec3 c) {
+            const Vec3 d = decodeToRec709(Transfer::FLog, c);
+            return Vec3(rec709Encode(clamp01(d.r)), rec709Encode(clamp01(d.g)), rec709Encode(clamp01(d.b)));
+        });
+        const float matchedSpread = spread([&](Vec3 c) { return on.exact(c); });
+        std::printf("white balance: skin chroma variation %.3f plain, %.3f matched\n", plainSpread, matchedSpread);
+        CHECK(matchedSpread < 1.3f * plainSpread, "skin flecks: chroma variation %.3f vs %.3f plain", matchedSpread, plainSpread);
+        // a real warm light still comes out: greys under 3200 K on the locus
+        Image lit = img;
+        cctTintToXy(3200, 0, x, y);
+        const Mat3 cast = adaptation(kD65x, kD65y, x, y);
+        std::mt19937 rng2(7);
+        std::uniform_real_distribution<float> u2(0, 1);
+        for (Vec3& c : lit.px) {
+            const float l = 0.02f + 0.6f * u2(rng2) * u2(rng2);
+            c = encodeFromRec709(Transfer::FLog, cast * Vec3(l, l, l));
+        }
+        const SceneMatch warm = matchScene(ref, lit, wo);
+        const float kept = blueOverRed(warm.exact(encodeFromRec709(Transfer::FLog, cast * Vec3(0.18f, 0.18f, 0.18f))));
+        std::printf("white balance: 3200 K scene reads %.0f K / %+.1f, its grey comes out blue/red %.3f\n", warm.source.cct, warm.source.tint, kept);
+        CHECK(std::abs(warm.source.cct - 3200) < 300, "tungsten scene reads %.0f K", warm.source.cct);
+        CHECK(kept > 0.85f && kept < 1.15f, "tungsten grey isn't corrected: blue/red %.3f", kept);
+    }
+
+    {
+        // Skin tone evening: blotches go, brightness and whatever isn't skin stay.
+        const int w = 400, h = 200;
+        std::vector<float> a(size_t(w) * h * 4), b;
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                float* p = a.data() + (size_t(y) * w + x) * 4;
+                const float tex = 0.01f * std::sin(x * 1.9f) * std::sin(y * 2.3f), bl = 0.006f * std::sin(x * 0.11f) * std::sin(y * 0.13f);
+                const Vec3 c = x < 200 ? Vec3(0.45f + bl + tex, 0.38f - bl + tex, 0.34f - bl + tex)   // skin, with colour blotches and fine texture
+                                       : x < 300 ? Vec3(0.50f, 0.30f, 0.30f)                            // lips next to it
+                                                 : Vec3(0.12f, 0.12f, 0.13f);                           // dark lashes or hair
+                p[0] = c.r; p[1] = c.g; p[2] = c.b; p[3] = 1;
+            }
+        const SkinEvenParams sp = skinEvenParams(1, 2160);
+        CHECK(sp.radius == 120 && skinEvenParams(1, 1080).radius == 60 && skinEvenParams(1, 4320).radius == 240 && skinEvenParams(0, 2160).radius == 0,
+              "skin evening radius %d", sp.radius);
+        double before = 0, after = 0, luma = 0, bleed = 0;
+        for (int y = 30; y < 170; ++y)
+            for (int x = 0; x < 300; ++x) {
+                const float* p = a.data() + (size_t(y) * w + x) * 4;
+                const Vec3 d = skinEvenAt(a.data(), w, h, w * 4, x, y, Vec3(p[0], p[1], p[2]), sp);
+                luma = std::max(luma, double(std::abs(d.r + d.g + d.b)));
+                if (x >= 200) { bleed = std::max({bleed, double(std::abs(d.r)), double(std::abs(d.g)), double(std::abs(d.b))}); continue; }
+                if (x < 30 || x > 170) continue;
+                const float m = (p[0] + p[1] + p[2]) / 3;
+                before += (p[0] - m) * (p[0] - m); after += (p[0] + d.r - m) * (p[0] + d.r - m);
+            }
+        const double spreadB = before, spreadA = after;
+        std::printf("skin evening: red-vs-mean energy %.3f -> %.3f, brightness moved %.6f, lips and lashes moved %.6f\n", spreadB, spreadA, luma, bleed);
+        CHECK(luma < 1e-4, "skin evening moved brightness by %.6f", luma);
+        CHECK(bleed < 1e-4, "skin colour bled into lips or lashes: %.6f", bleed);
+        // a different engine misses the match cache
+        Image f; f.width = f.height = 4; f.px.assign(16, Vec3(0.5f, 0.5f, 0.5f));
+        SceneMatchOptions ko;
+        CHECK(lmpanel::matchCacheKey({}, f, ko, 2, "engine-a") != lmpanel::matchCacheKey({}, f, ko, 2, "engine-b"), "an engine change must change the cache key");
+    }
+
+    {
+        // The log detector: each curve, encoded from a noisy linear scene with black, skin, greys and clipped highlights.
+        std::vector<Transfer> curves;
+        for (int t = 0; t < kTransferCount; ++t) if (isLog(Transfer(t))) curves.push_back(Transfer(t));
+        int right = 0, fellBack = 0, total = 0;
+        for (Transfer t : curves) {
+            int got[kTransferCount] = {0}, back = 0;
+            for (int seed = 0; seed < 4; ++seed) {
+                std::mt19937 rng(seed * 31 + int(t));
+                std::normal_distribution<float> g(0, 1);
+                Image f; f.width = 960; f.height = 540;
+                for (int y = 0; y < f.height; ++y)
+                    for (int x = 0; x < f.width; ++x) {
+                        const int band = x / 80;
+                        const float grey = 0.004f * std::exp2(float(band));          // greys from black up past clip
+                        Vec3 c = y < 180 ? Vec3(grey, grey, grey) : y < 360 ? Vec3(grey * 1.1f, grey * 0.8f, grey * 0.65f) : Vec3(grey * 0.7f, grey * 0.9f, grey * 1.15f);
+                        if (x < 16) c = Vec3(0, 0, 0);
+                        const float a = 0.0006f + 0.0002f * seed, b = 2e-6f;
+                        for (int ch = 0; ch < 3; ++ch) { float& v = ch == 0 ? c.r : ch == 1 ? c.g : c.b; v = std::max(v + g(rng) * std::sqrt(a * v + b), 0.0f); }
+                        const float top = 0.18f * std::exp2(6.0f);
+                        f.px.push_back(encodeFromRec709(t, Vec3(std::min(c.r, top), std::min(c.g, top), std::min(c.b, top))));
+                    }
+                const LogRank r = rankLogCurves({&f});
+                if (r.detected) ++got[int(r.transfer)]; else ++back;
+                right += r.detected && r.transfer == t; fellBack += !r.detected; ++total;
+            }
+            std::printf("log detector, %-10s:", transferShortName(t));
+            for (Transfer u : curves) if (got[int(u)]) std::printf(" %s x%d", transferShortName(u), got[int(u)]);
+            if (back) std::printf(" default x%d", back);
+            std::printf("\n");
+        }
+        std::printf("log detector: %d of %d right, %d fell back to the default\n", right, total, fellBack);
+    }
+
+    {
+        // Finish: a dark match is lifted to where a finished grade lands, a bright one pulled down toward it
+        auto scene = [](float gain) {
+            Image f; f.width = 160; f.height = 90;
+            for (int y = 0; y < 90; ++y) for (int x = 0; x < 160; ++x) {
+                const float v = gain * (0.08f + 0.5f * float(x) / 160), w = v * (1 + 0.1f * (y % 3));
+                f.px.push_back({rec709Encode(clamp01(w)), rec709Encode(clamp01(v)), rec709Encode(clamp01(v * 0.9f))});
+            }
+            return f;
+        };
+        auto medianL = [](const SceneMatch& m, const Image& f) {
+            std::vector<float> l; for (const Vec3& c : f.px) l.push_back(rgbToOklab(m.exact(c)).r);
+            std::sort(l.begin(), l.end()); return l[l.size() / 2];
+        };
+        const Image dark = scene(0.3f), bright = scene(1.4f);
+        SceneMatchOptions fo; fo.transfer = int(Transfer::Rec709);
+        SceneMatchOptions none = fo; none.finish = 0;
+        const float d0 = medianL(matchScene(dark, dark, none), dark), d1 = medianL(matchScene(dark, dark, fo), dark);
+        const float b0 = medianL(matchScene(bright, bright, none), bright), b1 = medianL(matchScene(bright, bright, fo), bright);
+        std::printf("finish: dark clip median %.3f -> %.3f, bright clip %.3f -> %.3f\n", d0, d1, b0, b1);
+        CHECK(d0 < 0.5f && std::abs(d1 - 0.53f) < 0.03f, "finish lands a dark clip at %.3f (from %.3f)", d1, d0);
+        CHECK(b0 > 0.58f && b1 < b0 - 0.03f && b1 > 0.53f, "finish took a bright clip from %.3f to %.3f", b0, b1);
     }
 
     std::printf(failures ? "%d check(s) failed\n" : "all engine tests passed\n", failures);
