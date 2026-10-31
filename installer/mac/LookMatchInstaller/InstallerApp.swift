@@ -502,9 +502,8 @@ struct DoneView: View {
             Card {
                 VStack(alignment: .leading, spacing: 10) {
                     step("1", "Open Premiere Pro.")
-                    step("2", "Effects > Video Effects > PRO PLUGS > Komodo, drag it onto a clip.")
                     if model.panelResult == .installed {
-                        step("3", "Window > UXP Plugins > Komodo opens the panel. Drop a still, click Match.")
+                        step("2", "Window > UXP Plugins > Komodo opens the panel. Drop a still, click Match.")
                     }
                 }
             }
