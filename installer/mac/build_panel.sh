@@ -15,8 +15,9 @@ grep -q "const VERSION = \"$VERSION\"" "$SRC/main.js" || { echo "main.js VERSION
 node "$SRC/test/run.js" >/dev/null || { node "$SRC/test/run.js"; exit 1; }
 
 STAGE="$OUT/panel-stage"
-rm -rf "$STAGE" && mkdir -p "$STAGE/lib" "$OUT"
+rm -rf "$STAGE" && mkdir -p "$STAGE/lib" "$STAGE/icons" "$OUT"
 cp "$SRC/manifest.json" "$SRC/index.html" "$SRC/main.js" "$SRC/styles.css" "$STAGE/"
+cp "$SRC"/icons/*.svg "$STAGE/icons/"
 for f in "$SRC"/lib/*.js; do
   [ "$RELEASE" = 1 ] && [ "$(basename "$f")" = agent.js ] && continue
   cp "$f" "$STAGE/lib/"

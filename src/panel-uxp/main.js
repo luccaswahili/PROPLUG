@@ -79,10 +79,11 @@ for (const item of document.querySelectorAll("[data-tool]")) {
 for (const f of document.querySelectorAll(".fold")) {
   f.querySelector(".fold-head").addEventListener("click", () => {
     f.classList.toggle("open");
-    f.querySelector(".chev").textContent = f.classList.contains("open") ? "▾" : "▸";
+    f.querySelector(".chev").textContent = f.classList.contains("open") ? "⌄" : "›";
   });
 }
 
+for (const sw of document.querySelectorAll(".sw")) sw.innerHTML = '<div class="k"></div>';
 const isOn = (id) => $(id).classList.contains("on");
 const setOn = (id, on) => $(id).classList.toggle("on", !!on);
 
@@ -100,14 +101,17 @@ function fmt(v, unit) {
   return unit === "%" ? `${Math.round(v)}%` : (Math.round(v * 100) / 100).toString();
 }
 
-// One control row, Lumetri style: name, slider, value. The description is the row's tooltip.
-function makeSlider({ param, title, desc, min = 0, max = 100, step = 1, unit = "%", def, onChange }) {
+// A control tile (icon, bold title, value, one line, slider), or a compact row with `mini`.
+function makeSlider({ param, title, desc, icon, min = 0, max = 100, step = 1, unit = "%", def, mini, onChange }) {
   const el = document.createElement("div");
-  el.className = "srow";
-  if (desc) el.title = desc;
-  el.innerHTML = `<span class="ctl-title"></span>` +
-    `<div class="slider"><div class="track"></div><div class="fill"></div><div class="thumb"></div></div><span class="ctl-val"></span>`;
+  el.className = mini ? "mini" : "ctl";
+  if (mini && desc) el.title = desc;
+  el.innerHTML = (mini ? "" : `<div class="ico"><img src="icons/${icon}.svg" alt=""></div>`) +
+    `<div class="ctl-main"><div class="ctl-top"><span class="ctl-title"></span><span class="ctl-val"></span></div>` +
+    (desc && !mini ? `<div class="ctl-desc"></div>` : "") +
+    `<div class="slider"><div class="track"></div><div class="fill"></div><div class="thumb"></div></div></div>`;
   el.querySelector(".ctl-title").textContent = title;
+  if (desc && !mini) el.querySelector(".ctl-desc").textContent = desc;
   const bar = el.querySelector(".slider"), fill = el.querySelector(".fill"), thumb = el.querySelector(".thumb");
   const val = el.querySelector(".ctl-val");
   let value = def;
@@ -143,29 +147,29 @@ function makeSlider({ param, title, desc, min = 0, max = 100, step = 1, unit = "
 }
 
 const GRADE = [
-  { param: P.lookStrength, title: "Look Strength", def: 100, desc: "How much of the reference's look goes on." },
-  { param: P.matchContrast, title: "Match Contrast", def: 100,
+  { param: P.lookStrength, title: "Look Strength", icon: "look", def: 100, desc: "How much of the reference's look goes on." },
+  { param: P.matchContrast, title: "Match Contrast", icon: "contrast", def: 100,
     desc: "Brings blacks, mids and whites to the reference's levels. Skin is kept from crushing." },
-  { param: P.finish, title: "Finish", def: 100, desc: "Lands the match at the levels of a finished grade: open highlights, firm blacks." },
-  { param: P.skinEvening, title: "Skin Evening", def: 50, desc: "Evens patchy skin tone toward the skin around it. No smoothing." },
+  { param: P.finish, title: "Finish", icon: "finish", def: 100, desc: "Lands the match at the levels of a finished grade: open highlights, firm blacks." },
+  { param: P.skinEvening, title: "Skin Evening", icon: "skin", def: 50, desc: "Evens patchy skin tone toward the skin around it. No smoothing." },
 ];
 const SOURCE = [
-  { param: P.normExposure, title: "Exposure", desc: "How much of the clip's own exposure to even out before the look", def: 100 },
-  { param: P.normWhite, title: "White balance", desc: "How much of the clip's own white balance to even out before the look", def: 100 },
-  { param: P.normContrast, title: "Contrast", desc: "How much of the clip's own contrast and saturation to even out before the look", def: 100 },
+  { param: P.normExposure, title: "Even out exposure", desc: "How much of the clip's own exposure to even out before the look", def: 100 },
+  { param: P.normWhite, title: "Even out white balance", desc: "How much of the clip's own white balance to even out before the look", def: 100 },
+  { param: P.normContrast, title: "Even out contrast", desc: "How much of the clip's own contrast and saturation to even out before the look", def: 100 },
 ];
 const updateAdvSub = () => {
   $("advSub").textContent = `Match ${Math.round(sliders.get(P.matchStrength).get())}% · Regions ${Math.round(sliders.get(P.regionMatching).get())}%`;
 };
 const ADVANCED = [
-  { param: P.matchStrength, title: "Match", def: 100, onChange: updateAdvSub },
-  { param: P.regionMatching, title: "Regions", def: 100, onChange: updateAdvSub },
+  { param: P.matchStrength, title: "Match strength", def: 100, onChange: updateAdvSub },
+  { param: P.regionMatching, title: "Region matching", def: 100, onChange: updateAdvSub },
 ];
 const TEXTURE = [
-  { param: P.grain, title: "Grain", max: 200, def: TEXTURE_DEFAULTS[P.grain] },
-  { param: P.halation, title: "Halation", max: 200, def: TEXTURE_DEFAULTS[P.halation] },
-  { param: P.bloom, title: "Bloom", max: 200, def: TEXTURE_DEFAULTS[P.bloom] },
-  { param: P.vignette, title: "Vignette", def: TEXTURE_DEFAULTS[P.vignette] },
+  { param: P.grain, title: "Grain", icon: "grain", max: 200, def: TEXTURE_DEFAULTS[P.grain] },
+  { param: P.halation, title: "Halation", icon: "halation", max: 200, def: TEXTURE_DEFAULTS[P.halation] },
+  { param: P.bloom, title: "Bloom", icon: "bloom", max: 200, def: TEXTURE_DEFAULTS[P.bloom] },
+  { param: P.vignette, title: "Vignette", icon: "vignette", def: TEXTURE_DEFAULTS[P.vignette] },
 ];
 const TEXTURE_MORE = [
   { param: P.fade, title: "Fade" },
@@ -181,10 +185,10 @@ const TEXTURE_MORE = [
 ].map((c) => Object.assign({ def: TEXTURE_DEFAULTS[c.param] }, c));
 
 for (const c of GRADE) $("gradeControls").appendChild(makeSlider(c));
-for (const c of SOURCE) $("sourceControls").appendChild(makeSlider(c));
-for (const c of ADVANCED) $("advancedControls").appendChild(makeSlider(c));
+for (const c of SOURCE) $("sourceControls").appendChild(makeSlider(Object.assign({ mini: true }, c)));
+for (const c of ADVANCED) $("advancedControls").appendChild(makeSlider(Object.assign({ mini: true }, c)));
 for (const c of TEXTURE) $("textureControls").appendChild(makeSlider(c));
-for (const c of TEXTURE_MORE) $("textureMore").appendChild(makeSlider(c));
+for (const c of TEXTURE_MORE) $("textureMore").appendChild(makeSlider(Object.assign({ mini: true }, c)));
 updateAdvSub();
 
 // switches that write a checkbox live
@@ -250,7 +254,7 @@ async function renderRefs() {
     const div = document.createElement("div");
     div.className = "ref" + (selectedRefs.some((r) => r.id === ref.id) ? " sel" : "");
     div.title = ref.path;
-    div.innerHTML = `<div class="img"><img alt=""><div class="x" title="Remove">×</div></div><div class="n"></div>`;
+    div.innerHTML = `<img alt=""><div class="n"></div><div class="x" title="Remove">×</div>`;
     div.querySelector(".n").textContent = ref.name.replace(/\.(png|jpe?g|bmp|tga)$/i, "");
     div.addEventListener("click", (ev) => {
       if (ev.target.classList.contains("x")) {

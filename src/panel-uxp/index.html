@@ -8,8 +8,9 @@
   <!-- fixed: brand, tabs and status; everything under them scrolls inside #content -->
   <header>
     <div class="brand">
-      <div class="name">Komodo</div><div class="ver" id="version"></div>
-      <div class="iconbtn" id="menuBtn" title="Tools">☰</div>
+      <div class="logo"><img src="icons/logo.svg" alt=""></div>
+      <div class="brand-text"><div class="name">Komodo</div><div class="ver" id="version">PRO PLUGS</div></div>
+      <div class="iconbtn" id="menuBtn" title="More">☰</div>
     </div>
     <div class="menu" id="menu" hidden>
       <div class="menu-item" data-tool="selfTest">Run self-test</div>
@@ -21,72 +22,77 @@
       <div class="tab" data-tab="texture">Texture</div>
       <div class="tab" data-tab="library">Library</div>
     </div>
-    <div id="status" class="status"><span id="statusText">Select a clip on the timeline</span></div>
+    <div id="status" class="status"><div class="dot"></div><span id="statusText">Select a clip on the timeline</span></div>
   </header>
 
   <main id="content">
   <!-- MATCH -->
   <section data-panel="match">
-    <div class="sec-label">Reference</div>
-    <div id="drop">
-      <div class="refs" id="refGrid" title="Drop a still anywhere on the panel. Cmd-click to combine 2 to 5 stills of one look."></div>
+    <div class="sec-label">REFERENCE</div>
+    <div class="card" id="drop">
+      <div class="refs" id="refGrid"></div>
+      <div class="hint">Drop a still anywhere on the panel. ⌘-click to combine 2 to 5 stills of one look.</div>
     </div>
 
     <div class="matchbtn" id="matchBtn">Match</div>
 
-    <div class="toggle-row" id="beforeAfter" title="Split the Program monitor: original on the left">
-      <div class="sw" id="baSw"></div><span>Before / after</span>
+    <div class="card toggle-row" id="beforeAfter">
+      <span>Before / after <span class="dim">· split in the monitor</span></span>
+      <div class="sw" id="baSw"></div>
     </div>
 
-    <div class="sec-label">Grade</div>
+    <div class="sec-label">GRADE</div>
     <div id="gradeControls" class="stack"></div>
 
     <div class="fold" id="foldSource">
-      <div class="fold-head"><span class="chev">▸</span><span class="fold-title">Source</span><span class="sub" id="srcSub">Auto</span></div>
+      <div class="fold-head"><span class="chev">›</span><span class="fold-title">Source</span><span class="sub" id="srcSub">Auto</span></div>
       <div class="fold-body">
         <sp-picker id="sourceFormat" size="s"><sp-menu id="sourceMenu" slot="options"></sp-menu></sp-picker>
-        <div class="hint" id="detected">Auto reads the clip's colour metadata, then the picture itself.</div>
+        <div class="detected" id="detected">Auto reads the clip's colour metadata, then the picture itself.</div>
         <div id="sourceControls" class="stack"></div>
       </div>
     </div>
     <div class="fold" id="foldAdvanced">
-      <div class="fold-head"><span class="chev">▸</span><span class="fold-title">Advanced</span><span class="sub" id="advSub"></span></div>
+      <div class="fold-head"><span class="chev">›</span><span class="fold-title">Advanced</span><span class="sub" id="advSub"></span></div>
       <div class="fold-body">
         <div id="advancedControls" class="stack"></div>
-        <div class="toggle-row plain"><div class="sw on" id="autoSkinSw"></div><span>Auto skin protect</span></div>
+        <div class="toggle-row plain"><span>Auto skin protect</span><div class="sw on" id="autoSkinSw"></div></div>
       </div>
     </div>
     <div class="fold" id="foldAnalysis">
-      <div class="fold-head"><span class="chev">▸</span><span class="fold-title">Analysis</span><span class="sub" id="anSub"></span></div>
+      <div class="fold-head"><span class="chev">›</span><span class="fold-title">Analysis</span><span class="sub" id="anSub"></span></div>
       <div class="fold-body"><div id="analysis" class="analysis"><div class="hint">Match a clip to see its analysis.</div></div></div>
     </div>
   </section>
 
   <!-- TEXTURE -->
   <section data-panel="texture" hidden>
-    <div class="sec-label">Film texture</div>
+    <div class="sec-label">FILM TEXTURE</div>
     <div id="textureControls" class="stack"></div>
     <div class="fold" id="foldMore">
-      <div class="fold-head"><span class="chev">▸</span><span class="fold-title">More</span><span class="sub"></span></div>
+      <div class="fold-head"><span class="chev">›</span><span class="fold-title">More</span><span class="sub">Fade, softness, weave, flicker, sizes</span></div>
       <div class="fold-body"><div id="textureMore" class="stack"></div></div>
     </div>
-    <div class="toggle-row plain" title="Smooths rings in skies. Also softens fine skin texture and grain, so it's off unless a clip needs it."><div class="sw" id="bandSw"></div><span>Fix sky banding</span></div>
+    <div class="card">
+      <div class="toggle-row plain"><span>Fix sky banding</span><div class="sw" id="bandSw"></div></div>
+      <div class="hint">Smooths rings in skies. Also softens fine skin texture and grain, so it's off unless a clip needs it.</div>
+    </div>
   </section>
 
   <!-- LIBRARY -->
   <section data-panel="library" hidden>
-    <div class="sec-label">Saved looks</div>
+    <div class="sec-label">LIBRARY</div>
     <div id="savedList" class="list"></div>
     <div class="row">
       <sp-textfield id="lookName" placeholder="Look name" class="grow"></sp-textfield>
-      <div class="btn" id="saveLook">Save look</div>
+      <div class="btn-o" id="saveLook">+ Save current look</div>
     </div>
-    <div class="hint">Saves the reference with the grade, source and texture settings.</div>
+    <div class="hint">Saves the reference, the grade, source and texture settings. Looks stay inside Komodo.</div>
   </section>
 
   <!-- TOOLS (from the ☰ menu) -->
   <section data-panel="tools" hidden>
-    <div class="sec-label">Tools</div>
+    <div class="sec-label">TOOLS</div>
     <div class="row">
       <div class="chip" id="selfTest">Run self-test</div>
       <div class="chip" id="showLog">Effect log</div>
