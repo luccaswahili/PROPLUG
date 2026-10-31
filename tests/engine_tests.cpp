@@ -290,6 +290,77 @@ int main() {
         CHECK(worstShare < 0.05f, "the backdrop's pixel share moves the curve by %.3f", worstShare);
     }
 
+    {
+        // White balance: skin and warm beige are not a cast, a warm light is.
+        Image ref;
+        ref.width = 200; ref.height = 100;
+        for (int i = 0; i < ref.width * ref.height; ++i) {
+            const float v = 0.05f + 0.9f * float(i % ref.width) / float(ref.width);
+            ref.px.push_back({v, v, v});
+        }
+        Image img;  // a close-up against a warm backdrop: nothing in it is grey, it reads like portrait 6439240
+        img.width = 240; img.height = 135;
+        float bx, by;
+        cctTintToXy(3990, 13.8f, bx, by);
+        const Vec3 beige = adaptation(kD65x, kD65y, bx, by) * Vec3(1, 1, 1);
+        for (int y = 0; y < img.height; ++y)
+            for (int x = 0; x < img.width; ++x) {
+                const bool face = std::hypot(x - 120.0f, y - 67.0f) < 45;
+                const float l = 0.16f + 0.10f * float(x + y) / 375.0f, bump = 1 + 0.03f * std::sin(x * 0.7f) * std::sin(y * 0.9f);
+                const Vec3 lin = (face ? Vec3(l * 1.12f, l, l * 0.92f * bump) : Vec3(l, l, l)) * beige;
+                img.px.push_back(encodeFromRec709(Transfer::FLog, lin));
+            }
+        SceneMatchOptions wo;
+        wo.transfer = int(Transfer::FLog);
+        SceneMatchOptions off = wo;
+        off.whiteBalance = 0;
+        const SceneMatch on = matchScene(ref, img, wo), none = matchScene(ref, img, off);
+        const Vec3 code = encodeFromRec709(Transfer::FLog, Vec3(0.18f, 0.18f, 0.18f));
+        auto blueOverRed = [](Vec3 c) { return rec709Decode(c.b) / std::max(rec709Decode(c.r), 1e-5f); };
+        float x, y;
+        cctTintToXy(6204, 0, x, y);  // 300 K of cooling, as a gain
+        const Vec3 cool = adaptation(x, y, kD65x, kD65y) * Vec3(1, 1, 1);
+        const float moved = blueOverRed(on.exact(code)) / blueOverRed(none.exact(code));
+        std::printf("white balance: warm close-up reads %.0f K / %+.1f, blue/red moved x%.3f (300 K is x%.3f)\n", on.source.cct, on.source.tint,
+                    moved, cool.b / cool.r);
+        CHECK(on.source.tint > 10 && on.source.cct < 4600, "the warm close-up should read warm and magenta: %.0f K / %.1f", on.source.cct, on.source.tint);
+        CHECK(moved < cool.b / cool.r, "a warm close-up is cooled by more than 300 K: x%.3f", moved);
+        // its skin's colour variation stays about what the clip has
+        auto spread = [&](auto colour) {
+            double sum = 0, sq = 0; int cnt = 0;
+            for (int yy = 45; yy < 90; ++yy)
+                for (int xx = 95; xx < 145; ++xx) {
+                    const Vec3 lab = rgbToOklab(colour(img.px[size_t(yy) * img.width + xx]));
+                    const double C = std::hypot(lab.g, lab.b);
+                    sum += C; sq += C * C; ++cnt;
+                }
+            const double m = sum / cnt;
+            return float(std::sqrt(std::max(sq / cnt - m * m, 0.0)) / m);
+        };
+        const float plainSpread = spread([](Vec3 c) {
+            const Vec3 d = decodeToRec709(Transfer::FLog, c);
+            return Vec3(rec709Encode(clamp01(d.r)), rec709Encode(clamp01(d.g)), rec709Encode(clamp01(d.b)));
+        });
+        const float matchedSpread = spread([&](Vec3 c) { return on.exact(c); });
+        std::printf("white balance: skin chroma variation %.3f plain, %.3f matched\n", plainSpread, matchedSpread);
+        CHECK(matchedSpread < 1.3f * plainSpread, "skin flecks: chroma variation %.3f vs %.3f plain", matchedSpread, plainSpread);
+        // a real warm light still comes out: greys under 3200 K on the locus
+        Image lit = img;
+        cctTintToXy(3200, 0, x, y);
+        const Mat3 cast = adaptation(kD65x, kD65y, x, y);
+        std::mt19937 rng2(7);
+        std::uniform_real_distribution<float> u2(0, 1);
+        for (Vec3& c : lit.px) {
+            const float l = 0.02f + 0.6f * u2(rng2) * u2(rng2);
+            c = encodeFromRec709(Transfer::FLog, cast * Vec3(l, l, l));
+        }
+        const SceneMatch warm = matchScene(ref, lit, wo);
+        const float kept = blueOverRed(warm.exact(encodeFromRec709(Transfer::FLog, cast * Vec3(0.18f, 0.18f, 0.18f))));
+        std::printf("white balance: 3200 K scene reads %.0f K / %+.1f, its grey comes out blue/red %.3f\n", warm.source.cct, warm.source.tint, kept);
+        CHECK(std::abs(warm.source.cct - 3200) < 300, "tungsten scene reads %.0f K", warm.source.cct);
+        CHECK(kept > 0.85f && kept < 1.15f, "tungsten grey isn't corrected: blue/red %.3f", kept);
+    }
+
     std::printf(failures ? "%d check(s) failed\n" : "all engine tests passed\n", failures);
     return failures ? 1 : 0;
 }

@@ -1121,13 +1121,13 @@ SceneMatch matchSceneLook(const RefLook& rl, const Image& srcIn, const SceneMatc
     // colour instead of having it taken for a cast. The measure doesn't change with a cast. ----
     float wbConfidence = clamp01(res.source.neutralShare / 0.2f);
     {
-        // An estimate that is warm AND magenta sits where skin does, not where light sources do (they
-        // lie along the Planckian locus): in a frame that is mostly skin the "most neutral" pixels are
-        // skin highlights, and neutralising them fully turns a face grey and its highlights the look's
-        // colour of white. Take out half of such a cast.
+        // An estimate that is warm AND magenta sits where skin and beige do, not where light sources do
+        // (they lie along the Planckian locus): in a close-up against a warm backdrop the "most neutral"
+        // pixels are skin and backdrop, and neutralising them turns a face grey and its lashes cyan, and the
+        // skin's own colour variation shows as grey flecks. Hardly anything of such a cast is taken out.
         auto ramp = [](float a, float b, float x) { return clamp01((x - a) / (b - a)); };
-        const float skinLike = ramp(5.0f, 12.0f, res.source.tint) * ramp(5600.0f, 4400.0f, res.source.cct);
-        wbConfidence *= 1 - 0.5f * skinLike;
+        const float skinLike = ramp(3.0f, 10.0f, res.source.tint) * ramp(5600.0f, 4600.0f, res.source.cct);
+        wbConfidence *= 1 - 0.95f * skinLike;
     }
     const float cwe = cw * wbConfidence;
     const Mat3 wb = adaptation(kD65x + (res.source.whiteX - kD65x) * cwe, kD65y + (res.source.whiteY - kD65y) * cwe, kD65x, kD65y);
