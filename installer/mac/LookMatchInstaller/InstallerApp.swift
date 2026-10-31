@@ -391,11 +391,30 @@ struct Header: View {
     }
 }
 
+/// A white tick on a solid blue circle (the filled SF Symbol renders its tick dark in this window).
+struct BlueTick: View {
+    var size: CGFloat
+    var body: some View {
+        ZStack {
+            Circle().fill(K.blue)
+            Image(systemName: "checkmark").font(.system(size: size * 0.5, weight: .bold)).foregroundColor(.white)
+        }
+        .frame(width: size, height: size)
+    }
+}
+
 struct HostRow: View {
     let host: HostApp
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: icon).foregroundColor(color).font(.system(size: 13, weight: .semibold)).frame(width: 16)
+            Group {
+                if host.kind != .other && host.supported {
+                    BlueTick(size: 15)
+                } else {
+                    Image(systemName: icon).foregroundColor(color).font(.system(size: 13, weight: .semibold))
+                }
+            }
+            .frame(width: 16)
             VStack(alignment: .leading, spacing: 1) {
                 Text(host.name + (host.version.isEmpty ? "" : "  \(host.version)"))
                     .font(.system(size: 12.5, weight: .bold)).foregroundColor(.white)
@@ -476,7 +495,7 @@ struct DoneView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
-                Image(systemName: "checkmark.circle.fill").foregroundColor(K.blue).font(.system(size: 26))
+                BlueTick(size: 26)
                 Text("Komodo is installed").font(.system(size: 18, weight: .heavy)).foregroundColor(.white)
             }
             SectionLabel(text: "WHERE TO FIND IT")

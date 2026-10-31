@@ -47,8 +47,15 @@ codesign --force -s "$SIGN" "$APP"
 
 # Not notarized without a Developer ID: say how to open it the first time.
 cat > "$OUT/app/If it won't open.txt" <<'TXT'
-If macOS says "Install Komodo" can't be opened because Apple can't check it:
+If macOS says "Install Komodo" can't be opened, or that Apple can't check it for malicious software:
 
+macOS 15 Sequoia and newer
+1. Double-click "Install Komodo" and click Done (or OK) on the warning.
+2. Open System Settings > Privacy & Security.
+3. Scroll down to the message about "Install Komodo" and click Open Anyway.
+4. Enter your Mac password, then click Open Anyway once more.
+
+macOS 14 Sonoma and older
 1. Right-click (or Control-click) "Install Komodo" and choose Open.
 2. Click Open in the window that appears.
 
