@@ -101,6 +101,10 @@ section[hidden] { display: none; }
 .slider .fill { position: absolute; left: 0; top: 7px; height: 4px; border-radius: 2px; background-color: #b0b0b0; }
 .slider .thumb { position: absolute; top: 2px; width: 14px; height: 14px; margin-left: -7px; border-radius: 7px;
                  background-color: #ffffff; border: 3px solid #b0b0b0; box-sizing: border-box; }
+/* a slider moved off its default turns Premiere blue */
+.ctl.moved .slider .fill { background-color: #2d6fdb; }
+.ctl.moved .slider .thumb { border-color: #2d6fdb; }
+.ctl.moved .ctl-val { color: #5b9bf0; }
 
 .fold { border: 1px solid #333333; border-radius: 12px; background-color: #2a2a2a; }
 .fold.open { border-color: #3e3e3e; }

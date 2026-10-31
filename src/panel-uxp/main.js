@@ -130,6 +130,8 @@ function makeSlider({ param, title, desc, icon, min = 0, max = 100, step = 1, un
     fill.style.width = `${Math.abs(pct - zero)}%`;
     thumb.style.left = `${pct}%`;
     val.textContent = fmt(value, unit);
+    // grey at its default, blue once moved
+    el.classList.toggle("moved", Math.abs(value - def) > 1e-9);
   };
   const set = (v, send) => {
     v = Math.min(max, Math.max(min, Math.round(Number(v) / step) * step));
