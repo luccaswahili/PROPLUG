@@ -28,6 +28,8 @@
 // platform file dialogs (Dialogs_mac.mm / Dialogs_win.cpp). Return false if cancelled.
 bool LM_OpenImageDialog(char* pathOut, int capacity);
 bool LM_SaveCubeDialog(char* pathOut, int capacity);
+// Opens the Komodo UXP panel (Window > UXP Plugins > Komodo), or says where to find it if it can't.
+void LM_OpenKomodoPanel();
 
 extern "C" DllExport PF_Err PluginDataEntryFunction2(PF_PluginDataPtr inPtr, PF_PluginDataCB2 inPluginDataCallBackPtr,
                                                      SPBasicSuite* inSPBasicSuitePtr, const char* inHostName,

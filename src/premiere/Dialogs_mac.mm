@@ -2,6 +2,7 @@
 #import <Cocoa/Cocoa.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include <cstring>
+#include <unistd.h>
 #include "LookMatch.h"
 
 static bool copyPath(NSURL* url, char* out, int capacity) {
@@ -38,4 +39,52 @@ bool LM_SaveCubeDialog(char* pathOut, int capacity) {
         if ([panel runModal] != NSModalResponseOK) return false;
         return copyPath(panel.URL, pathOut, capacity);
     }
+}
+
+// "Open Komodo's Panel" in Effect Controls. A native effect has no API to show a UXP panel, so this
+// picks Window > UXP Plugins > Komodo from Premiere's own menu bar through System Events. It runs in
+// osascript off the main thread: a synchronous click from inside the effect call would wait on the
+// very main thread it is blocking. macOS asks once to let Premiere use Accessibility; until it is
+// allowed (or if the menu isn't there) the user gets a note saying where the panel lives.
+void LM_OpenKomodoPanel() {
+    NSString* script = [NSString stringWithFormat:
+        @"tell application \"System Events\"\n"
+         "  set p to first application process whose unix id is %d\n"
+         "  set frontmost of p to true\n"
+         "  tell p\n"
+         "    set k to menu item \"Komodo\" of menu 1 of menu item \"UXP Plugins\" of menu 1 of menu bar item \"Window\" of menu bar 1\n"
+         "    try\n"
+         "      click menu item 1 of menu 1 of k\n"
+         "    on error\n"
+         "      click k\n"
+         "    end try\n"
+         "  end tell\n"
+         "end tell\n",
+        int(getpid())];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+        @autoreleasepool {
+            NSTask* task = [[NSTask alloc] init];
+            task.launchPath = @"/usr/bin/osascript";
+            task.arguments = @[ @"-e", script ];
+            task.standardOutput = [NSFileHandle fileHandleWithNullDevice];
+            task.standardError = [NSFileHandle fileHandleWithNullDevice];
+            int status = -1;
+            @try {
+                [task launch];
+                [task waitUntilExit];
+                status = task.terminationStatus;
+            } @catch (NSException*) {
+            }
+            if (status == 0) return;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                NSAlert* alert = [[NSAlert alloc] init];
+                alert.messageText = @"Open Komodo from Window > UXP Plugins > Komodo";
+                alert.informativeText =
+                    @"To let this button open it for you, allow Adobe Premiere Pro in System Settings > "
+                     "Privacy & Security > Accessibility, then click Open Komodo's Panel again.";
+                [alert addButtonWithTitle:@"OK"];
+                [alert runModal];
+            });
+        }
+    });
 }

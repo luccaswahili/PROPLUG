@@ -88,6 +88,7 @@ enum ParamId {
     P_ADJ_SATURATION,   // -100 .. 100
     P_ADJ_TEMPERATURE,  // -100 .. 100
     P_ADJUST_TOPIC_END,
+    P_OPEN_PANEL,       // button: opens (or brings forward) the Komodo panel; the only control shown in Premiere
     P_NUM_PARAMS
 };
 
@@ -106,5 +107,6 @@ enum DiskId {
     D_SKIN_EVENING,
     D_FINISH,
     D_ADJUST_TOPIC, D_ADJ_EXPOSURE, D_ADJ_CONTRAST, D_ADJ_SHADOWS, D_ADJ_HIGHLIGHTS, D_ADJ_WHITES, D_ADJ_SATURATION,
-    D_ADJ_TEMPERATURE, D_ADJUST_TOPIC_END
+    D_ADJ_TEMPERATURE, D_ADJUST_TOPIC_END,
+    D_OPEN_PANEL
 };

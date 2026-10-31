@@ -33,3 +33,9 @@ bool LM_SaveCubeDialog(char* pathOut, int capacity) {
     ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
     return GetSaveFileNameW(&ofn) && toUtf8(file, pathOut, capacity);
 }
+
+// "Open Komodo's Panel": Windows has no way to drive Premiere's menu from here, so say where it is.
+void LM_OpenKomodoPanel() {
+    MessageBoxW(GetActiveWindow(), L"Open Komodo from Window > UXP Plugins > Komodo.", L"Komodo",
+                MB_OK | MB_ICONINFORMATION);
+}

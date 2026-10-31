@@ -45,6 +45,21 @@
 #define STBIW_WINDOWS_UTF8
 #include "stb_image_write.h"
 
+// The SDK's PF_ADD_* macros clear `def` before filling it, so a ui_flags set ahead of them is lost
+// (that is why "hidden" parameters kept showing in Effect Controls). Route every add through
+// addParam(), which applies the hide flag after the macro has filled the definition.
+namespace {
+bool g_hideAllParams = false;  // Premiere: the panel is the UI, Effect Controls shows only the Open button
+bool g_hideNextParam = false;  // this one parameter is kept only so older projects load
+PF_Err addParam(PF_InData* in_data, PF_ParamIndex index, PF_ParamDefPtr def) {
+    if (g_hideAllParams || g_hideNextParam) def->ui_flags |= PF_PUI_INVISIBLE;
+    g_hideNextParam = false;
+    return (*in_data->inter.add_param)(in_data->effect_ref, index, def);
+}
+}  // namespace
+#undef PF_ADD_PARAM
+#define PF_ADD_PARAM(IN_DATA, INDEX, DEFP) addParam((IN_DATA), (INDEX), (DEFP))
+
 namespace {
 
 using lmpanel::fileLine;
@@ -452,6 +467,11 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     PF_Err err = PF_Err_NONE;
     PF_ParamDef def;
     static std::string negs = stockChoices(true), prints = stockChoices(false), sources = sourceChoices();
+    // In Premiere the Komodo panel drives every setting, so Effect Controls shows just one button that
+    // opens it. After Effects has no Komodo panel, so it keeps the controls.
+    const bool premiere = isPremiere(in_data);
+    g_hideAllParams = premiere;
+    g_hideNextParam = false;
 
     AEFX_CLR_STRUCT(def);
     PF_ADD_TOPIC("Match", D_MATCH_TOPIC);
@@ -460,7 +480,7 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     AEFX_CLR_STRUCT(def);
     PF_ADD_BUTTON("Footage frame", "Match to This Frame", 0, PF_ParamFlag_SUPERVISE, D_REMATCH);
     AEFX_CLR_STRUCT(def);
-    def.ui_flags = PF_PUI_INVISIBLE;  // removed from the UI (Look Strength does this job); stays at 100%
+    g_hideNextParam = true;  // removed from the UI (Look Strength does this job); stays at 100%
     PF_ADD_FLOAT_SLIDERX("Match Strength", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_MATCH_STRENGTH);
     AEFX_CLR_STRUCT(def);
     PF_ADD_FLOAT_SLIDERX("Region Matching", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_REGION_STRENGTH);
@@ -472,53 +492,53 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     PF_END_TOPIC(D_MATCH_TOPIC_END);
 
     AEFX_CLR_STRUCT(def);
-    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
+    g_hideNextParam = true;  // kept so older projects load; not shown
     PF_ADD_TOPIC("Input", D_INPUT_TOPIC);
     AEFX_CLR_STRUCT(def);
-    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
+    g_hideNextParam = true;  // kept so older projects load; not shown
     PF_ADD_POPUP("Footage Encoding", int(lm::InputSpace::Count), 1, kInputChoices, D_INPUT_SPACE);
     AEFX_CLR_STRUCT(def);
-    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
+    g_hideNextParam = true;  // kept so older projects load; not shown
     PF_ADD_FLOAT_SLIDERX("Input Exposure", -4, 4, -2, 2, 0, PF_Precision_HUNDREDTHS, 0, 0, D_EXPOSURE);
     AEFX_CLR_STRUCT(def);
-    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
+    g_hideNextParam = true;  // kept so older projects load; not shown
     PF_ADD_FLOAT_SLIDERX("Input Temperature", -100, 100, -100, 100, 0, PF_Precision_TENTHS, 0, 0, D_TEMPERATURE);
     AEFX_CLR_STRUCT(def);
-    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
+    g_hideNextParam = true;  // kept so older projects load; not shown
     PF_ADD_FLOAT_SLIDERX("Input Tint", -100, 100, -100, 100, 0, PF_Precision_TENTHS, 0, 0, D_TINT);
     AEFX_CLR_STRUCT(def);
-    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
+    g_hideNextParam = true;  // kept so older projects load; not shown
     PF_END_TOPIC(D_INPUT_TOPIC_END);
 
     AEFX_CLR_STRUCT(def);
-    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
+    g_hideNextParam = true;  // kept so older projects load; not shown
     PF_ADD_TOPIC("Film Print", D_FILM_TOPIC);
     AEFX_CLR_STRUCT(def);
-    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
+    g_hideNextParam = true;  // kept so older projects load; not shown
     PF_ADD_FLOAT_SLIDERX("Film Strength", 0, 100, 0, 100, 0, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_FILM_STRENGTH);
     AEFX_CLR_STRUCT(def);
-    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
+    g_hideNextParam = true;  // kept so older projects load; not shown
     PF_ADD_POPUP("Negative Stock", lm::negativeStockCount(), 2, negs.c_str(), D_NEGATIVE);
     AEFX_CLR_STRUCT(def);
-    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
+    g_hideNextParam = true;  // kept so older projects load; not shown
     PF_ADD_POPUP("Print Stock", lm::printStockCount(), 2, prints.c_str(), D_PRINT);
     AEFX_CLR_STRUCT(def);
-    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
+    g_hideNextParam = true;  // kept so older projects load; not shown
     PF_ADD_FLOAT_SLIDERX("Printer Light R", -24, 24, -12, 12, 0, PF_Precision_TENTHS, 0, 0, D_PRINTER_R);
     AEFX_CLR_STRUCT(def);
-    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
+    g_hideNextParam = true;  // kept so older projects load; not shown
     PF_ADD_FLOAT_SLIDERX("Printer Light G", -24, 24, -12, 12, 0, PF_Precision_TENTHS, 0, 0, D_PRINTER_G);
     AEFX_CLR_STRUCT(def);
-    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
+    g_hideNextParam = true;  // kept so older projects load; not shown
     PF_ADD_FLOAT_SLIDERX("Printer Light B", -24, 24, -12, 12, 0, PF_Precision_TENTHS, 0, 0, D_PRINTER_B);
     AEFX_CLR_STRUCT(def);
-    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
+    g_hideNextParam = true;  // kept so older projects load; not shown
     PF_ADD_FLOAT_SLIDERX("Film Saturation", 0, 200, 0, 200, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_FILM_SAT);
     AEFX_CLR_STRUCT(def);
-    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
+    g_hideNextParam = true;  // kept so older projects load; not shown
     PF_ADD_FLOAT_SLIDERX("Fade", 0, 100, 0, 100, 0, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_FADE);
     AEFX_CLR_STRUCT(def);
-    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
+    g_hideNextParam = true;  // kept so older projects load; not shown
     PF_END_TOPIC(D_FILM_TOPIC_END);
 
     AEFX_CLR_STRUCT(def);
@@ -565,21 +585,21 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     def.flags = PF_ParamFlag_START_COLLAPSED;
     PF_ADD_TOPIC("Project", D_PANEL_TOPIC);
     AEFX_CLR_STRUCT(def);
-    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
+    g_hideNextParam = true;  // kept so older projects load; not shown
     PF_ADD_FLOAT_SLIDERX("Reference Slot", 0, 999999, 0, 999999, 0, PF_Precision_INTEGER, 0,
                          PF_ParamFlag_SUPERVISE | PF_ParamFlag_CANNOT_TIME_VARY, D_REF_SLOT);
     AEFX_CLR_STRUCT(def);
     PF_ADD_BUTTON("Panel match", "Save into Project", 0, PF_ParamFlag_SUPERVISE, D_BAKE);
     AEFX_CLR_STRUCT(def);
-    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
+    g_hideNextParam = true;  // kept so older projects load; not shown
     PF_ADD_FLOAT_SLIDERX("LUT Export Slot", 0, 999999, 0, 999999, 0, PF_Precision_INTEGER, 0,
                          PF_ParamFlag_CANNOT_TIME_VARY, D_EXPORT_SLOT);
     AEFX_CLR_STRUCT(def);
-    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
+    g_hideNextParam = true;  // kept so older projects load; not shown
     PF_ADD_FLOAT_SLIDERX("Capture Slot", 0, 999999, 0, 999999, 0, PF_Precision_INTEGER, 0,
                          PF_ParamFlag_CANNOT_TIME_VARY, D_CAPTURE_SLOT);
     AEFX_CLR_STRUCT(def);
-    def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
+    g_hideNextParam = true;  // kept so older projects load; not shown
     PF_ADD_FLOAT_SLIDERX("Thumbs Slot", 0, 999999, 0, 999999, 0, PF_Precision_INTEGER, 0,
                          PF_ParamFlag_CANNOT_TIME_VARY, D_THUMBS_SLOT);
     AEFX_CLR_STRUCT(def);
@@ -613,7 +633,7 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     AEFX_CLR_STRUCT(def);
     PF_END_TOPIC(D_SOURCE_TOPIC_END);
     AEFX_CLR_STRUCT(def);
-    def.ui_flags = PF_PUI_INVISIBLE;  // removed from the UI; stays at 100%, kept so older projects load
+    g_hideNextParam = true;  // removed from the UI; stays at 100%, kept so older projects load
     PF_ADD_FLOAT_SLIDERX("Match Contrast", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_MATCH_CONTRAST);
     AEFX_CLR_STRUCT(def);
     PF_ADD_CHECKBOXX("Fix Sky Banding", FALSE, 0, D_FIX_BANDING);
@@ -641,6 +661,12 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     PF_ADD_FLOAT_SLIDERX("Temperature", -100, 100, -100, 100, 0, PF_Precision_TENTHS, 0, 0, D_ADJ_TEMPERATURE);
     AEFX_CLR_STRUCT(def);
     PF_END_TOPIC(D_ADJUST_TOPIC_END);
+
+    // appended last so older projects keep their parameter layout
+    g_hideAllParams = false;
+    AEFX_CLR_STRUCT(def);
+    if (!premiere) g_hideNextParam = true;
+    PF_ADD_BUTTON("Komodo", "Open Komodo's Panel", 0, PF_ParamFlag_SUPERVISE, D_OPEN_PANEL);
 
     out_data->num_params = P_NUM_PARAMS;
     return err;
@@ -1086,6 +1112,9 @@ PF_Err UserChangedParam(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* p
             lmLog("Bake: slot %ld -> Match Data", slot);
             return storeMatch(in_data, out_data, params, *lut, ref.c_str());
         }
+        case P_OPEN_PANEL:
+            LM_OpenKomodoPanel();
+            return PF_Err_NONE;
         case P_EXPORT_LUT:  // hidden: Komodo looks aren't exported
             return PF_Err_NONE;
         default:
