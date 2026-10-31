@@ -73,7 +73,9 @@ if(APPLE)
     add_executable(${t} tests/${t}.mm)
     target_link_libraries(${t} PRIVATE lookmatch_core "-framework Metal" "-framework Foundation")
     target_include_directories(${t} PRIVATE src/core)
-    set_target_properties(${t} PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    # Metal's dispatchThreads needs macOS 10.13; these test tools don't ship, so target it directly
+    set_target_properties(${t} PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-mmacosx-version-min=10.13"
+                                          LINK_OPTIONS "-mmacosx-version-min=10.13")
   endforeach()
   add_test(NAME gpu_tests COMMAND gpu_tests)
 endif()

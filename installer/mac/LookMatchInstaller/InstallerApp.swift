@@ -181,7 +181,8 @@ func installPanel(hosts: [HostApp]) -> PanelResult {
     // Remove an older copy first: the agent won't replace a panel of the same version.
     _ = run(["--remove", "LookMatch"])
     let (status, out) = run(["--install", ccx.path])
-    if status == 0 { return .installed }
+    // The agent exits with 0 even when it fails ("Failed to install, status = -644!"), so read its output.
+    if status == 0 && out.contains("Installation Successful") { return .installed }
     let detail = out.split(separator: "\n").last(where: { !$0.hasPrefix("Creative Cloud") && !$0.isEmpty })
     return .failed(detail.map(String.init) ?? "Adobe's plug-in installer stopped with code \(status).")
 }
@@ -445,7 +446,7 @@ func panelNote(_ result: PanelResult) -> String {
     case .noPremiere: return ""
     case .noInstaller: return "The panel wasn't installed because Adobe's plug-in installer is missing. Open Creative Cloud once, then run this installer again. The effect works without it."
     case .missingPayload: return "This installer doesn't include the panel. The effect works without it."
-    case .failed(let msg): return "The panel couldn't be installed (\(msg)). The effect works without it; run this installer again to retry."
+    case .failed(let msg): return "The panel couldn't be installed (\(msg)). The effect works without it. To add the panel, double-click LookMatchPanel.ccx on this installer's disk (Creative Cloud installs it), or run this installer again."
     }
 }
 
@@ -537,6 +538,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ("5-installing", { model.installing = true }),
             ("6-install-cancelled", { model.installing = false; model.installCancelled = true }),
             ("7-done", { model.installCancelled = false; model.panelResult = .installed; model.step = .done }),
+            ("8-done-panel-failed", { model.panelResult = .failed("Failed to install, status = -644!") }),
         ]
         for (name, apply) in shots {
             apply()
