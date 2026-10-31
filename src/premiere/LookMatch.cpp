@@ -114,6 +114,7 @@ lm::Params readParams(PF_ParamDef* params[]) {
     p.film.printerPoints[1] = F(params, P_PRINTER_G);
     p.film.printerPoints[2] = F(params, P_PRINTER_B);
     p.film.saturation = F(params, P_FILM_SAT) / 100.0f;
+    p.deband = params[P_FIX_BANDING]->u.bd.value ? 1.0f : 0.0f;
     p.fade = F(params, P_FADE) / 100.0f;
     p.halation = F(params, P_HALATION) / 100.0f;
     p.halationRadius = F(params, P_HALATION_RADIUS);
@@ -563,6 +564,8 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     PF_END_TOPIC(D_SOURCE_TOPIC_END);
     AEFX_CLR_STRUCT(def);
     PF_ADD_FLOAT_SLIDERX("Match Contrast", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_MATCH_CONTRAST);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_CHECKBOXX("Fix Sky Banding", FALSE, 0, D_FIX_BANDING);
 
     out_data->num_params = P_NUM_PARAMS;
     return err;

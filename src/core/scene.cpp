@@ -347,6 +347,28 @@ Image downsample(const Image& in, int maxWidth) {
     return o;
 }
 
+Image cropBars(const Image& in) {
+    const int w = in.width, h = in.height;
+    if (w < 16 || h < 16) return in;
+    // black: below any log curve's floor (0.09) and below a display picture's near-black, on 99% of the line
+    auto black = [](const Vec3& c) { return std::max({c.r, c.g, c.b}) <= 0.03f; };
+    auto rowBlack = [&](int y) { int n = 0; for (int x = 0; x < w; ++x) n += black(in.at(x, y)); return n >= w * 99 / 100; };
+    auto colBlack = [&](int x) { int n = 0; for (int y = 0; y < h; ++y) n += black(in.at(x, y)); return n >= h * 99 / 100; };
+    int top = 0, bottom = h, left = 0, right = w;
+    while (top < h && rowBlack(top)) ++top;
+    while (bottom > top && rowBlack(bottom - 1)) --bottom;
+    while (left < w && colBlack(left)) ++left;
+    while (right > left && colBlack(right - 1)) --right;
+    if (top == 0 && bottom == h && left == 0 && right == w) return in;
+    if ((bottom - top) * 10 < h * 4 || (right - left) * 10 < w * 4) return in;  // not bars: a dark frame
+    Image o;
+    o.width = right - left; o.height = bottom - top;
+    o.px.reserve(size_t(o.width) * o.height);
+    for (int y = top; y < bottom; ++y)
+        for (int x = left; x < right; ++x) o.px.push_back(in.at(x, y));
+    return o;
+}
+
 TransferGuess detectTransfer(const Image& img) {
     TransferGuess g;
     std::vector<float> lo, hi, luma, chroma;

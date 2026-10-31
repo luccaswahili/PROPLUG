@@ -240,6 +240,56 @@ int main() {
         }
     }
 
+    // tone: one smooth curve. A plain backdrop filling most of a close-up must not set the contrast skin
+    // gets (a curve weighted by pixel count stretched it, and shaded skin with it, then went flat just above).
+    {
+        auto scene = [](float backdropShare) {
+            lm::Image im;
+            im.width = 400; im.height = 300;
+            im.px.resize(size_t(im.width) * im.height);
+            const lm::Vec3 skin(0.70f, 0.50f, 0.42f), wall(0.42f, 0.36f, 0.30f);
+            unsigned h = 1;
+            for (int y = 0; y < im.height; ++y)
+                for (int x = 0; x < im.width; ++x) {
+                    h = h * 1664525u + 1013904223u;
+                    const float noise = 1 + 0.01f * (float(h >> 16 & 1023) / 511.5f - 1);
+                    const float u = float(x) / float(im.width);
+                    // backdrop on the left, a face lit from -4 to +1 stops across the rest
+                    const float st = -4 + 5 * clamp01((u - backdropShare) / std::max(1 - backdropShare, 0.01f));
+                    const lm::Vec3 lin = u < backdropShare ? wall * 0.33f * noise : skin * std::exp2(st) * 0.5f * noise;
+                    im.px[size_t(y) * im.width + x] = lm::encodeFromRec709(lm::Transfer::FLog, lin);
+                }
+            return im;
+        };
+        lm::Image ref;
+        ref.width = 200; ref.height = 100;
+        ref.px.resize(size_t(ref.width) * ref.height);
+        for (int y = 0; y < ref.height; ++y)
+            for (int x = 0; x < ref.width; ++x) {
+                const float v = 0.05f + 0.9f * float(x) / float(ref.width);
+                ref.px[size_t(y) * ref.width + x] = lm::Vec3(v, v * 0.92f, v * 0.84f);
+            }
+        lm::SceneMatchOptions so;
+        so.transfer = int(lm::Transfer::FLog);
+        so.whiteBalance = 0;  // the backdrop may rightly move the white balance; this is about tone
+        const lm::SceneMatch small = lm::matchScene(ref, scene(0.3f), so), large = lm::matchScene(ref, scene(0.8f), so);
+        auto luma = [](const lm::SceneMatch& m, float st) {
+            const lm::Vec3 lin = lm::Vec3(0.70f, 0.50f, 0.42f) * (0.5f * std::exp2(st));
+            return lm::luma709(m.exact(lm::encodeFromRec709(lm::Transfer::FLog, lin)));
+        };
+        auto stops = [&](const lm::SceneMatch& m, float st) { return std::log2(lm::rec709Decode(luma(m, st))); };  // the display curve's own bend aside
+        float worstShare = 0, worstStep = 0, prev = -1;
+        for (float st = -3.25f; st <= 0.0f; st += 0.25f) {  // skin, below the highlight shoulder
+            worstShare = std::max(worstShare, std::abs(luma(small, st) - luma(large, st)));
+            const float d = 0.05f, slope = (stops(large, st + d) - stops(large, st - d)) / (2 * d);
+            if (prev >= 0) worstStep = std::max(worstStep, std::abs(slope - prev));
+            prev = slope;
+        }
+        std::printf("tone: backdrop share 30%% vs 80%% moves skin by %.3f, slope step %.3f per quarter stop\n", worstShare, worstStep);
+        CHECK(worstStep < 0.08f, "tone slope jumps by %.3f per quarter stop across skin", worstStep);
+        CHECK(worstShare < 0.05f, "the backdrop's pixel share moves the curve by %.3f", worstShare);
+    }
+
     std::printf(failures ? "%d check(s) failed\n" : "all engine tests passed\n", failures);
     return failures ? 1 : 0;
 }

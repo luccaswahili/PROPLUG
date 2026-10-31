@@ -39,8 +39,7 @@ with interlayer coupling on the negative, printed through printer lights onto a 
 dye crosstalk. That gives film's toe, shoulder and colour crossover, and printer-point grading.
 
 The look match is source-aware (`src/core/scene.*`, `matchScene` in `src/core/matcher.cpp`). The clip
-is decoded (its log curve and gamut, detected or named), white balanced in scene linear, its tone curve
-undone by rank to a canonical distribution, and its saturation evened out. Then the reference's look is
+is decoded (its log curve and gamut, detected or named), white balanced in scene linear, its tone brought over with one smooth, slope-limited curve, and its saturation evened out. Then the reference's look is
 applied: its tone distribution (with its key moderated, so a night reference doesn't crush a day clip)
 and the region-aware colour transfer from the Python prototype, which matches skin to skin, sky to sky
 and foliage to foliage, with skin protection. The whole chain is baked into a 65³ LUT with a 1D input
@@ -146,8 +145,8 @@ cmake -S . -B build -DLOOKMATCH_BUILD_PLUGIN=ON -DAE_SDK_DIR=<AE SDK>/Examples \
 - **Deband:** before the grade, both paths smooth the source's quantisation steps, which would otherwise show as
   contour rings in compressed log skies (see docs/MATCHING.md). The GPU filter grades from a copy of the frame for
   this.
-- **Speed (M1 Max, colour + deband, worst case):** 1080p is 53 ms on the CPU and 2.9 ms on the GPU. 4K is 326 ms vs
-  9.6 ms (34×). Without deband, 4K was 40.6 ms on the CPU and 1.8 ms on the GPU. Measured with `gpu_bench`.
+- **Speed (M1 Max, colour + deband, worst case):** 1080p is 73 ms on the CPU and 3.0 ms on the GPU. 4K is 404 ms vs
+  12.4 ms (33×). Without deband, 4K was 40.6 ms on the CPU and 1.8 ms on the GPU. Measured with `gpu_bench`.
 - `LOOKMATCH_NO_GPU=1` turns the GPU path off.
 - The GPU filter API returns popups 0-based, while the AE API and Effect Controls are 1-based. The code accounts for this.
 
@@ -158,12 +157,12 @@ cmake -S . -B build -DLOOKMATCH_BUILD_PLUGIN=ON -DAE_SDK_DIR=<AE SDK>/Examples \
 | Engine (match, film, texture) | `engine_tests` passes: identity, film neutrality, export LUT, self-match, fast path vs full path, concurrent renders, transfer curves, CCT/tint, cast and log detection |
 | Source-aware match | `consistency_tests`: real frames under exposure, white balance, curve, saturation and log perturbations, CIEDE2000 against the untouched match. See [docs/MATCHING.md](docs/MATCHING.md) |
 | Several stills, shot matching | `reference_tests`: three stills of one look steady the match (36% less change between choices of stills than one), the median combine resists an odd still, clips matched to a hero's graded frame land on the hero |
-| Banding | `banding_tests`: compressed 8/10-bit log skies (synthetic and real) show no contour steps after the grade, and deband keeps at least 93% of the texture detail |
+| Banding | `banding_tests`: compressed 8/10-bit log skies (synthetic and real) show no contour steps after the grade, skin noise stays below the decoded clip, and at least 85% of high-pass detail stays |
 | Camera curves | `tests/check_transfers.py`: 11 log curves and their gamuts match colour-science |
 | Command-line renderer | Built and tested |
 | Premiere effect | Tested in Premiere Pro 2026 (26.5) on macOS: matching, film, split view, panel link. Universal arm64 + x86_64. |
 | Panel | Tested in Premiere 26.5 through its test agent (self-test 8/8 or 9/9 with a reference); `node src/panel-uxp/test/run.js` |
-| Speed (M1 Max) | GPU (colour + deband): 1080p 2.9 ms, 4K 9.6 ms. CPU colour + deband: 1080p 53 ms, 4K 326 ms (without deband 9.6 / 37 ms) |
+| Speed (M1 Max) | GPU (colour + deband): 1080p 3.0 ms, 4K 12.4 ms. CPU colour + deband: 1080p 73 ms, 4K 404 ms (without deband 9.6 / 37 ms) |
 
 ## Next steps
 

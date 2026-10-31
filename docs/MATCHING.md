@@ -42,17 +42,27 @@ The Premiere effect calls it when it builds a match. The CPU and GPU paths both 
    blue-hour sky, a red-lit stage) keeps its colour rather than having it taken for a cast. That measure doesn't
    change with a cast. An estimate that is both warm and magenta sits where skin does, not where light sources do,
    so only half of such a cast is taken out. Otherwise a close-up's face would be neutralised.
+   Before any of this, black bars are taken off the frame and off the reference (`cropBars`): rows and columns at
+   the edges that are at least 99% below 0.03. A sequence can hand the effect a clip with pillarbox or letterbox
+   bars. Read as picture, 6% of bars turned a 3.4-stop clip into 11 stops, bent the tone curve and made skin
+   speckle (light noise ×2.6). Below 6 stops under the median nothing counts as tone, so a burnt-in border or
+   logo plate can't do the same.
 3. **Exposure.** The key is a trimmed log-average of luminance in linear light (5–95%, clipped pixels included, so
    they don't bias it). It is reported in stops from 18% grey.
-4. **Tone.** The luminance distribution in log2 stops is mapped by rank to where the look puts it. With full
-   contrast normalisation that is a fixed canonical distribution: normal, σ = 1.6 stops. It is applied to R, G and B
-   as a luminance ratio, so hue and colour relationships stay the frame's own. A curve a grade or transfer applied
-   keeps the order of the pixels' brightness, so this undoes it.
-   - The curve is a monotone cubic spline through 17 rank-averaged control points, not the raw quantiles. Read
-     straight off an 8-bit frame, the quantiles form a staircase, and the staircase posterises.
-   - Its slope is held between 0.35 and 2.2.
-   - The frame's 5–95% range is stretched at most 2×: a soft close-up stays soft.
-   - True black meets the curve's floor continuously.
+4. **Tone.** One smooth curve on luminance, applied to R, G and B as a ratio, so hue and colour relationships stay
+   the frame's own. Identity is the plain camera transform, so anything the curve leaves alone looks like it.
+   - It is fitted to five levels of the tones the frame *occupies*, counted evenly across stops, not by pixel count.
+     By pixel count, a plain backdrop filling most of a close-up owned the curve: on portrait 6439240, 66 % of the frame
+     sat in a 0.75-stop band, its slope went from 2.7 to 0.36 within a quarter stop, and shaded skin got about 3×
+     contrast next to flat lit skin.
+   - The curve is a cubic, so it can make a gentle S with a toe and shoulder, its slope changes evenly and it can't
+     kink. Its bend is scaled back until the slope stays between 0.6 and 1.6, and at most 1.05 across the skin in the
+     frame: a slope above 1 on skin reads as crunch, so contrast comes from around the skin, not from steepening it.
+     A match that would need more stops short of the reference.
+   - **Exposure** is one global gain on top: skin lands at the reference's skin level (or 0.5 stop above its mid grey
+     if it shows no skin); a frame without skin puts its mid grey on the reference's. The gain only lifts, by at most
+     2 stops, because the fit is never too bright on its own.
+   - The cost: a limited curve can't fully undo a strong curve baked into display-referred footage.
 5. **Residual colour.** In OKLab:
    - **Skin weights are taken here.** They come after the scene-linear white balance and the tone normalisation, so a
      cast, an exposure or a curve doesn't move a face into or out of the mask. They come before the residual cast and
@@ -81,20 +91,16 @@ The Premiere effect calls it when it builds a match. The CPU and GPU paths both 
        quarter of the way to the face's own hue.
      - **The neutral axis.** Skin follows the grey axis only 10%, so the reference's tint of white doesn't make skin
        highlights pink or lavender.
-     - **Brightness.** Skin the tone curve left darker than the reference's skin sits, relative to its frame, is lifted
-       by up to 0.05. The lift applies only where the colour is clearly skin, because on near-greys it would bend the
-       grey axis.
      - **Lips** and strong reds next to skin keep their saturation.
    - **Other colours**: six hue sectors (red, yellow, green, cyan, blue, magenta). Where both frames have a sector
      (3% or more), it takes the reference's hue shift (within ±15°) and chroma (×0.8–1.25). Elsewhere colours only
      follow the overall saturation (×0.75–1.25).
    - Colours rotate and scale about the neutral axis, so none crosses it. Hue moves fade out below chroma 0.015–0.05,
      because a nearly grey wall's hue flips with every 8-bit step.
-7. **Final tone match** (**Match Contrast**, default 100%). The graded result's lightness distribution is brought to
-   the reference's: its 1/5/25/50/75/95/99% points and everything between, so its blacks, shadows, highlights and
-   whites sit where the reference's do.
-   - It uses a smooth curve on lightness alone (OKLab L; hue and chroma untouched). The slope is held between 0.75 and
-     1.3, and no level moves more than 0.15.
+7. **Final tone match** (**Match Contrast**, default 100%). The graded result's occupied lightness levels are brought
+   toward the reference's with the same kind of curve as step 4, on lightness alone (OKLab L; hue and chroma
+   untouched). The slope is held between 0.85 and 1.15, and at most 1.03 around skin. Only the shape applies: where
+   the anchor sits stays exposure's. No level moves more than 0.15.
    - Around the lightness that clearly coloured skin lands at, the curve may darken by at most 0.02. The limit depends
      on lightness only and changes slowly, so lightness stays monotonic. An earlier version shrank the darkening per
      colour by the skin weight. Near-greys carry the reference's tint, so that weight switched on and off along the
@@ -122,17 +128,28 @@ the plateaus show as concentric coloured rings. Premiere already gives the effec
 both the GPU and the CPU path, so the rings were not caused by bit depth. They are in the source, and the
 grade made them visible.
 
-Before the grade, the effect now smooths those steps. The method is the idea behind f3kdb / libplacebo
-`deband`, reimplemented here:
+With **Fix Sky Banding** on (off by default, since it softens fine skin texture and grain), the effect smooths
+those steps and the source's fine noise before the grade. The method starts from the
+idea behind f3kdb / libplacebo `deband`, reimplemented here:
 
-- For each pixel, it samples 16 neighbours in point-symmetric pairs within a radius of 40 px at 1080p
-  (scaled with frame height).
-- It weights each neighbour by how close it is to the centre: full weight within 0.006 code values,
-  falling to zero at 0.012. In effect this is a sparse bilateral filter, so edges and texture don't mix.
-- It adds a little triangular dither where it smoothed.
+- For each pixel, it samples point-symmetric pairs of neighbours: 8 pairs within 40 px at 1080p for banding, and
+  6 within 3 px for fine noise (both scaled with frame height).
+- A pair counts by how far its midpoint is from the pixel (zero on a straight gradient), with each side within
+  twice the threshold (0.012 code values for the far ring, 0.006 for the near ring, falling off from half of
+  it). Pairs across an edge don't count, and the near ring leaves freckles and fine colour detail alone.
+- Fine texture stays: the pixel's brightness relative to the average comes back, cored by 0.0015 code values, so
+  grain and a compressed sky's steps stay out and real texture stays in. Texture around the size of grain
+  can't be told from grain and sky steps, so it is reduced: random texture of RMS 0.0065 keeps about 83 %. On lit skin in 4K close-ups,
+  pore-scale luma detail stays at about 97–99 %, and the finest level, which is mostly grain, at about 88–98 %.
+- It adds a little triangular dither where it smoothed, the same on all three channels.
+
+The first version weighted each neighbour on its own and dithered each channel separately. On shaded skin that
+left a different lopsided average on every pixel, plus colour noise: at the Artlist clips' noise level, skin chroma
+noise came out 2.1× the decoded clip, as red speckle in skin shadows. It was less visible on flat walls. The LUT
+wasn't the cause: gains there are smooth and no higher on skin than on the wall. Now it is 0.63× lit and in shadow.
 
 `lm::debandAt` and the Metal `deband()` use the same hash and sample order, so the GPU and the CPU
-agree (`gpu_tests`: max 0.001/255). The GPU filter now reads from a copy of the frame, because the
+agree (`gpu_tests`: max 0.001/255). The GPU filter reads from a copy of the frame, because the
 kernel grades in place.
 
 `banding_tests` renders skies through the engine and measures, along each column, the share of the
@@ -143,15 +160,18 @@ percentile of those jumps. Threshold: share < 15 % and jump < 1/255.
 |---|---|---|---|---|
 | synthetic S-Log3 sky, 10-bit | 13.0 % | 0.1 % | 1.27/255 | 0.66/255 |
 | synthetic S-Log3 sky, 8-bit | 54.4 % | 1.0 % | 4.20/255 | 0.78/255 |
-| Marsa beach frame (16-bit extract of the 10-bit clip) | 44.7 % | 6.2 % | 2.37/255 | 0.85/255 |
+| Marsa beach frame (16-bit extract of the 10-bit clip) | 44.7 % | 14.6 % | 2.37/255 | 0.94/255 |
 
 With reference 15.38.33, the Marsa frame goes from 43 % to 2.6 %.
 
-On the real log frames, deband keeps at least 93 % of the high-pass detail (worst case: an 8K
-portrait). Most of what it removes is 8-bit extraction noise.
+`banding_tests` also renders a skin patch, lit and in shadow, with noise. Chroma noise after the match must stay
+below the deband-off level and below 0.75× the decoded clip's (the old deband fails both).
 
-Cost: the GPU takes 9.6 ms per 4K frame, including the copy. The CPU fallback rises from 39 to about
-310 ms per 4K frame.
+On the real log frames, deband keeps at least 89 % of the high-pass energy. That energy includes the source's
+grain, which is now removed on purpose, so the check is at 83 %.
+
+Cost: the GPU takes 12.4 ms per 4K frame, including the copy. The CPU fallback rises from 39 to about
+400 ms per 4K frame.
 
 Tools: `tools/extract_frame16.swift` extracts a 16-bit frame from a clip. Sky frames go in
 `tests/frames-sky/NAME-sky<W>x<H>.png`, which is git-ignored.
