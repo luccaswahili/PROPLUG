@@ -250,6 +250,17 @@ const thumb = (path) => {
 async function renderRefs() {
   const grid = $("refGrid");
   grid.innerHTML = "";
+  // the add tile first, then the references, newest first
+  const add = document.createElement("div");
+  add.className = "ref add";
+  add.title = "Add a still";
+  add.textContent = "+";
+  add.addEventListener("click", () => run("Add reference", async () => {
+    const file = await uxp.storage.localFileSystem.getFileForOpening({ types: ["png", "jpg", "jpeg", "bmp", "tga"] });
+    if (!file) return "Cancelled";
+    return addReference(file.nativePath);
+  }));
+  grid.appendChild(add);
   for (const ref of library.refs) {
     const div = document.createElement("div");
     div.className = "ref" + (selectedRefs.some((r) => r.id === ref.id) ? " sel" : "");
@@ -270,16 +281,6 @@ async function renderRefs() {
     grid.appendChild(div);
     thumb(ref.path).then((url) => { if (url) div.querySelector("img").src = url; });
   }
-  const add = document.createElement("div");
-  add.className = "ref add";
-  add.title = "Add a still";
-  add.textContent = "+";
-  add.addEventListener("click", () => run("Add reference", async () => {
-    const file = await uxp.storage.localFileSystem.getFileForOpening({ types: ["png", "jpg", "jpeg", "bmp", "tga"] });
-    if (!file) return "Cancelled";
-    return addReference(file.nativePath);
-  }));
-  grid.appendChild(add);
 }
 
 // Click picks one reference; Cmd/Shift/Ctrl-click adds or removes it from a set of up to 5 stills of
