@@ -10,12 +10,6 @@
     <div class="brand">
       <div class="logo"><img src="icons/logo.svg" alt=""></div>
       <div class="brand-text"><div class="name">Komodo</div><div class="ver" id="version">PRO PLUGS</div></div>
-      <div class="iconbtn" id="menuBtn" title="More">☰</div>
-    </div>
-    <div class="menu" id="menu" hidden>
-      <div class="menu-item" data-tool="selfTest">Run self-test</div>
-      <div class="menu-item" data-tool="showLog">Show effect log</div>
-      <div class="menu-item" data-tool="probe">Probe selection</div>
     </div>
     <div class="tabs" id="tabs">
       <div class="tab on" data-tab="match">Match</div>
@@ -51,6 +45,8 @@
       <div class="fold-body">
         <div id="advancedControls" class="stack"></div>
         <div class="toggle-row plain"><span>Auto skin protect</span><div class="sw on" id="autoSkinSw"></div></div>
+        <div class="toggle-row plain"><span>Probe selection</span><div class="chip" id="probe">Probe</div></div>
+        <pre id="console" class="console" hidden></pre>
       </div>
     </div>
     <!-- before / after: small, right under Advanced, aligned right -->
@@ -82,16 +78,6 @@
     <div class="hint">Saves the reference, the grade, source and texture settings. Looks stay inside Komodo.</div>
   </section>
 
-  <!-- TOOLS (from the ☰ menu) -->
-  <section data-panel="tools" hidden>
-    <div class="sec-label">TOOLS</div>
-    <div class="row">
-      <div class="chip" id="selfTest">Run self-test</div>
-      <div class="chip" id="showLog">Effect log</div>
-      <div class="chip" id="probe">Probe</div>
-    </div>
-    <pre id="console" class="console"></pre>
-  </section>
   </main>
 
 

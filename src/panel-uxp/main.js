@@ -10,14 +10,12 @@ const { P, SOURCE_FORMATS, TEXTURE_DEFAULTS, MATCH_DEFAULTS, guessSourceFormat, 
 const { Library, joinPath, baseName } = require("./lib/library.js");
 const { Bridge } = require("./lib/bridge.js");
 const { Live } = require("./lib/live.js");
-const { runSelfTest } = require("./lib/selftest.js");
 
 const VERSION = "1.0.0";  // kept equal to manifest.json by build_panel.sh
 // The data folder keeps its LookMatch name: references, looks and matches made before the rename stay.
 const DATA_DIR = os.platform() === "win32"
   ? joinPath(process.env.APPDATA || "", "PRO PLUGS\\LookMatch")
   : joinPath(os.homedir(), "Library/Application Support/PRO PLUGS/LookMatch");
-const LOG_FILE = joinPath(os.homedir(), "Library/Logs/LookMatch.log");
 const NO_CLIPS = "No clips selected. Select a clip on the timeline, then click Match.";
 
 const $ = (id) => document.getElementById(id);
@@ -32,7 +30,7 @@ function status(text, kind) {
   $("status").className = "status" + (kind ? " " + kind : "");
 }
 
-// The Tools console, mirrored to <data>/panel.log (kept under ~200 KB) for diagnostics.
+// The Probe box under Advanced, mirrored to <data>/panel.log (kept under ~200 KB) for diagnostics.
 const PANEL_LOG = joinPath(DATA_DIR, "panel.log");
 let logQueue = Promise.resolve();
 function log(...a) {
@@ -61,7 +59,7 @@ async function run(label, fn) {
   }
 }
 
-// ---------- tabs, menu, folds, switches ----------
+// ---------- tabs, folds, switches ----------
 
 function showTab(name) {
   for (const t of document.querySelectorAll("[data-tab]")) t.classList.toggle("on", t.dataset.tab === name);
@@ -71,11 +69,6 @@ $("tabs").addEventListener("click", (ev) => {
   const tab = ev.target.closest ? ev.target.closest("[data-tab]") : ev.target;
   if (tab && tab.dataset.tab) showTab(tab.dataset.tab);
 });
-$("menuBtn").addEventListener("click", (ev) => { ev.stopPropagation(); $("menu").hidden = !$("menu").hidden; });
-document.addEventListener("click", () => { $("menu").hidden = true; });
-for (const item of document.querySelectorAll("[data-tool]")) {
-  item.addEventListener("click", () => { showTab("tools"); $(item.dataset.tool).click(); });
-}
 for (const f of document.querySelectorAll(".fold")) {
   f.querySelector(".fold-head").addEventListener("click", () => {
     f.classList.toggle("open");
@@ -513,18 +506,11 @@ $("saveLook").addEventListener("click", () => run("Save look", async () => {
   return `Saved “${look.name}”`;
 }));
 
-// ---------- tools ----------
+// ---------- probe ----------
 
-$("showLog").addEventListener("click", () => run("Effect log", async () => {
-  let text;
-  try { text = await fs.readFile(LOG_FILE, { encoding: "utf-8" }); } catch (e) {
-    return "No log. Start Premiere with LOOKMATCH_LOG=1 to enable it.";
-  }
-  log("---- effect log (last 40 lines) ----\n" + text.trim().split("\n").slice(-40).join("\n"));
-  return "Log shown below";
-}));
-
+// Probe (under Advanced): what Komodo sees on the selected clips, written into the box below it.
 $("probe").addEventListener("click", () => run("Probe", async () => {
+  $("console").hidden = false;
   const { items } = await bridge.selectedVideoItems();
   log(`${items.length} selected video clip(s)`);
   for (const item of items) {
@@ -532,12 +518,6 @@ $("probe").addEventListener("click", () => run("Probe", async () => {
     log(`  ${await item.getName()}: ${component ? JSON.stringify(await bridge.readParams(component)) : "no Komodo"}`);
   }
   return `${items.length} clip(s)`;
-}));
-
-// In-Premiere self-test (lib/selftest.js): exercises the whole flow on the selected clip.
-$("selfTest").addEventListener("click", () => run("Self-test", async () => {
-  const { pass, lines } = await runSelfTest(bridge, { log, referencePath: selectedRefs.length ? selectedRefs[0].path : null });
-  return pass ? `Self-test passed (${lines.filter((l) => l.startsWith("PASS")).length} checks)` : "Self-test failed: see Tools";
 }));
 
 // ---------- start ----------
@@ -555,7 +535,7 @@ $("selfTest").addEventListener("click", () => run("Self-test", async () => {
     require("./lib/agent.js").startAgent(fs, DATA_DIR, bridge, log, {
       // UI driving for tests: only these elements, only set value / click
       fields: ["lookName"],  // plus tab switching (uiTab)
-      buttons: ["matchBtn", "beforeAfter", "saveLook", "selfTest", "probe", "showLog"],
+      buttons: ["matchBtn", "beforeAfter", "saveLook", "probe"],
       status: () => ({ text: $("statusText").textContent, kind: $("status").className }),
       savedLooks: () => library.looks.map((l) => l.name),
       element: (id) => document.getElementById(id),

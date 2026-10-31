@@ -36,7 +36,7 @@ function startAgent(fs, dataDir, bridge, log, ui) {
       return { id: a.id, value: ui.element(a.id).value };
     };
     COMMANDS.uiTab = async (b, a) => {
-      if (!["match", "texture", "library", "tools"].includes(a.tab)) throw new Error(`tab ${a.tab} not allowed`);
+      if (!["match", "texture", "library"].includes(a.tab)) throw new Error(`tab ${a.tab} not allowed`);
       ui.element("tabs").querySelector(`[data-tab="${a.tab}"]`).click();
       return { tab: a.tab };
     };

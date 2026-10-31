@@ -16,14 +16,6 @@ section[hidden] { display: none; }
 .brand-text { flex: 1 1 auto; }
 .name { font-weight: 800; font-size: 16px; color: #ffffff; }
 .ver { color: #7a7a7a; font-size: 10px; font-weight: 600; }
-.iconbtn { width: 28px; height: 28px; border-radius: 8px; border: 1px solid #3a3a3a; color: #a8a8a8; display: flex;
-           align-items: center; justify-content: center; cursor: pointer; font-size: 14px; }
-.iconbtn:hover { border-color: #b0b0b0; color: #ffffff; }
-.menu { position: absolute; right: 0; top: 36px; width: 170px; background-color: #262626; border: 1px solid #5c5c5c;
-        border-radius: 10px; padding: 4px; z-index: 5; }
-.menu[hidden] { display: none; }
-.menu-item { padding: 7px 10px; border-radius: 7px; color: #a8a8a8; cursor: pointer; }
-.menu-item:hover { background-color: #333333; color: #ffffff; }
 
 .tabs { display: flex; gap: 6px; }
 .tab { flex: 1 1 0; text-align: center; padding: 7px 0; border-radius: 999px; border: 1px solid #3a3a3a; color: #a8a8a8;
@@ -137,6 +129,7 @@ section[hidden] { display: none; }
 .btn-o:hover { border-color: #c8c8c8; color: #ffffff; }
 .chip { padding: 7px 12px; border-radius: 10px; border: 1px solid #3a3a3a; color: #a8a8a8; font-weight: 600; cursor: pointer; }
 .chip:hover { border-color: #b0b0b0; color: #ffffff; }
+.console[hidden] { display: none; }
 .console { background-color: #2a2a2a; border: 1px solid #333333; border-radius: 10px; color: #a8a8a8; padding: 8px; font-size: 10px;
            white-space: pre-wrap; max-height: 360px; overflow: auto; }
 
