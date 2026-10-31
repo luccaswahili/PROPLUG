@@ -127,6 +127,13 @@ third the identity and two thirds the frame's own value distribution, so the gri
 checks it matches the CPU: 0.000/255. A copy saved into the project (**Save into Project**) is resampled to 33³ on the
 same shaper, to keep projects small. Projects saved by earlier builds load unchanged: their Match Data has no shaper.
 
+8. **Finish** (default 100%). A match lands at the reference's levels, and a dark reference leaves a clip looking
+   underexposed. Graded by hand, the clips land in the same place whatever the reference: median lightness about
+   0.53, the 95th percentile about 0.86, blacks about where they were. So one smooth curve brings the frame to those
+   levels: all the way up from below, 70% of the way down from above, with the blacks of a bright clip left alone. Colour
+   follows the brightness and fades into white. Its slope is well above the tone curve's limits, so a big lift shows
+   more of the clip's noise and skin patches.
+
 ## Deband (contour rings in skies)
 
 Compressed log footage stores a clear sky as a staircase of flat steps one or two code values high. For

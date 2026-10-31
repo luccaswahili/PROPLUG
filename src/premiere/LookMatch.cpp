@@ -569,6 +569,8 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     PF_ADD_CHECKBOXX("Fix Sky Banding", FALSE, 0, D_FIX_BANDING);
     AEFX_CLR_STRUCT(def);
     PF_ADD_FLOAT_SLIDERX("Skin Evening", 0, 100, 0, 100, 50, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_SKIN_EVENING);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Finish", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_FINISH);
 
     out_data->num_params = P_NUM_PARAMS;
     return err;
@@ -694,6 +696,7 @@ bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, i
     mo.contrast = F(params, P_NORM_CONTRAST) / 100.0f;
     mo.lookStrength = F(params, P_LOOK_STRENGTH) / 100.0f;
     mo.matchContrast = F(params, P_MATCH_CONTRAST) / 100.0f;
+    mo.finish = F(params, P_FINISH) / 100.0f;
     const std::string cacheDir = refsDir().empty() ? "" : refsDir() + "cache/";
     const std::string key = cacheDir.empty() ? "" : lmpanel::matchCacheKey(refPaths, src, mo, kMatchVersion, LM_ENGINE_HASH);
     if (!key.empty()) {

@@ -153,6 +153,7 @@ int main(int argc, char** argv) {
         SceneMatchOptions mo;
         mo.look.regionStrength = F("region-strength", 1);
         mo.look.skinProtect = F("skin-protect", -1);
+        mo.finish = F("finish", 1);
         mo.transfer = a.count("source") ? transferFromName(a["source"]) : -1;
         if (mo.transfer < 0) {
             Image full; full.width = src.w; full.height = src.h;

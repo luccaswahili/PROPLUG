@@ -272,6 +272,7 @@ int main() {
         lm::SceneMatchOptions so;
         so.transfer = int(lm::Transfer::FLog);
         so.whiteBalance = 0;  // the backdrop may rightly move the white balance; this is about tone
+        so.finish = 0;
         const lm::SceneMatch small = lm::matchScene(ref, scene(0.3f), so), large = lm::matchScene(ref, scene(0.8f), so);
         auto luma = [](const lm::SceneMatch& m, float st) {
             const lm::Vec3 lin = lm::Vec3(0.70f, 0.50f, 0.42f) * (0.5f * std::exp2(st));
@@ -312,6 +313,7 @@ int main() {
             }
         SceneMatchOptions wo;
         wo.transfer = int(Transfer::FLog);
+        wo.finish = 0;  // the white balance alone
         SceneMatchOptions off = wo;
         off.whiteBalance = 0;
         const SceneMatch on = matchScene(ref, img, wo), none = matchScene(ref, img, off);
@@ -430,6 +432,30 @@ int main() {
             std::printf("\n");
         }
         std::printf("log detector: %d of %d right, %d fell back to the default\n", right, total, fellBack);
+    }
+
+    {
+        // Finish: a dark match is lifted to where a finished grade lands, a bright one pulled down toward it
+        auto scene = [](float gain) {
+            Image f; f.width = 160; f.height = 90;
+            for (int y = 0; y < 90; ++y) for (int x = 0; x < 160; ++x) {
+                const float v = gain * (0.08f + 0.5f * float(x) / 160), w = v * (1 + 0.1f * (y % 3));
+                f.px.push_back({rec709Encode(clamp01(w)), rec709Encode(clamp01(v)), rec709Encode(clamp01(v * 0.9f))});
+            }
+            return f;
+        };
+        auto medianL = [](const SceneMatch& m, const Image& f) {
+            std::vector<float> l; for (const Vec3& c : f.px) l.push_back(rgbToOklab(m.exact(c)).r);
+            std::sort(l.begin(), l.end()); return l[l.size() / 2];
+        };
+        const Image dark = scene(0.3f), bright = scene(1.4f);
+        SceneMatchOptions fo; fo.transfer = int(Transfer::Rec709);
+        SceneMatchOptions none = fo; none.finish = 0;
+        const float d0 = medianL(matchScene(dark, dark, none), dark), d1 = medianL(matchScene(dark, dark, fo), dark);
+        const float b0 = medianL(matchScene(bright, bright, none), bright), b1 = medianL(matchScene(bright, bright, fo), bright);
+        std::printf("finish: dark clip median %.3f -> %.3f, bright clip %.3f -> %.3f\n", d0, d1, b0, b1);
+        CHECK(d0 < 0.5f && std::abs(d1 - 0.53f) < 0.03f, "finish lands a dark clip at %.3f (from %.3f)", d1, d0);
+        CHECK(b0 > 0.58f && b1 < b0 - 0.03f && b1 > 0.53f, "finish took a bright clip from %.3f to %.3f", b0, b1);
     }
 
     std::printf(failures ? "%d check(s) failed\n" : "all engine tests passed\n", failures);

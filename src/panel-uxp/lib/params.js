@@ -38,6 +38,7 @@ const P = {
   normContrast: "Normalise Contrast",
   lookStrength: "Look Strength",
   matchContrast: "Match Contrast",
+  finish: "Finish",
   fixBanding: "Fix Sky Banding",
   skinEvening: "Skin Evening",
 };

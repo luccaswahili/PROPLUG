@@ -1,5 +1,6 @@
 #include "matcher.h"
 #include <array>
+#include <functional>
 #include <cstdio>
 #include <numeric>
 
@@ -356,6 +357,7 @@ constexpr float kStopFloor = 1.0f / 4096;
 // a steep stretch multiplies skin texture and noise by its slope, a flat one turns skin to wax.
 constexpr float kMinCurveSlope = 0.6f, kMaxCurveSlope = 1.6f, kMaxSkinSlope = 1.05f;
 constexpr float kMaxExposureMove = 2.0f, kSkinOverGrey = 0.5f;  // stops
+constexpr float kFinishChroma = 1.5f;  // colour opens with brightness, a bit faster, as a lift in linear light does
 constexpr float kMinLightSlope = 0.85f, kMaxLightSlope = 1.15f, kMaxSkinLightSlope = 1.03f;  // the final tone match, in lightness
 
 // Acklam's inverse normal CDF
@@ -1354,10 +1356,47 @@ SceneMatch matchSceneLook(const RefLook& rl, const Image& srcIn, const SceneMatc
         }
         return oklabToRgbCompressed(lab, true);
     };
+    // ---- 7. finish: the look's levels are the reference's, but a clip should land where a finished grade does: mids
+    // open, highlights rolling into white, blacks held. One smooth curve brings it to those levels from either side;
+    // colour follows the brightness and fades into white. ----
+    std::function<Vec3(Vec3)> finished = full;
+    const float fin = clamp01(o.finish) * ls;
+    if (fin > 0) {
+        std::vector<float> ls0;
+        for (size_t i = 0; i < n; i += 3) ls0.push_back(rgbToOklab(full(src.px[i])).r);
+        std::sort(ls0.begin(), ls0.end());
+        const float q5 = ls0[ls0.size() / 20], q50 = ls0[ls0.size() / 2], q95 = ls0[ls0.size() * 19 / 20];
+        std::array<float, 5> kx = {0.0f, q5, q50, std::max(q95, q50 + 0.02f), 1.0f};
+        const float lifted = clamp01((0.53f - q50) / 0.1f);  // blacks only follow a real lift, or a bright clip loses contrast
+        // a clip brighter than that is pulled down, a little more gently, with its blacks left where they are
+        auto toward = [](float v, float target) { return v < target ? target : v + (target - v) * 0.7f; };
+        std::array<float, 5> ky = {0.0f, q5 * (1 + 0.15f * lifted), toward(q50, 0.53f), toward(q95, 0.86f), 1.0f};
+        for (int i = 1; i < 4; ++i) { ky[i] = kx[i] + (ky[i] - kx[i]) * fin; ky[i] = std::clamp(ky[i], ky[i - 1] + 1e-3f, 0.999f); }
+        std::array<float, 5> mt;  // monotone cubic slopes (Fritsch-Carlson)
+        std::array<float, 4> d;
+        for (int i = 0; i < 4; ++i) d[i] = (ky[i + 1] - ky[i]) / std::max(kx[i + 1] - kx[i], 1e-4f);
+        mt[0] = d[0]; mt[4] = d[3] * 0.5f;
+        for (int i = 1; i < 4; ++i) mt[i] = d[i - 1] * d[i] <= 0 ? 0 : 2 * d[i - 1] * d[i] / (d[i - 1] + d[i]);
+        auto lift = [kx, ky, mt](float v) {
+            v = clamp01(v);
+            int i = 0;
+            while (i < 3 && v > kx[i + 1]) ++i;
+            const float h = std::max(kx[i + 1] - kx[i], 1e-4f), t = (v - kx[i]) / h, t2 = t * t, t3 = t2 * t;
+            return (2 * t3 - 3 * t2 + 1) * ky[i] + (t3 - 2 * t2 + t) * h * mt[i] + (-2 * t3 + 3 * t2) * ky[i + 1] + (t3 - t2) * h * mt[i + 1];
+        };
+        finished = [full, lift](Vec3 code) {
+            Vec3 lab = rgbToOklab(full(code));
+            const float l0 = std::max(lab.r, 1e-3f), l1 = lift(l0);
+            const float ft = clamp01((l1 - 0.80f) / 0.19f), fade = 1 - ft * ft * (3 - 2 * ft);
+            const float c = std::pow(l1 / l0, kFinishChroma) * fade + (1 - fade) * 0.4f;
+            lab.r = l1; lab.g *= c; lab.b *= c;
+            return oklabToRgbCompressed(lab, true);
+        };
+    }
     res.lut = Lut3D(o.look.lutSize);
     res.lut.setShaper(frameShaper(src));
-    res.lut.fill(full);
-    res.exact = full;
+    res.lut.fill(finished);
+    res.exact = finished;
 
     Image after = src;
     for (Vec3& v : after.px) v = res.lut.apply(v);

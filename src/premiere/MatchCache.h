@@ -45,7 +45,7 @@ inline std::string matchCacheKey(const std::vector<std::string>& refPaths, const
         const uint16_t q[3] = {uint16_t(lm::clamp01(v.r) * 65535), uint16_t(lm::clamp01(v.g) * 65535), uint16_t(lm::clamp01(v.b) * 65535)};
         f.value(q);
     }
-    f.value(mo.look.regionStrength); f.value(mo.look.skinProtect); f.value(mo.look.lutSize); f.value(mo.transfer);
+    f.value(mo.finish); f.value(mo.look.regionStrength); f.value(mo.look.skinProtect); f.value(mo.look.lutSize); f.value(mo.transfer);
     f.value(mo.exposure); f.value(mo.whiteBalance); f.value(mo.contrast); f.value(mo.lookStrength); f.value(mo.matchContrast);
     f.value(mo.method);
     char buf[32];
