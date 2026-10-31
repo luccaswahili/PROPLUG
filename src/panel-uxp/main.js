@@ -239,20 +239,56 @@ $("sourceFormat").addEventListener("change", () => live.set(P.sourceFormat, sour
 
 // ---------- reference strip ----------
 
+// Pixel size from the file header (PNG, JPEG, BMP), so the tile can crop the still itself: Premiere's
+// panel engine ignores object-fit.
+function imageSize(b) {
+  if (b[0] === 0x89 && b[1] === 0x50) return { w: (b[16] << 24 | b[17] << 16 | b[18] << 8 | b[19]) >>> 0, h: (b[20] << 24 | b[21] << 16 | b[22] << 8 | b[23]) >>> 0 };
+  if (b[0] === 0x42 && b[1] === 0x4d) return { w: Math.abs(b[18] | b[19] << 8 | b[20] << 16 | b[21] << 24), h: Math.abs(b[22] | b[23] << 8 | b[24] << 16 | b[25] << 24) };
+  if (b[0] === 0xff && b[1] === 0xd8) {
+    for (let i = 2; i + 9 < b.length;) {
+      if (b[i] !== 0xff) { i++; continue; }
+      const m = b[i + 1];
+      if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) return { w: b[i + 7] << 8 | b[i + 8], h: b[i + 5] << 8 | b[i + 6] };
+      if (m === 0xd8 || m === 0x01 || (m >= 0xd0 && m <= 0xd7)) { i += 2; continue; }
+      i += 2 + (b[i + 2] << 8 | b[i + 3]);
+    }
+  }
+  return null;
+}
+
 async function thumbnailUrl(path) {
   try {
     const st = await fs.lstat(path);
-    if (st.size > 12 * 1024 * 1024) return "";
+    if (st.size > 12 * 1024 * 1024) return null;
     const buf = new Uint8Array(await fs.readFile(path));
     let bin = "";
     for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
     const ext = path.toLowerCase().split(".").pop();
     const mime = ext === "png" ? "image/png" : ext === "bmp" ? "image/bmp" : "image/jpeg";
-    return `data:${mime};base64,${btoa(bin)}`;
+    return { url: `data:${mime};base64,${btoa(bin)}`, size: imageSize(buf) };
   } catch (e) {
-    return "";
+    return null;
   }
 }
+
+// Fill the tile like object-fit: cover: scale the still so it covers the tile, centred, cropped by the tile.
+function coverImage(img, size, TILE_W = 74, TILE_H = 48) {
+  if (!size || !size.w || !size.h) { img.style.width = `${TILE_W}px`; img.style.height = `${TILE_H}px`; return; }
+  const s = Math.max(TILE_W / size.w, TILE_H / size.h);
+  const w = Math.ceil(size.w * s), h = Math.ceil(size.h * s);
+  img.style.width = `${w}px`;
+  img.style.height = `${h}px`;
+  img.style.left = `${Math.round((TILE_W - w) / 2)}px`;
+  img.style.top = `${Math.round((TILE_H - h) / 2)}px`;
+}
+
+// A short tile label: macOS screenshot names all start "Screenshot <date> at", so show the time instead.
+function refLabel(name) {
+  const base = name.replace(/\.(png|jpe?g|bmp|tga)$/i, "");
+  const shot = base.match(/^Screen ?[Ss]hot .* at (\d{1,2}[.:]\d{2}[.:]\d{2})/);
+  return shot ? shot[1] : base;
+}
+
 const thumbCache = new Map();
 const thumb = (path) => {
   if (!thumbCache.has(path)) thumbCache.set(path, thumbnailUrl(path));
@@ -278,7 +314,7 @@ async function renderRefs() {
     div.className = "ref" + (selectedRefs.some((r) => r.id === ref.id) ? " sel" : "");
     div.title = ref.path;
     div.innerHTML = `<img alt=""><div class="n"></div><div class="x" title="Remove">×</div>`;
-    div.querySelector(".n").textContent = ref.name.replace(/\.(png|jpe?g|bmp|tga)$/i, "");
+    div.querySelector(".n").textContent = refLabel(ref.name);
     div.addEventListener("click", (ev) => {
       if (ev.target.classList.contains("x")) {
         library.removeReference(ref.id);
@@ -291,7 +327,12 @@ async function renderRefs() {
       if (selectedRefs.length) status(`Reference: ${referenceLabel(selectedRefs)}. Select clips and click Match.`);
     });
     grid.appendChild(div);
-    thumb(ref.path).then((url) => { if (url) div.querySelector("img").src = url; });
+    thumb(ref.path).then((t) => {
+      if (!t) return;
+      const img = div.querySelector("img");
+      coverImage(img, t.size);
+      img.src = t.url;
+    });
   }
 }
 
@@ -469,7 +510,12 @@ function renderSaved() {
     const p = look.params || {};
     row.querySelector(".meta").textContent = [look.reference ? baseName(look.reference) : "no reference",
       p[P.finish] !== undefined ? `Finish Band ${Math.round(p[P.finish])}` : "", p[P.grain] ? `Grain ${Math.round(p[P.grain])}` : ""].filter(Boolean).join(" · ");
-    if (look.reference) thumb(look.reference).then((url) => { if (url) row.querySelector("img").src = url; });
+    if (look.reference) thumb(look.reference).then((t) => {
+      if (!t) return;
+      const img = row.querySelector("img");
+      coverImage(img, t.size, 34, 34);
+      img.src = t.url;
+    });
     row.addEventListener("click", (ev) => {
       const a = ev.target.dataset && ev.target.dataset.a;
       if (a === "apply") applySavedLook(look);
