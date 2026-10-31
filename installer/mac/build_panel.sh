@@ -1,5 +1,5 @@
 #!/bin/sh
-# Package the LookMatch UXP panel as a .ccx (and optionally install it).
+# Package the Komodo UXP panel as a .ccx (and optionally install it).
 #   installer/mac/build_panel.sh [--release] [--install]
 # --release leaves out the dev-only test agent (lib/agent.js) and the tests.
 # --install installs with Adobe's UnifiedPluginInstallerAgent (no Creative Cloud login needed).
@@ -21,13 +21,14 @@ for f in "$SRC"/lib/*.js; do
   [ "$RELEASE" = 1 ] && [ "$(basename "$f")" = agent.js ] && continue
   cp "$f" "$STAGE/lib/"
 done
-NAME="LookMatchPanel-$VERSION$([ "$RELEASE" = 1 ] && echo "" || echo "-dev").ccx"
+NAME="KomodoPanel-$VERSION$([ "$RELEASE" = 1 ] && echo "" || echo "-dev").ccx"
 rm -f "$OUT/$NAME"
 (cd "$STAGE" && zip -q -r "$OUT/$NAME" .)
 echo "Built $OUT/$NAME"
 
 if [ "$INSTALL" = 1 ]; then
   UPIA="/Library/Application Support/Adobe/Adobe Desktop Common/RemoteComponents/UPI/UnifiedPluginInstallerAgent/UnifiedPluginInstallerAgent.app/Contents/MacOS/UnifiedPluginInstallerAgent"
-  "$UPIA" --remove LookMatch >/dev/null 2>&1 || true
+  "$UPIA" --remove LookMatch >/dev/null 2>&1 || true   # the panel's name before 1.0
+  "$UPIA" --remove Komodo >/dev/null 2>&1 || true
   "$UPIA" --install "$OUT/$NAME" | grep -v '^Creative Cloud'
 fi

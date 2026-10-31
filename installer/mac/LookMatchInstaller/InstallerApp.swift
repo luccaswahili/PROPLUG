@@ -179,7 +179,8 @@ func installPanel(hosts: [HostApp]) -> PanelResult {
         return (p.terminationStatus, out)
     }
     // Remove an older copy first: the agent won't replace a panel of the same version.
-    _ = run(["--remove", "LookMatch"])
+    _ = run(["--remove", "LookMatch"])  // the panel's name before 1.0
+    _ = run(["--remove", "Komodo"])
     let (status, out) = run(["--install", ccx.path])
     if status == 0 { return .installed }
     let detail = out.split(separator: "\n").last(where: { !$0.hasPrefix("Creative Cloud") && !$0.isEmpty })
@@ -309,8 +310,8 @@ struct HostRow: View {
     }
 
     var note: String {
-        if host.kind == .other { return "This isn't Premiere Pro or After Effects, so LookMatch won't appear in it." }
-        if !host.supported { return "Older than CC 2015. LookMatch won't load here." }
+        if host.kind == .other { return "This isn't Premiere Pro or After Effects, so Komodo won't appear in it." }
+        if !host.supported { return "Older than CC 2015. Komodo won't load here." }
         let what = host.supportsPanel ? "The LookMatch effect and panel" : "LookMatch"
         return host.located ? "Located manually. \(what) will appear in it." : "\(what) will appear in it."
     }
@@ -319,11 +320,11 @@ struct HostRow: View {
 struct WelcomeView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("LookMatch by PRO PLUGS")
+            Text("Komodo by PRO PLUGS")
                 .font(.system(size: 22, weight: .semibold))
             Text("Match the look of any reference still, then finish the shot with film print emulation, halation, bloom and grain.")
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Works with Premiere Pro and After Effects CC 2015 to 2026. One plug-in covers every version, so there's nothing to choose. Premiere Pro 2025 and later also get the LookMatch panel.")
+            Text("Works with Premiere Pro and After Effects CC 2015 to 2026. One plug-in covers every version, so there's nothing to choose. Premiere Pro 2025 and later also get the Komodo panel.")
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Text("Quit Premiere Pro and After Effects before installing.")
@@ -347,7 +348,7 @@ struct AppsView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("No Premiere Pro or After Effects found on this Mac.")
                             .fontWeight(.medium)
-                        Text("If one is installed somewhere else, locate it. Or continue without it: LookMatch installs now and appears once you install Premiere Pro or After Effects.")
+                        Text("If one is installed somewhere else, locate it. Or continue without it: Komodo installs now and appears once you install Premiere Pro or After Effects.")
                             .font(.callout)
                             .foregroundColor(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -363,7 +364,7 @@ struct AppsView: View {
                 hostList
             }
             Button("Locate…") { model.locate() }
-            Text("LookMatch installs into Adobe's shared plug-in folder, which every version reads.")
+            Text("Komodo installs into Adobe's shared plug-in folder, which every version reads.")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
@@ -382,9 +383,9 @@ struct InstallView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Install LookMatch")
+            Text("Install Komodo")
                 .font(.system(size: 18, weight: .semibold))
-            Text("LookMatch will be copied to:")
+            Text("Komodo will be copied to:")
             Text(mediaCoreDir)
                 .font(.system(.callout, design: .monospaced))
                 .foregroundColor(.secondary)
@@ -421,12 +422,12 @@ struct DoneView: View {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundColor(.green)
                     .font(.system(size: 24))
-                Text("LookMatch is installed")
+                Text("Komodo is installed")
                     .font(.system(size: 18, weight: .semibold))
             }
-            Text("Restart Premiere Pro, then find it under Effects > Video Effects > PRO PLUGS > LookMatch.")
+            Text("Restart Premiere Pro, then find it under Effects > Video Effects > PRO PLUGS > Komodo.")
                 .fixedSize(horizontal: false, vertical: true)
-            Text("In After Effects: Effect > PRO PLUGS > LookMatch.")
+            Text("In After Effects: Effect > PRO PLUGS > Komodo.")
                 .foregroundColor(.secondary)
             if let panel = model.panelResult, panel != .noPremiere {
                 HStack(alignment: .top, spacing: 8) {
@@ -441,7 +442,7 @@ struct DoneView: View {
 
 func panelNote(_ result: PanelResult) -> String {
     switch result {
-    case .installed: return "The LookMatch panel is installed too: Window > UXP Plugins > LookMatch."
+    case .installed: return "The Komodo panel is installed too: Window > UXP Plugins > Komodo."
     case .noPremiere: return ""
     case .noInstaller: return "The panel wasn't installed because Adobe's plug-in installer is missing. Open Creative Cloud once, then run this installer again. The effect works without it."
     case .missingPayload: return "This installer doesn't include the panel. The effect works without it."

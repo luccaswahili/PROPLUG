@@ -60,6 +60,16 @@ const TEXTURE_DEFAULTS = {
   [P.softness]: 0, [P.vignette]: 0, [P.gateWeave]: 0, [P.flicker]: 0, [P.fixBanding]: false, [P.skinEvening]: 50,
 };
 
+// What a new Match resets every slider to (Effect Controls defaults): the four grade controls, the
+// source evening and the advanced match controls.
+const GRADE_DEFAULTS = {
+  [P.lookStrength]: 100, [P.matchContrast]: 100, [P.finish]: 100, [P.skinEvening]: 50,
+};
+const MATCH_DEFAULTS = Object.assign({}, GRADE_DEFAULTS, {
+  [P.normExposure]: 100, [P.normWhite]: 100, [P.normContrast]: 100,
+  [P.matchStrength]: 100, [P.regionMatching]: 100, [P.autoSkin]: true,
+});
+
 // A/B compare on the selected clip: whole frame original (A) or matched (B), through the split view at
 // 100% / 0% (the effect draws no line there). From the clip's current params, the params for the next
 // state and its label: off or a normal split -> A, A -> B, B -> A.
@@ -99,4 +109,4 @@ function guessSourceFormat(texts) {
   return 0;
 }
 
-module.exports = { P, POPUPS, SOURCE_FORMATS, TEXTURE_DEFAULTS, guessSourceFormat, sourceFormatReason, abNext };
+module.exports = { P, POPUPS, SOURCE_FORMATS, TEXTURE_DEFAULTS, GRADE_DEFAULTS, MATCH_DEFAULTS, guessSourceFormat, sourceFormatReason, abNext };

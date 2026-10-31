@@ -14,7 +14,7 @@
 
 #include <cstdint>
 
-#define LM_NAME "LookMatch"
+#define LM_NAME "Komodo"
 #define LM_DESCRIPTION "Match the look of any still, then finish it with film print emulation, halation, bloom and grain."
 #define LM_MAJOR 1
 #define LM_MINOR 0

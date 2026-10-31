@@ -102,9 +102,9 @@ class Bridge {
     let { chain, component } = await this.findLookMatch(item);
     if (component) return { component, added: false };
     const created = await this.ppro.VideoFilterFactory.createComponent("AE." + LOOKMATCH);
-    this.transaction(project, "Add LookMatch", (ca) => ca.addAction(chain.createAppendComponentAction(created)));
+    this.transaction(project, "Add Komodo", (ca) => ca.addAction(chain.createAppendComponentAction(created)));
     ({ component } = await this.findLookMatch(item));
-    if (!component) throw new Error("LookMatch could not be added (is the effect installed?)");
+    if (!component) throw new Error("Komodo could not be added (is the effect installed?)");
     return { component, added: true };
   }
 
@@ -157,13 +157,13 @@ class Bridge {
       const map = await this.paramMap(component);
       const entries = Object.entries(paramsFor(i));
       for (const [name] of entries)
-        if (!map.has(name)) throw new Error(`LookMatch has no "${name}" control (update the effect).`);
+        if (!map.has(name)) throw new Error(`Komodo has no "${name}" control (update the effect).`);
       targets.push({ map, entries });
     }
     if (targets.some((t) => t.entries.length)) {
       let stage = "transaction";
       try {
-        this.transaction(project, "LookMatch", (ca) => {
+        this.transaction(project, "Komodo", (ca) => {
           for (const { map, entries } of targets) {
             for (const [name, value] of entries) {
               const p = map.get(name);
@@ -258,8 +258,8 @@ class Bridge {
     await this.ensureLookMatch(project, items[0]);
     const { component } = await this.findLookMatch(items[0]);
     const p = (await this.paramMap(component)).get(paramName);
-    if (!p) throw new Error(`This LookMatch build has no "${paramName}" (update the effect).`);
-    this.transaction(project, `LookMatch: ${kind}`, (ca) => ca.addAction(p.createSetValueAction(p.createKeyframe(slot), true)));
+    if (!p) throw new Error(`This Komodo build has no "${paramName}" (update the effect).`);
+    this.transaction(project, `Komodo: ${kind}`, (ca) => ca.addAction(p.createSetValueAction(p.createKeyframe(slot), true)));
     const wait = sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
     for (let t = 0; t < timeoutMs; t += pollMs) {
       let result = null;
@@ -271,13 +271,6 @@ class Bridge {
       await wait(pollMs);
     }
     throw new Error("No answer from the effect. Put the playhead over the clip so Premiere renders it, then try again.");
-  }
-
-  // Asks the effect on the first selected clip to write its current look as a .cube.
-  async exportCube(target, opts) {
-    if (!/\.cube$/i.test(target)) throw new Error("The LUT path must end in .cube");
-    const res = await this.effectRequest("export", P.exportSlot, target, opts);
-    return { slot: res.slot, path: target };
   }
 
   // Saves the first selected clip's ungraded frame (at the playhead) as a PNG to use as a reference.

@@ -1,33 +1,35 @@
-// LookMatch panel for Premiere Pro (UXP). Drives the LookMatch effect: source-aware reference
-// matching, texture controls and saved looks. All Premiere access goes through lib/bridge.js.
+// Komodo panel for Premiere Pro (UXP). Drives the Komodo effect (match name "PROPLUGS LookMatch", kept so
+// projects made with LookMatch still open): reference matching, live grade and texture sliders, and a
+// library of saved looks. All Premiere access goes through lib/bridge.js.
 
 const ppro = require("premierepro");
 const uxp = require("uxp");
 const fs = require("fs");
 const os = require("os");
-const { P, SOURCE_FORMATS, TEXTURE_DEFAULTS, guessSourceFormat, sourceFormatReason, abNext } = require("./lib/params.js");
+const { P, SOURCE_FORMATS, TEXTURE_DEFAULTS, MATCH_DEFAULTS, guessSourceFormat, sourceFormatReason } = require("./lib/params.js");
 const { Library, joinPath, baseName } = require("./lib/library.js");
 const { Bridge } = require("./lib/bridge.js");
+const { Live } = require("./lib/live.js");
 const { runSelfTest } = require("./lib/selftest.js");
 
-const VERSION = "0.9.0";  // kept equal to manifest.json by build_panel.sh
+const VERSION = "1.0.0";  // kept equal to manifest.json by build_panel.sh
+// The data folder keeps its LookMatch name: references, looks and matches made before the rename stay.
 const DATA_DIR = os.platform() === "win32"
   ? joinPath(process.env.APPDATA || "", "PRO PLUGS\\LookMatch")
   : joinPath(os.homedir(), "Library/Application Support/PRO PLUGS/LookMatch");
 const LOG_FILE = joinPath(os.homedir(), "Library/Logs/LookMatch.log");
+const NO_CLIPS = "No clips selected. Select a clip on the timeline, then click Match.";
 
 const $ = (id) => document.getElementById(id);
 const library = new Library(fs, DATA_DIR);
 const bridge = new Bridge(ppro, fs, DATA_DIR);
-let selectedRef = null;  // the reference clicked last (also the first of selectedRefs)
 let selectedRefs = [];   // the stills the look is read from: Cmd/Shift-click adds up to 5 of one look
 
 // ---------- status & console ----------
 
 function status(text, kind) {
-  const el = $("status");
-  el.textContent = text || "";
-  el.className = "status" + (kind ? " " + kind : "");
+  $("statusText").textContent = text || "";
+  $("status").className = "status" + (kind ? " " + kind : "");
 }
 
 // The Tools console, mirrored to <data>/panel.log (kept under ~200 KB) for diagnostics.
@@ -51,24 +53,175 @@ async function run(label, fn) {
   status(`${label}…`, "busy");
   try {
     const msg = await fn();
-    status(msg || `${label}: done`, "ok");
+    status(msg || `${label}: done`);
     log(`${label}: ${msg || "done"}`);
   } catch (e) {
-    status(`${label}: ${e.message}`, "err");
+    status(e.message, "err");
     log(`${label} failed: ${e.message}`);
   }
 }
 
-// ---------- tabs ----------
+// ---------- tabs, menu, folds, switches ----------
 
+function showTab(name) {
+  for (const t of document.querySelectorAll("[data-tab]")) t.classList.toggle("on", t.dataset.tab === name);
+  for (const s of document.querySelectorAll("section[data-panel]")) s.hidden = s.dataset.panel !== name;
+}
 $("tabs").addEventListener("click", (ev) => {
   const tab = ev.target.closest ? ev.target.closest("[data-tab]") : ev.target;
-  if (!tab || !tab.dataset.tab) return;
-  for (const b of document.querySelectorAll("[data-tab]")) b.selected = b === tab;
-  for (const s of document.querySelectorAll("section[data-panel]")) s.hidden = s.dataset.panel !== tab.dataset.tab;
+  if (tab && tab.dataset.tab) showTab(tab.dataset.tab);
+});
+$("menuBtn").addEventListener("click", (ev) => { ev.stopPropagation(); $("menu").hidden = !$("menu").hidden; });
+document.addEventListener("click", () => { $("menu").hidden = true; });
+for (const item of document.querySelectorAll("[data-tool]")) {
+  item.addEventListener("click", () => { showTab("tools"); $(item.dataset.tool).click(); });
+}
+for (const f of document.querySelectorAll(".fold")) {
+  f.querySelector(".fold-head").addEventListener("click", () => {
+    f.classList.toggle("open");
+    f.querySelector(".chev").textContent = f.classList.contains("open") ? "▾" : "▸";
+  });
+}
+
+const isOn = (id) => $(id).classList.contains("on");
+const setOn = (id, on) => $(id).classList.toggle("on", !!on);
+
+// ---------- sliders ----------
+// Every slider is live: moving it writes the value to Komodo on the selected clips (coalesced, see
+// lib/live.js). Double-click puts it back to its default.
+
+const live = new Live((params) => bridge.applyParams("selection", params), {
+  interval: 300,
+  onError: (e) => status(/Select a video clip/.test(e.message) ? "No clips selected. Select a clip on the timeline to adjust it." : e.message, "err"),
+});
+const sliders = new Map();  // param name -> { set(v), get(), def }
+
+function fmt(v, unit) {
+  return unit === "%" ? `${Math.round(v)}%` : (Math.round(v * 100) / 100).toString();
+}
+
+// One control row, Lumetri style: name, slider, value. The description is the row's tooltip.
+function makeSlider({ param, title, desc, min = 0, max = 100, step = 1, unit = "%", def, onChange }) {
+  const el = document.createElement("div");
+  el.className = "srow";
+  if (desc) el.title = desc;
+  el.innerHTML = `<span class="ctl-title"></span>` +
+    `<div class="slider"><div class="track"></div><div class="fill"></div><div class="thumb"></div></div><span class="ctl-val"></span>`;
+  el.querySelector(".ctl-title").textContent = title;
+  const bar = el.querySelector(".slider"), fill = el.querySelector(".fill"), thumb = el.querySelector(".thumb");
+  const val = el.querySelector(".ctl-val");
+  let value = def;
+  const draw = () => {
+    const pct = ((value - min) / (max - min)) * 100;
+    fill.style.width = `${pct}%`;
+    thumb.style.left = `${pct}%`;
+    val.textContent = fmt(value, unit);
+  };
+  const set = (v, send) => {
+    v = Math.min(max, Math.max(min, Math.round(Number(v) / step) * step));
+    if (!Number.isFinite(v)) return;
+    const changed = v !== value;
+    value = v;
+    draw();
+    if (send && changed) {
+      live.set(param, v);
+      if (onChange) onChange(v);
+    }
+  };
+  const fromX = (x) => {
+    const r = bar.getBoundingClientRect();
+    set(min + ((x - r.left) / Math.max(1, r.width)) * (max - min), true);
+  };
+  let dragging = false;
+  bar.addEventListener("mousedown", (ev) => { dragging = true; fromX(ev.clientX); ev.preventDefault(); });
+  document.addEventListener("mousemove", (ev) => { if (dragging) fromX(ev.clientX); });
+  document.addEventListener("mouseup", () => { dragging = false; });
+  bar.addEventListener("dblclick", () => set(def, true));
+  draw();
+  sliders.set(param, { set: (v) => set(v, false), get: () => value, def });
+  return el;
+}
+
+const GRADE = [
+  { param: P.lookStrength, title: "Look Strength", def: 100, desc: "How much of the reference's look goes on." },
+  { param: P.matchContrast, title: "Match Contrast", def: 100,
+    desc: "Brings blacks, mids and whites to the reference's levels. Skin is kept from crushing." },
+  { param: P.finish, title: "Finish", def: 100, desc: "Lands the match at the levels of a finished grade: open highlights, firm blacks." },
+  { param: P.skinEvening, title: "Skin Evening", def: 50, desc: "Evens patchy skin tone toward the skin around it. No smoothing." },
+];
+const SOURCE = [
+  { param: P.normExposure, title: "Exposure", desc: "How much of the clip's own exposure to even out before the look", def: 100 },
+  { param: P.normWhite, title: "White balance", desc: "How much of the clip's own white balance to even out before the look", def: 100 },
+  { param: P.normContrast, title: "Contrast", desc: "How much of the clip's own contrast and saturation to even out before the look", def: 100 },
+];
+const updateAdvSub = () => {
+  $("advSub").textContent = `Match ${Math.round(sliders.get(P.matchStrength).get())}% · Regions ${Math.round(sliders.get(P.regionMatching).get())}%`;
+};
+const ADVANCED = [
+  { param: P.matchStrength, title: "Match", def: 100, onChange: updateAdvSub },
+  { param: P.regionMatching, title: "Regions", def: 100, onChange: updateAdvSub },
+];
+const TEXTURE = [
+  { param: P.grain, title: "Grain", max: 200, def: TEXTURE_DEFAULTS[P.grain] },
+  { param: P.halation, title: "Halation", max: 200, def: TEXTURE_DEFAULTS[P.halation] },
+  { param: P.bloom, title: "Bloom", max: 200, def: TEXTURE_DEFAULTS[P.bloom] },
+  { param: P.vignette, title: "Vignette", def: TEXTURE_DEFAULTS[P.vignette] },
+];
+const TEXTURE_MORE = [
+  { param: P.fade, title: "Fade" },
+  { param: P.softness, title: "Softness" },
+  { param: P.gateWeave, title: "Gate weave", max: 4, step: 0.05, unit: "" },
+  { param: P.flicker, title: "Flicker" },
+  { param: P.grainSize, title: "Grain size", min: 0.5, max: 4, step: 0.05, unit: "" },
+  { param: P.grainColour, title: "Grain colour" },
+  { param: P.halationSize, title: "Halation size", min: 0.25, max: 3, step: 0.05, unit: "" },
+  { param: P.halationThreshold, title: "Halation threshold", min: 0.1, max: 2, step: 0.05, unit: "" },
+  { param: P.bloomSize, title: "Bloom size", min: 0.25, max: 3, step: 0.05, unit: "" },
+  { param: P.bloomThreshold, title: "Bloom threshold", min: 0.1, max: 2, step: 0.05, unit: "" },
+].map((c) => Object.assign({ def: TEXTURE_DEFAULTS[c.param] }, c));
+
+for (const c of GRADE) $("gradeControls").appendChild(makeSlider(c));
+for (const c of SOURCE) $("sourceControls").appendChild(makeSlider(c));
+for (const c of ADVANCED) $("advancedControls").appendChild(makeSlider(c));
+for (const c of TEXTURE) $("textureControls").appendChild(makeSlider(c));
+for (const c of TEXTURE_MORE) $("textureMore").appendChild(makeSlider(c));
+updateAdvSub();
+
+// switches that write a checkbox live
+function liveSwitch(id, param, after) {
+  $(id).addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    setOn(id, !isOn(id));
+    live.set(param, isOn(id));
+    if (after) after(isOn(id));
+  });
+}
+liveSwitch("autoSkinSw", P.autoSkin);
+liveSwitch("bandSw", P.fixBanding);
+// Before / after: the effect's split view (original on the left of the line)
+$("beforeAfter").addEventListener("click", () => {
+  setOn("baSw", !isOn("baSw"));
+  live.set(P.split, isOn("baSw"));
+  if (isOn("baSw")) { live.set(P.splitPos, 50); live.set(P.splitAngle, 0); }
+  status(isOn("baSw") ? "Before / after: original on the left of the line" : "Before / after off");
 });
 
-// ---------- reference library ----------
+// Source Format picker: 1 = Auto, then the effect's popup order (applies live too)
+SOURCE_FORMATS.forEach((name, i) => {
+  const item = document.createElement("sp-menu-item");
+  item.textContent = name;
+  item.value = String(i + 1);
+  $("sourceMenu").appendChild(item);
+});
+$("sourceFormat").selectedIndex = 0;
+const sourceFormat = () => Math.max(1, ($("sourceFormat").selectedIndex | 0) + 1);
+const shortFormat = (i) => (i <= 1 ? "Auto" : SOURCE_FORMATS[i - 1].split(" / ")[0]);
+$("sourceFormat").addEventListener("change", () => {
+  $("srcSub").textContent = sourceFormat() === 1 ? "Auto" : `${shortFormat(sourceFormat())} (manual)`;
+  live.set(P.sourceFormat, sourceFormat());
+});
+
+// ---------- reference strip ----------
 
 async function thumbnailUrl(path) {
   try {
@@ -84,35 +237,45 @@ async function thumbnailUrl(path) {
     return "";
   }
 }
+const thumbCache = new Map();
+const thumb = (path) => {
+  if (!thumbCache.has(path)) thumbCache.set(path, thumbnailUrl(path));
+  return thumbCache.get(path);
+};
 
 async function renderRefs() {
   const grid = $("refGrid");
   grid.innerHTML = "";
-  if (!library.refs.length) {
-    grid.innerHTML = '<sp-body size="XS" class="hint">No references yet.</sp-body>';
-    return;
-  }
   for (const ref of library.refs) {
     const div = document.createElement("div");
-    div.className = "thumb" + (selectedRefs.some((r) => r.id === ref.id) ? " sel" : "");
+    div.className = "ref" + (selectedRefs.some((r) => r.id === ref.id) ? " sel" : "");
     div.title = ref.path;
-    div.innerHTML = `<img alt=""><div class="name"><span class="x" title="Remove">×</span></div>`;
-    div.querySelector(".name").appendChild(document.createTextNode(ref.name));
+    div.innerHTML = `<div class="img"><img alt=""><div class="x" title="Remove">×</div></div><div class="n"></div>`;
+    div.querySelector(".n").textContent = ref.name.replace(/\.(png|jpe?g|bmp|tga)$/i, "");
     div.addEventListener("click", (ev) => {
       if (ev.target.classList.contains("x")) {
         library.removeReference(ref.id);
         selectedRefs = selectedRefs.filter((r) => r.id !== ref.id);
-        selectedRef = selectedRefs[0] || null;
         library.save().then(renderRefs);
         return;
       }
       selectedRefs = toggleReference(selectedRefs, ref, ev.metaKey || ev.shiftKey || ev.ctrlKey);
-      selectedRef = selectedRefs[0] || null;
       renderRefs();
+      if (selectedRefs.length) status(`Reference: ${referenceLabel(selectedRefs)}. Select clips and click Match.`);
     });
     grid.appendChild(div);
-    thumbnailUrl(ref.path).then((url) => { if (url) div.querySelector("img").src = url; });
+    thumb(ref.path).then((url) => { if (url) div.querySelector("img").src = url; });
   }
+  const add = document.createElement("div");
+  add.className = "ref add";
+  add.title = "Add a still";
+  add.textContent = "+";
+  add.addEventListener("click", () => run("Add reference", async () => {
+    const file = await uxp.storage.localFileSystem.getFileForOpening({ types: ["png", "jpg", "jpeg", "bmp", "tga"] });
+    if (!file) return "Cancelled";
+    return addReference(file.nativePath);
+  }));
+  grid.appendChild(add);
 }
 
 // Click picks one reference; Cmd/Shift/Ctrl-click adds or removes it from a set of up to 5 stills of
@@ -123,38 +286,31 @@ function toggleReference(current, ref, add) {
   return current.concat([ref]).slice(-5);
 }
 function referenceLabel(refs) {
-  return refs.length > 1 ? `${refs.length} stills (${refs.map((r) => r.name).join(", ")})` : refs[0].name;
+  return refs.length > 1 ? `${refs.length} stills (${refs.map((r) => r.name).join(", ")})` : `“${refs[0].name}”`;
 }
 
 async function addReference(path) {
   path = String(path || "").trim().replace(/^file:\/\//, "");
-  if (!path) throw new Error("Enter or drop an image path.");
+  if (!path) throw new Error("Drop an image to add it.");
   try { await fs.lstat(path); } catch (e) { throw new Error(`No file at ${path}`); }
-  selectedRef = library.addReference(path);
-  selectedRefs = [selectedRef];
+  const ref = library.addReference(path);
+  selectedRefs = [ref];
   await library.save();
   await renderRefs();
   return `Added ${baseName(path)}`;
 }
 
-$("addRef").addEventListener("click", () => run("Add reference", () => addReference($("refPath").value)));
-$("browseRef").addEventListener("click", () => run("Add reference", async () => {
-  const file = await uxp.storage.localFileSystem.getFileForOpening({ types: ["png", "jpg", "jpeg", "bmp", "tga"] });
-  if (!file) return "Cancelled";
-  return addReference(file.nativePath);
-}));
-
-// Drag and drop from Finder / Explorer
-const drop = $("drop");
-drop.addEventListener("dragover", (ev) => { ev.preventDefault(); drop.classList.add("over"); });
-drop.addEventListener("dragleave", () => drop.classList.remove("over"));
-drop.addEventListener("drop", (ev) => {
+// Drop a still anywhere on the panel (Finder / Explorer)
+document.body.addEventListener("dragover", (ev) => { ev.preventDefault(); $("drop").classList.add("over"); });
+document.body.addEventListener("dragleave", () => $("drop").classList.remove("over"));
+document.body.addEventListener("drop", (ev) => {
   ev.preventDefault();
-  drop.classList.remove("over");
+  $("drop").classList.remove("over");
   const dt = ev.dataTransfer;
   const paths = [];
   if (dt && dt.files) for (const f of dt.files) paths.push(f.nativePath || f.path || f.name);
   if (!paths.length && dt) paths.push(dt.getData("text/uri-list") || dt.getData("text/plain"));
+  showTab("match");
   run("Add reference", async () => {
     let msg = "";
     for (const p of paths.filter(Boolean)) msg = await addReference(p);
@@ -164,48 +320,15 @@ drop.addEventListener("drop", (ev) => {
 
 // ---------- matching ----------
 
-function bindSlider(id, labelId) {
-  const s = $(id);
-  const update = () => { $(labelId).textContent = `${Math.round(s.value)}%`; };
-  s.addEventListener("input", update);
-  update();
+// A new match puts every slider back to its default: the grade, source evening and advanced controls.
+function resetMatchSliders() {
+  live.cancel();
+  for (const [name, v] of Object.entries(MATCH_DEFAULTS)) {
+    if (sliders.has(name)) sliders.get(name).set(v);
+  }
+  setOn("autoSkinSw", MATCH_DEFAULTS[P.autoSkin]);
+  updateAdvSub();
 }
-bindSlider("strength", "strengthV");
-bindSlider("region", "regionV");
-
-bindSlider("normExposure", "normExposureV");
-bindSlider("normWhite", "normWhiteV");
-bindSlider("normContrast", "normContrastV");
-bindSlider("lookStrength", "lookStrengthV");
-bindSlider("matchContrast", "matchContrastV");
-bindSlider("finish", "finishV");
-
-// Source Format picker: 1 = Auto, then the effect's popup order
-const sourceMenu = $("sourceMenu");
-SOURCE_FORMATS.forEach((name, i) => {
-  const item = document.createElement("sp-menu-item");
-  item.textContent = name;
-  item.value = String(i + 1);
-  sourceMenu.appendChild(item);
-});
-$("sourceFormat").selectedIndex = 0;
-const sourceFormat = () => Math.max(1, ($("sourceFormat").selectedIndex | 0) + 1);
-
-function matchSettings() {
-  return {
-    [P.matchStrength]: Number($("strength").value),
-    [P.regionMatching]: Number($("region").value),
-    [P.autoSkin]: !!$("autoSkin").checked,
-    [P.normExposure]: Number($("normExposure").value),
-    [P.normWhite]: Number($("normWhite").value),
-    [P.normContrast]: Number($("normContrast").value),
-    [P.lookStrength]: Number($("lookStrength").value),
-    [P.matchContrast]: Number($("matchContrast").value),
-    [P.finish]: Number($("finish").value),
-  };
-}
-
-// ---------- source analysis (inline, per clip) ----------
 
 const fmtStops = (v) => (v >= 0 ? "+" : "") + v.toFixed(2);
 const fmtTint = (v) => (v >= 0 ? "+" : "") + v.toFixed(1);
@@ -214,14 +337,14 @@ function analysisTable(a) {
                           `${x.contrast.toFixed(1)} st`] : ["", "", "", "", ""];
   const rows = ["Format", "Exposure", "Temperature", "Tint", "Contrast"];
   const s = col(a.source), r = col(a.result), f = col(a.reference);
-  let html = "<table><tr><th></th><th>Before</th><th>After</th><th>Reference</th></tr>";
+  let html = "<table><tr><th></th><th>Before</th><th>After</th><th>Ref</th></tr>";
   rows.forEach((name, i) => { html += `<tr><td>${name}</td><td>${s[i]}</td><td>${r[i]}</td><td>${i ? f[i] : ""}</td></tr>`; });
   return html + "</table>";
 }
 
-const analysisBox = $("analysis");
 function showClipAnalysis(entries) {
-  analysisBox.innerHTML = "";
+  const box = $("analysis");
+  box.innerHTML = "";
   for (const e of entries) {
     const div = document.createElement("div");
     div.className = "clip";
@@ -234,7 +357,14 @@ function showClipAnalysis(entries) {
     else if (e.analysis.error) { body.className = "err"; body.textContent = e.analysis.error; }
     else body.innerHTML = analysisTable(e.analysis);
     div.appendChild(body);
-    analysisBox.appendChild(div);
+    box.appendChild(div);
+  }
+  $("anSub").textContent = entries.length ? (entries.length > 1 ? `${entries.length} clips` : entries[0].name) : "";
+  const first = entries.find((e) => e.analysis && e.analysis.source);
+  if (first && sourceFormat() === 1) {
+    $("detected").textContent = `Detected ${first.analysis.source.guess || first.analysis.source.transfer}` +
+      (entries[0].how ? ` · ${entries[0].how}` : "");
+    $("srcSub").textContent = `Auto · ${first.analysis.source.transfer}`;
   }
 }
 
@@ -256,237 +386,133 @@ async function followAnalysis(entries) {
   }
 }
 
-async function matchClips(scope) {
-  if (!selectedRefs.length && selectedRef) selectedRefs = [selectedRef];
-  if (!selectedRefs.length) throw new Error("Pick a reference first (add one above and click it).");
-  const params = matchSettings();
+// Match: the selected clips only. Nothing selected -> say so and do nothing.
+async function matchSelected() {
+  const { items } = await bridge.selectedVideoItems();
+  if (!items.length) throw new Error(NO_CLIPS);
+  if (!selectedRefs.length) throw new Error("Pick a reference first: drop a still on the panel and click it.");
+  await live.idle();
+  resetMatchSliders();
+  const params = Object.assign({}, MATCH_DEFAULTS);
   // The match decodes the footage itself, so the Input group passes code values straight through.
   params[P.footageEncoding] = 1;
   const chosen = sourceFormat();
   let formats = null, how = [];
   if (chosen === 1) {
     // Auto: clip metadata (colour space, input LUT, file name) first; the effect detects the rest from the picture
-    const hints = await bridge.clipColourHints(scope);
+    const hints = await bridge.clipColourHints("selection");
     formats = hints.map((h) => guessSourceFormat(h));
     how = formats.map((f, i) => sourceFormatReason(hints[i], f));
   }
-  const refLabel = referenceLabel(selectedRefs);
-  const res = await bridge.applyReference(scope, selectedRefs.map((r) => r.path), (i) => Object.assign({}, params,
+  const res = await bridge.applyReference("selection", selectedRefs.map((r) => r.path), (i) => Object.assign({}, params,
     { [P.sourceFormat]: formats ? (formats[i] || 1) : chosen }));
-  log(`matched ${res.clips} clip(s) to ${refLabel} (slot ${res.slot}${res.added ? `, added LookMatch to ${res.added}` : ""})`);
-  log("tip: to keep this match inside the project (for other Macs), click LookMatch > Panel Link > Save into Project in Effect Controls");
+  const label = referenceLabel(selectedRefs);
+  log(`matched ${res.clips} clip(s) to ${label} (slot ${res.slot}${res.added ? `, added Komodo to ${res.added}` : ""})`);
   const entries = res.slots.map((slot, i) => ({ slot, name: res.names[i], how: chosen === 1 ? how[i] : SOURCE_FORMATS[chosen - 1], analysis: null }));
   followAnalysis(entries).catch((e) => log(`analysis: ${e.message}`));
-  return `Matched ${res.clips} clip(s) to ${refLabel}`;
+  return `${res.clips} clip${res.clips === 1 ? "" : "s"} matched to ${label}`;
 }
 
-// Shot matching: grab the selected (hero) clip's frame through the effect, add it to the library.
-// With "Match to its graded look", the frame as LookMatch renders it (its match included), so the other
-// clips take the hero's finished look; otherwise the clip as shot.
-async function captureHero() {
-  const graded = !!$("heroGraded").checked;
-  const res = await bridge.captureFrame({ graded });
-  selectedRef = library.addReference(res.path);
-  selectedRef.name = `Hero${graded ? " (graded)" : ""}: ${res.clip}`;
-  selectedRefs = [selectedRef];
-  await library.save();
-  await renderRefs();
-  log(`captured hero frame of ${res.clip} -> ${res.path}`);
-  return res;
-}
+$("matchBtn").addEventListener("click", async () => {
+  if ($("matchBtn").classList.contains("busy")) return;
+  $("matchBtn").classList.add("busy");
+  await run("Matching", matchSelected);
+  $("matchBtn").classList.remove("busy");
+});
 
-$("heroRef").addEventListener("click", () => run("Capture hero", async () => {
-  const res = await captureHero();
-  return `${res.clip} is now the reference: select other clips and click Match`;
-}));
-$("heroMatchSeq").addEventListener("click", () => run("Match sequence to hero", async () => {
-  const res = await captureHero();
-  // every clip but the hero: the hero keeps its own grade
-  const msg = await matchClips("others");
-  return `${msg} (hero: ${res.clip})`;
-}));
+// ---------- follow the selection ----------
+// The sliders show the first selected clip's values; the status line counts the selection.
 
-$("matchSel").addEventListener("click", () => run("Match", () => matchClips("selection")));
-$("matchSeq").addEventListener("click", () => run("Match sequence", () => matchClips("sequence")));
-$("applyStrength").addEventListener("click", () => run("Apply strength", async () => {
-  const res = await bridge.applyParams("selection", matchSettings());
-  return `Updated ${res.clips} clip(s)`;
-}));
-// Before / after: the effect's Split View wipe (original on the left of the line).
-$("beforeAfter").addEventListener("click", () => run("Before / after", async () => {
-  const cur = await bridge.selectedLookMatchParams();
-  if (!cur) throw new Error("Select a clip with LookMatch.");
-  // after A/B (split at 0% / 100%) this turns the compare off
-  const ab = cur.params[P.split] && (Number(cur.params[P.splitPos]) <= 0 || Number(cur.params[P.splitPos]) >= 100);
-  const on = !cur.params[P.split] && !ab;
-  await bridge.applyParams("selection", { [P.split]: on, [P.splitPos]: Number($("splitPos").value) });
-  return on ? "Split view on: original on the left" : "Split view off";
-}));
-$("abCompare").addEventListener("click", () => run("A / B", async () => {
-  const cur = await bridge.selectedLookMatchParams();
-  if (!cur) throw new Error("Select a clip with LookMatch.");
-  const next = abNext(cur.params);
-  await bridge.applyParams("selection", next.params);
-  return `${next.label} (${cur.name}). Click again to switch, Before / after to turn it off.`;
-}));
-bindSlider("splitPos", "splitPosV");
-$("splitPos").addEventListener("change", () => run("Split position", async () => {
-  await bridge.applyParams("selection", { [P.splitPos]: Number($("splitPos").value) });
-  return `Split at ${Math.round($("splitPos").value)}%`;
-}));
-
-// ---------- texture controls ----------
-
-const FILM_CONTROLS = [
-  [P.fade, 0, 100, 1, "%"],
-  [P.halation, 0, 200, 1, "%"], [P.halationSize, 0.25, 3, 0.05, ""], [P.halationThreshold, 0.1, 2, 0.05, ""],
-  [P.bloom, 0, 200, 1, "%"], [P.bloomSize, 0.25, 3, 0.05, ""], [P.bloomThreshold, 0.1, 2, 0.05, ""],
-  [P.grain, 0, 200, 1, "%"], [P.grainSize, 0.5, 4, 0.05, ""], [P.grainColour, 0, 100, 1, "%"],
-  [P.skinEvening, 0, 100, 1, "%"], [P.softness, 0, 100, 1, "%"], [P.vignette, 0, 100, 1, "%"], [P.gateWeave, 0, 4, 0.05, ""], [P.flicker, 0, 100, 1, "%"],
-];
-const filmInputs = new Map();
-
-function fmt(v, unit) {
-  return unit === "%" ? `${Math.round(v)}%` : (Math.round(v * 100) / 100).toString();
-}
-
-function renderFilmControls() {
-  const box = $("filmControls");
-  for (const [name, a, b, step, unit] of FILM_CONTROLS) {
-    const row = document.createElement("div");
-    row.className = "slider-row";
-    const label = document.createElement("sp-detail");
-    label.textContent = name.toUpperCase();
-    row.appendChild(label);
-    {
-      const s = document.createElement("sp-slider");
-      s.setAttribute("min", a); s.setAttribute("max", b); s.setAttribute("step", step);
-      const val = document.createElement("span");
-      s.addEventListener("input", () => { val.textContent = fmt(Number(s.value), unit); });
-      row.appendChild(s);
-      row.appendChild(val);
-      filmInputs.set(name, { get: () => Number(s.value), set: (v) => { s.value = v; val.textContent = fmt(v, unit); } });
-    }
-    box.appendChild(row);
+let selectionKey = null;
+async function readSelection() {
+  if (live.timer || live.running || document.querySelector(".matchbtn.busy")) return;
+  let keys = [];
+  try {
+    const { items } = await bridge.selectedVideoItems();
+    keys = await Promise.all(items.map((it) => bridge.itemKey(it)));
+  } catch (e) { return; }
+  const key = keys.join("|");
+  if (key === selectionKey) return;
+  selectionKey = key;
+  if (!/ busy/.test($("status").className)) {
+    status(keys.length ? `${keys.length} clip${keys.length === 1 ? "" : "s"} selected` : "Select a clip on the timeline");
   }
-  filmInputs.set(P.fixBanding, { get: () => !!$("fixBanding").checked, set: (v) => { $("fixBanding").checked = !!v; } });
-  setFilmControls(TEXTURE_DEFAULTS);
+  if (!keys.length) return;
+  const cur = await bridge.selectedLookMatchParams().catch(() => null);
+  if (cur) showParams(cur.params);
 }
 
-function setFilmControls(params) {
-  for (const [name, input] of filmInputs) if (params[name] !== undefined) input.set(params[name]);
+function showParams(params) {
+  for (const [name, s] of sliders) if (typeof params[name] === "number") s.set(params[name]);
+  if (params[P.autoSkin] !== undefined) setOn("autoSkinSw", params[P.autoSkin]);
+  if (params[P.fixBanding] !== undefined) setOn("bandSw", params[P.fixBanding]);
+  if (params[P.split] !== undefined) setOn("baSw", params[P.split] && params[P.splitPos] > 0 && params[P.splitPos] < 100);
+  if (params[P.sourceFormat] !== undefined) {
+    $("sourceFormat").selectedIndex = Math.max(0, params[P.sourceFormat] - 1);
+    $("srcSub").textContent = params[P.sourceFormat] === 1 ? "Auto" : `${shortFormat(params[P.sourceFormat])} (manual)`;
+  }
+  updateAdvSub();
 }
 
-function filmParams() {
-  const out = {};
-  for (const [name, input] of filmInputs) out[name] = input.get();
+// ---------- library ----------
+
+function currentLookParams() {
+  const out = { [P.sourceFormat]: sourceFormat(), [P.autoSkin]: isOn("autoSkinSw"), [P.fixBanding]: isOn("bandSw") };
+  for (const [name, s] of sliders) out[name] = s.get();
   return out;
 }
-
-$("readFilm").addEventListener("click", () => run("Read clip", async () => {
-  const cur = await bridge.selectedLookMatchParams();
-  if (!cur) throw new Error("Select a clip with LookMatch.");
-  setFilmControls(cur.params);
-  if (cur.params[P.matchStrength] !== undefined) $("strength").value = cur.params[P.matchStrength];
-  for (const [id, name] of [["normExposure", P.normExposure], ["normWhite", P.normWhite], ["normContrast", P.normContrast], ["lookStrength", P.lookStrength], ["matchContrast", P.matchContrast], ["finish", P.finish]])
-    if (cur.params[name] !== undefined) { $(id).value = cur.params[name]; $(`${id}V`).textContent = `${Math.round(cur.params[name])}%`; }
-  if (cur.params[P.sourceFormat] !== undefined) $("sourceFormat").selectedIndex = Math.max(0, cur.params[P.sourceFormat] - 1);
-  return `Read ${cur.name}`;
-}));
-$("resetFilm").addEventListener("click", () => setFilmControls(TEXTURE_DEFAULTS));
-$("applyFilm").addEventListener("click", () => run("Apply texture", async () => {
-  const res = await bridge.applyParams("selection", filmParams());
-  return `Texture on ${res.clips} clip(s)`;
-}));
-$("applyFilmSeq").addEventListener("click", () => run("Apply texture to sequence", async () => {
-  const res = await bridge.applyParams("sequence", filmParams());
-  return `Texture on ${res.clips} clip(s)`;
-}));
-
-// ---------- saved looks ----------
 
 function renderSaved() {
   const list = $("savedList");
   list.innerHTML = "";
   if (!library.looks.length) {
-    list.innerHTML = '<sp-body size="XS" class="hint">No saved looks yet.</sp-body>';
+    list.innerHTML = '<div class="hint">No saved looks yet. Grade a clip, name the look and save it.</div>';
     return;
   }
   for (const look of library.looks) {
     const row = document.createElement("div");
     row.className = "item";
-    row.innerHTML = `<span class="name"></span>
-      <sp-action-button size="s" data-a="apply">Apply</sp-action-button>
-      <sp-action-button size="s" data-a="export">Export</sp-action-button>
-      <sp-action-button size="s" data-a="delete">Delete</sp-action-button>`;
-    row.querySelector(".name").textContent = look.name + (look.reference ? `  ·  ${baseName(look.reference)}` : "");
+    row.innerHTML = `<div class="sw8"><img alt=""></div><div class="txt"><div class="nm"></div><div class="meta"></div></div>
+      <div class="btn-o" data-a="apply">Apply</div><div class="del" data-a="delete" title="Delete">×</div>`;
+    row.querySelector(".nm").textContent = look.name;
+    const p = look.params || {};
+    row.querySelector(".meta").textContent = [look.reference ? baseName(look.reference) : "no reference",
+      p[P.finish] !== undefined ? `Finish ${Math.round(p[P.finish])}` : "", p[P.grain] ? `Grain ${Math.round(p[P.grain])}` : ""].filter(Boolean).join(" · ");
+    if (look.reference) thumb(look.reference).then((url) => { if (url) row.querySelector("img").src = url; });
     row.addEventListener("click", (ev) => {
       const a = ev.target.dataset && ev.target.dataset.a;
       if (a === "apply") applySavedLook(look);
-      if (a === "export") exportLook(look);
       if (a === "delete") { library.removeLook(look.id); library.save().then(renderSaved); }
     });
     list.appendChild(row);
   }
 }
 
+// film print settings from looks saved by early builds: matching no longer applies a print
+const OLD_FILM = ["Film Strength", "Negative Stock", "Print Stock", "Printer Light R", "Printer Light G", "Printer Light B", "Film Saturation"];
+
 function applySavedLook(look) {
   return run(`Apply ${look.name}`, async () => {
-    setFilmControls(look.params);
-    if (look.reference) {
-      const params = Object.assign({}, look.params);
-      // looks saved by 0.5 kept film print settings: matching no longer applies a print
-      for (const k of ["Film Strength", "Negative Stock", "Print Stock", "Printer Light R", "Printer Light G", "Printer Light B", "Film Saturation"]) delete params[k];
-      const res = await bridge.applyReference("selection", look.reference, params);
-      return `${look.name} (matched to ${baseName(look.reference)}) on ${res.clips} clip(s)`;
-    }
+    const { items } = await bridge.selectedVideoItems();
+    if (!items.length) throw new Error("No clips selected. Select a clip on the timeline, then click Apply.");
+    await live.idle();
     const params = Object.assign({}, look.params);
-    for (const k of ["Negative Stock", "Print Stock", "Printer Light R", "Printer Light G", "Printer Light B", "Film Saturation"]) delete params[k];
+    for (const k of OLD_FILM) delete params[k];
+    showParams(params);
+    if (look.reference) {
+      const res = await bridge.applyReference("selection", look.reference, params);
+      return `${look.name} on ${res.clips} clip(s)`;
+    }
     const res = await bridge.applyParams("selection", params);
     return `${look.name} on ${res.clips} clip(s)`;
   });
 }
 
-function exportLook(look) {
-  return run("Export look", async () => {
-    let target = $("lookFile").value.trim();
-    if (!target) target = joinPath(DATA_DIR, "looks");
-    if (!/\.lmlook$/i.test(target)) {
-      try { await fs.mkdir(target, { recursive: true }); } catch (e) { /* exists */ }
-      target = joinPath(target, `${look.name.replace(/[\\/:*?"<>|]+/g, "_")}.lmlook`);
-    }
-    await fs.writeFile(target, Library.lookToFile(look), { encoding: "utf-8" });
-    log(`exported ${look.name} to ${target}`);
-    return `Exported to ${target}`;
-  });
-}
-
 $("saveLook").addEventListener("click", () => run("Save look", async () => {
-  const params = Object.assign({}, filmParams(), matchSettings(), { [P.sourceFormat]: sourceFormat() });
-  const look = library.saveLook($("lookName").value, params, selectedRef ? selectedRef.path : null);
+  const look = library.saveLook($("lookName").value, currentLookParams(), selectedRefs.length ? selectedRefs[0].path : null);
   await library.save();
   renderSaved();
-  return `Saved "${look.name}"`;
-}));
-
-$("exportCube").addEventListener("click", () => run("Export LUT", async () => {
-  let target = $("cubePath").value.trim();
-  if (!target) target = joinPath(DATA_DIR, "luts/LookMatch.cube");
-  if (!/\.cube$/i.test(target)) target = joinPath(target, "LookMatch.cube");
-  try { await fs.mkdir(target.replace(/[\\/][^\\/]*$/, ""), { recursive: true }); } catch (e) { /* exists */ }
-  const res = await bridge.exportCube(target);
-  log(`exported LUT to ${res.path}`);
-  return `LUT written to ${res.path}`;
-}));
-
-$("importLook").addEventListener("click", () => run("Import look", async () => {
-  const path = $("lookFile").value.trim();
-  if (!path) throw new Error("Enter the path of a .lmlook file.");
-  const data = Library.lookFromFile(await fs.readFile(path, { encoding: "utf-8" }));
-  const look = library.saveLook(data.name, data.params, data.reference);
-  await library.save();
-  renderSaved();
-  return `Imported "${look.name}"`;
+  return `Saved “${look.name}”`;
 }));
 
 // ---------- tools ----------
@@ -496,7 +522,7 @@ $("showLog").addEventListener("click", () => run("Effect log", async () => {
   try { text = await fs.readFile(LOG_FILE, { encoding: "utf-8" }); } catch (e) {
     return "No log. Start Premiere with LOOKMATCH_LOG=1 to enable it.";
   }
-  log("---- LookMatch.log (last 40 lines) ----\n" + text.trim().split("\n").slice(-40).join("\n"));
+  log("---- effect log (last 40 lines) ----\n" + text.trim().split("\n").slice(-40).join("\n"));
   return "Log shown below";
 }));
 
@@ -505,38 +531,38 @@ $("probe").addEventListener("click", () => run("Probe", async () => {
   log(`${items.length} selected video clip(s)`);
   for (const item of items) {
     const { component } = await bridge.findLookMatch(item);
-    log(`  ${await item.getName()}: ${component ? JSON.stringify(await bridge.readParams(component)) : "no LookMatch"}`);
+    log(`  ${await item.getName()}: ${component ? JSON.stringify(await bridge.readParams(component)) : "no Komodo"}`);
   }
   return `${items.length} clip(s)`;
 }));
 
 // In-Premiere self-test (lib/selftest.js): exercises the whole flow on the selected clip.
 $("selfTest").addEventListener("click", () => run("Self-test", async () => {
-  const { pass, lines } = await runSelfTest(bridge, { log, referencePath: selectedRef ? selectedRef.path : null });
+  const { pass, lines } = await runSelfTest(bridge, { log, referencePath: selectedRefs.length ? selectedRefs[0].path : null });
   return pass ? `Self-test passed (${lines.filter((l) => l.startsWith("PASS")).length} checks)` : "Self-test failed: see Tools";
 }));
 
 // ---------- start ----------
 
 (async () => {
-  renderFilmControls();
+  $("version").textContent = `v${VERSION} · PRO PLUGS`;
   await library.load();
-  selectedRef = library.refs[0] || null;
-  selectedRefs = selectedRef ? [selectedRef] : [];
+  selectedRefs = library.refs.length ? [library.refs[0]] : [];
   await renderRefs();
   renderSaved();
-  log(`LookMatch panel ${VERSION} ready (data in ${DATA_DIR})`);
+  log(`Komodo panel ${VERSION} ready (data in ${DATA_DIR})`);
+  setInterval(() => { readSelection().catch(() => {}); }, 1000);
   try {
     // dev builds only: lib/agent.js is left out of release packages
     require("./lib/agent.js").startAgent(fs, DATA_DIR, bridge, log, {
       // UI driving for tests: only these elements, only set value / click
-      fields: ["refPath", "lookName", "lookFile", "cubePath", "normExposure", "normWhite", "normContrast", "lookStrength", "matchContrast", "finish"],  // plus tab switching (uiTab)
-      buttons: ["addRef", "matchSel", "matchSeq", "applyStrength", "beforeAfter", "abCompare", "heroRef", "heroMatchSeq", "readFilm", "resetFilm",
-                "applyFilm", "saveLook", "importLook", "exportCube", "selfTest", "probe", "showLog"],
-      status: () => ({ text: $("status").textContent, kind: $("status").className }),
+      fields: ["lookName"],  // plus tab switching (uiTab)
+      buttons: ["matchBtn", "beforeAfter", "saveLook", "selfTest", "probe", "showLog"],
+      status: () => ({ text: $("statusText").textContent, kind: $("status").className }),
       savedLooks: () => library.looks.map((l) => l.name),
       element: (id) => document.getElementById(id),
-      analysis: () => analysisBox.textContent,
+      analysis: () => $("analysis").textContent,
+      setSlider: (name, v) => { const s = sliders.get(name); if (!s) throw new Error(`no slider ${name}`); s.set(v); live.set(name, s.get()); return s.get(); },
     });
   } catch (e) { /* release build */ }
 })();

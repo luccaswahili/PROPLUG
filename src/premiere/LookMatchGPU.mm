@@ -28,6 +28,7 @@
 #include "LookMatchParamIds.h"
 #include "MatchData.h"
 #include "PanelFiles.h"
+#include "SlotSource.h"
 #include "engine.h"
 
 namespace {
@@ -180,6 +181,26 @@ public:
         return p;
     }
 
+    // Same as matchSettings() in LookMatch.cpp (popups here are 0-based, the key uses 1-based).
+    lmpanel::MatchSettings matchSettings(PrTime t) const {
+        lmpanel::MatchSettings m;
+        m.lookStrength = float(param(P_LOOK_STRENGTH, t));
+        m.matchContrast = float(param(P_MATCH_CONTRAST, t));
+        m.finish = float(param(P_FINISH, t));
+        m.normExposure = float(param(P_NORM_EXPOSURE, t));
+        m.normWhite = float(param(P_NORM_WB, t));
+        m.normContrast = float(param(P_NORM_CONTRAST, t));
+        m.regionStrength = float(param(P_REGION_STRENGTH, t));
+        m.skinAuto = param(P_SKIN_AUTO, t) != 0 ? 1.0f : 0.0f;
+        m.skinProtect = float(param(P_SKIN_PROTECT, t));
+        m.sourceFormat = float(param(P_SOURCE_FORMAT, t)) + 1;
+        m.inputSpace = float(param(P_INPUT_SPACE, t)) + 1;
+        m.exposure = float(param(P_EXPOSURE, t));
+        m.temperature = float(param(P_TEMPERATURE, t));
+        m.tint = float(param(P_TINT, t));
+        return m;
+    }
+
     // The match this clip uses, mirroring Render in LookMatch.cpp: a newer panel slot wins over
     // the stored Match Data. Returns false if it can't be known here (then the CPU renders).
     bool resolveMatch(PrTime t, std::string& why) {
@@ -194,8 +215,14 @@ public:
         gpuLog("node %d match: Match Data %s (type %d, %s), slot %ld, %s", int(nodeID), haveData ? "read" : "unreadable",
                int(mp.mType), md ? (md->hasMatch ? "has match" : "empty") : "invalid", slot, slotWins ? "slot wins" : "Match Data wins");
         if (slotWins) {
-            match = lmpanel::readSlotLut(lmpanel::refsDir() + std::to_string(slot) + ".lut");
-            if (!match) why = "panel match not built yet";
+            // refs/<slot>.lut holds the newest build; if a grade slider moved since, the CPU render rebuilds
+            // it from the slot's frame (LookMatch.cpp slotLut) and the next instance picks it up
+            const std::string base = lmpanel::refsDir() + std::to_string(slot);
+            const std::string onDisk = lmpanel::fileLine(base + ".key");
+            if (!onDisk.empty() && onDisk != lmpanel::keyHex(lmpanel::settingsKey(matchSettings(t))))
+                why = "panel match settings changed";
+            else if (!(match = lmpanel::readSlotLut(base + ".lut")))
+                why = "panel match not built yet";
         } else if (md) {
             match = md->hasMatch ? lmpanel::lutFromMatch(md) : nullptr;
         } else if (!haveData || slot <= 0) {
@@ -206,10 +233,10 @@ public:
         return why.empty();
     }
 
-    // Panel requests (capture, export) are answered by the CPU render; leave those to it.
+    // Panel requests (capture) are answered by the CPU render; leave those to it.
     bool panelRequestPending(PrTime t, std::string& why) const {
         struct { int param; const char* kind; } reqs[] = {
-            {P_CAPTURE_SLOT, "capture"}, {P_EXPORT_SLOT, "export"}};
+            {P_CAPTURE_SLOT, "capture"}};
         for (auto& r : reqs) {
             long slot = long(param(r.param, t));
             if (slot > 0 && !lmpanel::fileExists(lmpanel::refsDir() + r.kind + "-" + std::to_string(slot) + ".done")) {

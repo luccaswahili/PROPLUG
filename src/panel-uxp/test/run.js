@@ -7,6 +7,8 @@ const { P, SOURCE_FORMATS, TEXTURE_DEFAULTS, guessSourceFormat, sourceFormatReas
 const { Library } = require("../lib/library.js");
 const { Bridge, isLookMatch } = require("../lib/bridge.js");
 const { COMMANDS } = require("../lib/agent.js");
+const { Live } = require("../lib/live.js");
+const { GRADE_DEFAULTS, MATCH_DEFAULTS } = require("../lib/params.js");
 const { makePremiere, makeItem } = require("./mock-premiere.js");
 
 const tests = [];
@@ -28,6 +30,41 @@ test("params: source format from metadata and names", () => {
   assert.strictEqual(sourceFormatReason(["x"], 0), "detected from the picture");
   assert.strictEqual(guessSourceFormat(undefined), 0);
   for (const k of Object.keys(TEXTURE_DEFAULTS)) assert(Object.values(P).includes(k), `unknown texture param ${k}`);
+});
+
+test("params: a new match resets every slider to its default", () => {
+  assert.deepStrictEqual(GRADE_DEFAULTS, { [P.lookStrength]: 100, [P.matchContrast]: 100, [P.finish]: 100, [P.skinEvening]: 50 });
+  for (const k of Object.keys(MATCH_DEFAULTS)) assert(Object.values(P).includes(k), `unknown param ${k}`);
+  assert.strictEqual(MATCH_DEFAULTS[P.normWhite], 100);
+});
+
+test("live: a drag is coalesced, the last value always lands", async () => {
+  let t = 0;
+  const queue = [];
+  const timers = { now: () => t, setTimeout: (f, ms) => queue.push({ at: t + ms, f }) };
+  const step = async (ms) => {
+    t += ms;
+    for (let i = 0; i < queue.length; i++) if (queue[i].at <= t) { const q = queue.splice(i--, 1)[0]; q.f(); }
+    await new Promise((r) => setImmediate(r));
+  };
+  const sent = [];
+  const live = new Live(async (p) => { sent.push(p); }, { interval: 300, timers });
+  live.set("Finish", 90);
+  await step(0);
+  assert.deepStrictEqual(sent, [{ Finish: 90 }], "the first move goes out at once");
+  for (let v = 89; v >= 80; v--) { live.set("Finish", v); await step(20); }
+  assert.strictEqual(sent.length, 1, "moves inside the interval wait");
+  await step(300);
+  assert.deepStrictEqual(sent[1], { Finish: 80 }, "then only the newest value is sent");
+  live.set("Finish", 70); live.set("Look Strength", 40);
+  live.cancel();
+  await step(1000);
+  assert.strictEqual(sent.length, 2, "cancel drops unsent values");
+  const errors = [];
+  const bad = new Live(async () => { throw new Error("nope"); }, { interval: 0, timers, onError: (e) => errors.push(e.message) });
+  bad.set("Mix", 1);
+  await step(0); await step(0);
+  assert.deepStrictEqual(errors, ["nope"]);
 });
 
 test("params: A/B compare goes off -> A (original) -> B (matched) -> A", () => {
@@ -75,7 +112,7 @@ test("bridge: applyParams adds LookMatch, skips audio, one undo step", async () 
   const res = await b.applyParams("selection", { [P.grain]: 55, [P.mix]: 80 });
   assert.deepStrictEqual(res, { clips: 2, added: 1 });
   assert.strictEqual(a1.chain.comps.length, 1, "audio item untouched");
-  const set = ppro.log.filter((l) => l.label === "LookMatch");
+  const set = ppro.log.filter((l) => l.label === "Komodo");
   assert.strictEqual(set.length, 1, "all values in a single transaction");
   assert.strictEqual(set[0].count, 4);
   for (const it of [v1, v2]) {
@@ -158,7 +195,7 @@ test("bridge: every clip gets its own reference slot", async () => {
     assert.strictEqual(p[P.matchStrength], 50);
     assert.strictEqual(await fsp.readFile(path.join(dir, "refs", `${res.slots[i]}.txt`), "utf-8"), "/r.png");
   }
-  assert.strictEqual(ppro.log.filter((l) => l.label === "LookMatch").length, 1, "still one undo step");
+  assert.strictEqual(ppro.log.filter((l) => l.label === "Komodo").length, 1, "still one undo step");
 });
 
 test("bridge: whole-sequence scope and empty selection", async () => {
@@ -166,27 +203,6 @@ test("bridge: whole-sequence scope and empty selection", async () => {
   const b = new Bridge(makePremiere({ tracks }), fsp, os.tmpdir());
   assert.deepStrictEqual(await b.applyParams("sequence", { [P.fade]: 10 }), { clips: 3, added: 2 });
   await assert.rejects(b.applyParams("selection", { [P.fade]: 10 }), /Select a video clip/);
-});
-
-test("bridge: exportCube writes the request, sets the slot and waits for the effect", async () => {
-  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "lm-"));
-  const v1 = makeItem("V1", true, true);
-  const b = new Bridge(makePremiere({ selected: [v1] }), fsp, dir);
-  let polls = 0;
-  const sleep = async () => {
-    // play the effect: on the 3rd poll, answer like Render does
-    if (++polls === 3) {
-      const { component } = await b.findLookMatch(v1);
-      const slot = (await b.readParams(component))[P.exportSlot];
-      const req = await fsp.readFile(path.join(dir, "refs", `export-${slot}.txt`), "utf-8");
-      assert.strictEqual(req, "/out/My Look.cube");
-      await fsp.writeFile(path.join(dir, "refs", `export-${slot}.done`), "ok");
-    }
-  };
-  const res = await b.exportCube("/out/My Look.cube", { sleep, pollMs: 1, timeoutMs: 100 });
-  assert.strictEqual(res.path, "/out/My Look.cube");
-  await assert.rejects(b.exportCube("/out/x.png", { sleep, pollMs: 1 }), /\.cube/);
-  await assert.rejects(b.exportCube("/out/y.cube", { sleep: async () => {}, pollMs: 1, timeoutMs: 5 }), /playhead/);
 });
 
 test("bridge: captureFrame sets the capture slot and returns the PNG the effect wrote", async () => {
@@ -244,7 +260,7 @@ test("self-test passes against the mock and restores the clip", async () => {
 
 test("agent: whitelist only, values sanitised", async () => {
   assert.deepStrictEqual(Object.keys(COMMANDS).sort(),
-    ["applyParams", "applyReference", "captureFrame", "clipNames", "exportCube", "inspectParams", "ping", "readAnalysis", "readSelected", "saveProject", "selectClip", "selfTest", "setPlayhead", "timeline"]);
+    ["applyParams", "applyReference", "captureFrame", "clipNames", "inspectParams", "ping", "readAnalysis", "readSelected", "saveProject", "selectClip", "selfTest", "setPlayhead", "timeline"]);
   const v1 = makeItem("V1", true, true);
   const ppro = makePremiere({ selected: [v1] });
   const b = new Bridge(ppro, fsp, os.tmpdir());
