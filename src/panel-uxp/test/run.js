@@ -34,6 +34,8 @@ test("params: source format from metadata and names", () => {
 
 test("params: a new match resets every slider to its default", () => {
   assert.deepStrictEqual(GRADE_DEFAULTS, { [P.lookStrength]: 100, [P.matchContrast]: 100, [P.finish]: 100, [P.skinEvening]: 50 });
+  for (const k of [P.adjExposure, P.adjContrast, P.adjShadows, P.adjHighlights, P.adjWhites, P.adjSaturation, P.adjTemperature])
+    assert.strictEqual(MATCH_DEFAULTS[k], 0, `a new Match resets ${k} to 0`);
   for (const k of Object.keys(MATCH_DEFAULTS)) assert(Object.values(P).includes(k), `unknown param ${k}`);
   assert.strictEqual(MATCH_DEFAULTS[P.normWhite], 100);
 });

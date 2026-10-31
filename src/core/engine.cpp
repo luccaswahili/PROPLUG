@@ -119,7 +119,7 @@ void Engine::setParams(const Params& p) {
     bool colour = lutDirty_ || p.input != o.input || p.matchStrength != o.matchStrength || p.filmStrength != o.filmStrength ||
                   p.film.negative != o.film.negative || p.film.print != o.film.print || p.film.saturation != o.film.saturation ||
                   std::memcmp(p.film.printerPoints, o.film.printerPoints, sizeof o.film.printerPoints) != 0 || p.fade != o.fade ||
-                  p.lutSize != o.lutSize;
+                  p.adjust != o.adjust || p.lutSize != o.lutSize;
     bool gainChanged = p.exposure != o.exposure || p.temperature != o.temperature || p.tint != o.tint;
     p_ = p;
     if (colour) {
@@ -133,7 +133,7 @@ void Engine::setParams(const Params& p) {
 // stay as invisible as they were, so deband is off and an untouched clip passes through exactly.
 bool Engine::grades() const {
     return (match_ && p_.matchStrength > 0) || p_.filmStrength > 0 || p_.fade > 0 || p_.exposure != 0 ||
-           p_.temperature != 0 || p_.tint != 0 || p_.input != InputSpace::Rec709;
+           p_.temperature != 0 || p_.tint != 0 || p_.input != InputSpace::Rec709 || p_.adjust.active();
 }
 
 void Engine::setMatchLut(std::shared_ptr<const Lut3D> lut) {
@@ -169,6 +169,7 @@ Vec3 Engine::colorFromLinear(Vec3 lin) const {
         for (int c = 0; c < 3; ++c) filmIn[c] = lin[c] * (rec709Decode(out[c]) + eps) / (rec709Decode(disp[c]) + eps);
         out = lerp(out, film_->apply(filmIn), p_.filmStrength);
     }
+    if (p_.adjust.active()) out = applyAdjust(clamp01(out), p_.adjust);
     if (p_.fade > 0) {
         float lift = 0.25f * p_.fade;
         out = Vec3(lift, lift, lift) + out * (1 - lift);

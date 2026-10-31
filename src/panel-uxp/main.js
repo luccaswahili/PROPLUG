@@ -98,7 +98,10 @@ const live = new Live((params) => bridge.applyParams("selection", params), {
 const sliders = new Map();  // param name -> { set(v), get(), def }
 
 function fmt(v, unit) {
-  return unit === "%" ? `${Math.round(v)}%` : (Math.round(v * 100) / 100).toString();
+  if (unit === "%") return `${Math.round(v)}%`;
+  if (unit === "±") return v > 0 ? `+${Math.round(v)}` : `${Math.round(v)}`;
+  if (unit === "ev") return (v > 0 ? "+" : "") + (Math.round(v * 100) / 100).toFixed(2);
+  return (Math.round(v * 100) / 100).toString();
 }
 
 // A control row: icon, bold title, an ⓘ button (shows the explanation), slider, value. `mini` rows (inside
@@ -121,7 +124,10 @@ function makeSlider({ param, title, desc, icon, min = 0, max = 100, step = 1, un
   let value = def;
   const draw = () => {
     const pct = ((value - min) / (max - min)) * 100;
-    fill.style.width = `${pct}%`;
+    // a slider that goes both ways (-100 .. +100) fills from its centre
+    const zero = min < 0 && max > 0 ? ((0 - min) / (max - min)) * 100 : 0;
+    fill.style.left = `${Math.min(pct, zero)}%`;
+    fill.style.width = `${Math.abs(pct - zero)}%`;
     thumb.style.left = `${pct}%`;
     val.textContent = fmt(value, unit);
   };
@@ -155,6 +161,23 @@ const GRADE = [
   { param: P.finish, title: "Finish Band", icon: "finish", def: 100, desc: "Lands the match at the levels of a finished grade: open highlights, firm blacks." },
   { param: P.skinEvening, title: "Skin Evening", icon: "skin", def: 50, desc: "Evens patchy skin tone toward the skin around it. No smoothing." },
 ];
+// Tone and colour adjustments after the match: instant (no rebuild), 0 = untouched.
+const ADJUST = [
+  { param: P.adjExposure, title: "Exposure", min: -2, max: 2, step: 0.01, unit: "ev", def: 0,
+    desc: "Brightens or darkens the whole picture, in stops. Highlights roll into white instead of clipping." },
+  { param: P.adjContrast, title: "Contrast", min: -100, max: 100, unit: "±", def: 0,
+    desc: "Spreads or flattens the tones around mid grey. Black and white stay put; colours keep their hue." },
+  { param: P.adjShadows, title: "Shadows", min: -100, max: 100, unit: "±", def: 0,
+    desc: "Lifts or deepens the dark half of the picture without moving black." },
+  { param: P.adjHighlights, title: "Highlights", min: -100, max: 100, unit: "±", def: 0,
+    desc: "Brings back or brightens the bright half of the picture without moving white." },
+  { param: P.adjWhites, title: "Whites", min: -100, max: 100, unit: "±", def: 0,
+    desc: "Moves the white point: up for brighter whites, down for softer, creamier whites." },
+  { param: P.adjSaturation, title: "Saturation", min: -100, max: 100, unit: "±", def: 0,
+    desc: "More or less colour everywhere. -100 is black and white." },
+  { param: P.adjTemperature, title: "Temperature", min: -100, max: 100, unit: "±", def: 0,
+    desc: "Warmer (right) or cooler (left), keeping brightness the same." },
+];
 const updateAdvSub = () => {
   $("advSub").textContent = `Match ${Math.round(sliders.get(P.matchStrength).get())}% · Regions ${Math.round(sliders.get(P.regionMatching).get())}%`;
 };
@@ -182,6 +205,7 @@ const TEXTURE_MORE = [
 ].map((c) => Object.assign({ def: TEXTURE_DEFAULTS[c.param] }, c));
 
 for (const c of GRADE) $("gradeControls").appendChild(makeSlider(c));
+for (const c of ADJUST) $("adjustControls").appendChild(makeSlider(Object.assign({ mini: true }, c)));
 for (const c of ADVANCED) $("advancedControls").appendChild(makeSlider(Object.assign({ mini: true }, c)));
 for (const c of TEXTURE) $("textureControls").appendChild(makeSlider(c));
 for (const c of TEXTURE_MORE) $("textureMore").appendChild(makeSlider(Object.assign({ mini: true }, c)));
@@ -319,7 +343,7 @@ document.body.addEventListener("drop", (ev) => {
 
 // ---------- matching ----------
 
-// A new match puts every slider back to its default: the grade, source evening and advanced controls.
+// A new match puts every slider back to its default: the grade, adjustments, source evening and advanced controls.
 function resetMatchSliders() {
   live.cancel();
   for (const [name, v] of Object.entries(MATCH_DEFAULTS)) {

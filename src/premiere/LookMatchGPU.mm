@@ -178,6 +178,13 @@ public:
         p.weave = float(param(P_WEAVE, t));
         p.flicker = float(param(P_FLICKER, t)) / 100.0f;
         p.mix = float(param(P_MIX, t)) / 100.0f;
+        p.adjust.exposure = float(param(P_ADJ_EXPOSURE, t));
+        p.adjust.contrast = float(param(P_ADJ_CONTRAST, t)) / 100.0f;
+        p.adjust.shadows = float(param(P_ADJ_SHADOWS, t)) / 100.0f;
+        p.adjust.highlights = float(param(P_ADJ_HIGHLIGHTS, t)) / 100.0f;
+        p.adjust.whites = float(param(P_ADJ_WHITES, t)) / 100.0f;
+        p.adjust.saturation = float(param(P_ADJ_SATURATION, t)) / 100.0f;
+        p.adjust.temperature = float(param(P_ADJ_TEMPERATURE, t)) / 100.0f;
         return p;
     }
 

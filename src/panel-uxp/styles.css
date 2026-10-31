@@ -91,6 +91,9 @@ section[hidden] { display: none; }
 .ctl.mini { border: 0; padding: 0; background-color: transparent; border-radius: 0; }
 .ctl.mini .ctl-line { height: 26px; }
 .ctl.mini .ctl-title { font-size: 11.5px; font-weight: 600; color: #e9e5f5; width: 124px; }
+/* the Adjust card: compact rows, one card */
+.card.adjust { padding: 4px 12px; }
+.card.adjust .ctl.mini .ctl-title { width: 92px; }
 
 /* slider (drawn here so it can be violet; double-click resets it) */
 .slider { position: relative; flex: 1 1 auto; height: 18px; cursor: pointer; }

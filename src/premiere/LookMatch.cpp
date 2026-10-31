@@ -132,6 +132,13 @@ lm::Params readParams(PF_ParamDef* params[]) {
     p.weave = F(params, P_WEAVE);
     p.flicker = F(params, P_FLICKER) / 100.0f;
     p.mix = F(params, P_MIX) / 100.0f;
+    p.adjust.exposure = F(params, P_ADJ_EXPOSURE);
+    p.adjust.contrast = F(params, P_ADJ_CONTRAST) / 100.0f;
+    p.adjust.shadows = F(params, P_ADJ_SHADOWS) / 100.0f;
+    p.adjust.highlights = F(params, P_ADJ_HIGHLIGHTS) / 100.0f;
+    p.adjust.whites = F(params, P_ADJ_WHITES) / 100.0f;
+    p.adjust.saturation = F(params, P_ADJ_SATURATION) / 100.0f;
+    p.adjust.temperature = F(params, P_ADJ_TEMPERATURE) / 100.0f;
     return p;
 }
 
@@ -471,13 +478,13 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     PF_ADD_POPUP("Footage Encoding", int(lm::InputSpace::Count), 1, kInputChoices, D_INPUT_SPACE);
     AEFX_CLR_STRUCT(def);
     def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
-    PF_ADD_FLOAT_SLIDERX("Exposure", -4, 4, -2, 2, 0, PF_Precision_HUNDREDTHS, 0, 0, D_EXPOSURE);
+    PF_ADD_FLOAT_SLIDERX("Input Exposure", -4, 4, -2, 2, 0, PF_Precision_HUNDREDTHS, 0, 0, D_EXPOSURE);
     AEFX_CLR_STRUCT(def);
     def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
-    PF_ADD_FLOAT_SLIDERX("Temperature", -100, 100, -100, 100, 0, PF_Precision_TENTHS, 0, 0, D_TEMPERATURE);
+    PF_ADD_FLOAT_SLIDERX("Input Temperature", -100, 100, -100, 100, 0, PF_Precision_TENTHS, 0, 0, D_TEMPERATURE);
     AEFX_CLR_STRUCT(def);
     def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
-    PF_ADD_FLOAT_SLIDERX("Tint", -100, 100, -100, 100, 0, PF_Precision_TENTHS, 0, 0, D_TINT);
+    PF_ADD_FLOAT_SLIDERX("Input Tint", -100, 100, -100, 100, 0, PF_Precision_TENTHS, 0, 0, D_TINT);
     AEFX_CLR_STRUCT(def);
     def.ui_flags = PF_PUI_INVISIBLE;  // kept so older projects load; not shown
     PF_END_TOPIC(D_INPUT_TOPIC_END);
@@ -613,6 +620,26 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     PF_ADD_FLOAT_SLIDERX("Skin Evening", 0, 100, 0, 100, 50, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_SKIN_EVENING);
     AEFX_CLR_STRUCT(def);
     PF_ADD_FLOAT_SLIDERX("Finish Band", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_FINISH);
+
+    // tone and colour adjustments after the match (src/core/adjust.h); render-time, no match rebuild
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_TOPIC("Adjust", D_ADJUST_TOPIC);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Exposure", -3, 3, -2, 2, 0, PF_Precision_HUNDREDTHS, 0, 0, D_ADJ_EXPOSURE);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Contrast", -100, 100, -100, 100, 0, PF_Precision_TENTHS, 0, 0, D_ADJ_CONTRAST);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Shadows", -100, 100, -100, 100, 0, PF_Precision_TENTHS, 0, 0, D_ADJ_SHADOWS);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Highlights", -100, 100, -100, 100, 0, PF_Precision_TENTHS, 0, 0, D_ADJ_HIGHLIGHTS);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Whites", -100, 100, -100, 100, 0, PF_Precision_TENTHS, 0, 0, D_ADJ_WHITES);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Saturation", -100, 100, -100, 100, 0, PF_Precision_TENTHS, 0, 0, D_ADJ_SATURATION);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Temperature", -100, 100, -100, 100, 0, PF_Precision_TENTHS, 0, 0, D_ADJ_TEMPERATURE);
+    AEFX_CLR_STRUCT(def);
+    PF_END_TOPIC(D_ADJUST_TOPIC_END);
 
     out_data->num_params = P_NUM_PARAMS;
     return err;
