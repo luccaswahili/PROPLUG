@@ -75,6 +75,7 @@ void LM_OpenKomodoPanel() {
                 status = task.terminationStatus;
             } @catch (NSException*) {
             }
+            [task release];  // this file is built without ARC
             if (status == 0) return;
             dispatch_async(dispatch_get_main_queue(), ^{
                 NSAlert* alert = [[NSAlert alloc] init];
@@ -84,6 +85,7 @@ void LM_OpenKomodoPanel() {
                      "Privacy & Security > Accessibility, then click Open Komodo's Panel again.";
                 [alert addButtonWithTitle:@"OK"];
                 [alert runModal];
+                [alert release];
             });
         }
     });
