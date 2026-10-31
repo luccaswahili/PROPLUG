@@ -222,7 +222,7 @@ function liveSwitch(id, param, after) {
 }
 liveSwitch("autoSkinSw", P.autoSkin);
 liveSwitch("bandSw", P.fixBanding);
-// Before / after: one button for the effect's split view (original left of the line); violet while on.
+// Before / after: one button for the effect's split view (original left of the line); blue while on.
 $("beforeAfter").addEventListener("click", async () => {
   const { items } = await bridge.selectedVideoItems().catch(() => ({ items: [] }));
   if (!items.length) { status("No clips selected. Select a clip on the timeline, then click Before / after.", "err"); return; }
