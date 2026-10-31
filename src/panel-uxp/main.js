@@ -21,7 +21,7 @@ const NO_CLIPS = "No clips selected. Select a clip on the timeline, then click M
 const $ = (id) => document.getElementById(id);
 const library = new Library(fs, DATA_DIR);
 const bridge = new Bridge(ppro, fs, DATA_DIR);
-let selectedRefs = [];   // the stills the look is read from: Cmd/Shift-click adds up to 5 of one look
+let selectedRefs = [];   // the one still the look is read from (a click selects it; no multi-select)
 
 // ---------- status & console ----------
 
@@ -333,7 +333,7 @@ async function renderRefs() {
         library.save().then(renderRefs);
         return;
       }
-      selectedRefs = toggleReference(selectedRefs, ref, ev.metaKey || ev.shiftKey || ev.ctrlKey);
+      selectedRefs = [ref];
       renderRefs();
       if (selectedRefs.length) status(`Reference: ${referenceLabel(selectedRefs)}. Select clips and click Match.`);
     });
@@ -348,13 +348,6 @@ async function renderRefs() {
   }
 }
 
-// Click picks one reference; Cmd/Shift/Ctrl-click adds or removes it from a set of up to 5 stills of
-// one look (the match reads each and combines them).
-function toggleReference(current, ref, add) {
-  if (!add) return [ref];
-  if (current.some((r) => r.id === ref.id)) return current.filter((r) => r.id !== ref.id);
-  return current.concat([ref]).slice(-5);
-}
 function referenceLabel(refs) {
   return refs.length > 1 ? `${refs.length} stills (${refs.map((r) => r.name).join(", ")})` : `“${refs[0].name}”`;
 }
