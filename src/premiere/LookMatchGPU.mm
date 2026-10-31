@@ -10,6 +10,7 @@
 #import <Metal/Metal.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdarg>
 #include <cstring>
 #include <cstdio>
@@ -124,6 +125,11 @@ public:
     id<MTLBuffer> lutBuffer = nil;
     id<MTLBuffer> srcBuffer = nil;  // unchanged copy of the frame: the kernel grades in place, deband reads neighbours
     std::shared_ptr<const lm::Lut3D> match;
+    lm::Params created;              // the parameters this instance was created for (read at time 0)
+    mutable bool readFailed = false; // set by param() when the host couldn't give a value
+    std::mutex renderLock;           // Premiere can call Render for one instance from several threads;
+                                     // the engine and the LUT upload buffer aren't safe to share
+    long framesRendered = 0;
 
     ~Instance() {
         if (lutBuffer) [lutBuffer release];
@@ -135,6 +141,7 @@ public:
         PrParam p = {};
         prSuiteError e = s.segment->GetParam(nodeID, aeIndex - 1, t, &p);  // GPU filters don't count the input
         if (ok) *ok = PrSuiteErrorSucceeded(e);
+        if (!PrSuiteErrorSucceeded(e)) readFailed = true;
         switch (p.mType) {
             case kPrParamType_Int8: return p.mInt8;
             case kPrParamType_Int16: return p.mInt16;
@@ -143,7 +150,7 @@ public:
             case kPrParamType_Float32: return p.mFloat32;
             case kPrParamType_Float64: return p.mFloat64;
             case kPrParamType_Bool: return p.mBool ? 1 : 0;
-            default: if (ok) *ok = false; return 0;
+            default: if (ok) *ok = false; readFailed = true; return 0;
         }
     }
 
@@ -273,6 +280,7 @@ prSuiteError CreateInstance(PrGPUFilterInstance* io) {
     const PrTime t0 = 0;
     std::string why;
     lm::Params p = inst->params(t0);
+    inst->created = p;
     lm::FinishParams fp;
     inst->engine.setParams(p);
     if (p.input != lm::InputSpace::Rec709) why = "log footage";
@@ -319,10 +327,18 @@ prSuiteError Render(PrGPUFilterInstance* io, const PrGPUFilterRenderParams* rp, 
                     csSDK_size_t inFrameCount, PPixHand* outFrame) {
     Instance* inst = static_cast<Instance*>(io->ioPrivatePluginData);
     if (!inst || !outFrame) return suiteError_Fail;
+    std::lock_guard<std::mutex> lock(inst->renderLock);
     @autoreleasepool {
-        // values may be keyframed: read them at this frame
+        const auto t0 = std::chrono::steady_clock::now();
+        // values may be keyframed: read them at this frame. If the host can't give one (a failed read
+        // comes back as 0, which would mean Mix 0% = no effect at all), keep the values the instance was
+        // created with instead.
+        inst->readFailed = false;
         lm::Params p = inst->params(rp->inClipTime);
+        const bool readOk = !inst->readFailed;
+        if (!readOk) p = inst->created;
         inst->engine.setParams(p);
+        const bool wasDirty = inst->engine.directLutStale();
         prRect bounds = {};
         inst->s.ppix->GetBounds(*outFrame, &bounds);
         const int w = bounds.right - bounds.left, h = bounds.bottom - bounds.top;
@@ -384,9 +400,15 @@ prSuiteError Render(PrGPUFilterInstance* io, const PrGPUFilterRenderParams* rp, 
         [enc dispatchThreadgroups:grid threadsPerThreadgroup:group];
         [enc endEncoding];
         [cb commit];
-        static std::atomic<int> logged{0};
-        if (logged.fetch_add(1) < 3)
-            gpuLog("node %d frame %ld %dx%d %s pitch %d", int(inst->nodeID), frame, w, h, f32 ? "32f" : "16f", pitch);
+        // the first frames of every instance, then one in 100
+        const long n = inst->framesRendered++;
+        if (n < 3 || n % 100 == 0) {
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            gpuLog("node %d frame %ld (#%ld) %dx%d %s pitch %d: params %s, mix %.0f, match %s, look lut %s, %.1f ms",
+                   int(inst->nodeID), frame, n, w, h, f32 ? "32f" : "16f", pitch,
+                   readOk ? "read" : "UNREADABLE (using creation values)", p.mix * 100, inst->match ? "yes" : "none",
+                   wasDirty ? "rebuilt" : "reused", ms);
+        }
     }
     return suiteError_NoError;
 }
