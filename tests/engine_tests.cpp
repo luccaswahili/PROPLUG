@@ -361,6 +361,43 @@ int main() {
         CHECK(kept > 0.85f && kept < 1.15f, "tungsten grey isn't corrected: blue/red %.3f", kept);
     }
 
+    {
+        // Skin colour smoothing: blotches go, brightness and whatever isn't skin stay.
+        const int w = 400, h = 200;
+        std::vector<float> a(size_t(w) * h * 4), b;
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                float* p = a.data() + (size_t(y) * w + x) * 4;
+                const float tex = 0.01f * std::sin(x * 1.9f) * std::sin(y * 2.3f), bl = 0.006f * std::sin(x * 0.11f) * std::sin(y * 0.13f);
+                const Vec3 c = x < 200 ? Vec3(0.45f + bl + tex, 0.38f - bl + tex, 0.34f - bl + tex)   // skin, with colour blotches and fine texture
+                                       : x < 300 ? Vec3(0.50f, 0.30f, 0.30f)                            // lips next to it
+                                                 : Vec3(0.12f, 0.12f, 0.13f);                           // dark lashes or hair
+                p[0] = c.r; p[1] = c.g; p[2] = c.b; p[3] = 1;
+            }
+        const SkinSmoothParams sp = skinSmoothParams(1, 2160);
+        CHECK(sp.radius == 12 && skinSmoothParams(1, 1080).radius == 6 && skinSmoothParams(1, 4320).radius == 24 && skinSmoothParams(0, 2160).radius == 0,
+              "skin smoothing radius %d", sp.radius);
+        double before = 0, after = 0, luma = 0, bleed = 0;
+        for (int y = 30; y < 170; ++y)
+            for (int x = 0; x < 300; ++x) {
+                const float* p = a.data() + (size_t(y) * w + x) * 4;
+                const Vec3 d = skinSmoothAt(a.data(), w, h, w * 4, x, y, Vec3(p[0], p[1], p[2]), sp);
+                luma = std::max(luma, double(std::abs(d.r + d.g + d.b)));
+                if (x >= 200) { bleed = std::max({bleed, double(std::abs(d.r)), double(std::abs(d.g)), double(std::abs(d.b))}); continue; }
+                if (x < 30 || x > 170) continue;
+                const float m = (p[0] + p[1] + p[2]) / 3;
+                before += (p[0] - m) * (p[0] - m); after += (p[0] + d.r - m) * (p[0] + d.r - m);
+            }
+        const double spreadB = before, spreadA = after;
+        std::printf("skin smoothing: red-vs-mean energy %.3f -> %.3f, brightness moved %.6f, lips and lashes moved %.6f\n", spreadB, spreadA, luma, bleed);
+        CHECK(luma < 1e-4, "skin smoothing moved brightness by %.6f", luma);
+        CHECK(bleed < 1e-4, "skin colour bled into lips or lashes: %.6f", bleed);
+        // a different engine misses the match cache
+        Image f; f.width = f.height = 4; f.px.assign(16, Vec3(0.5f, 0.5f, 0.5f));
+        SceneMatchOptions ko;
+        CHECK(lmpanel::matchCacheKey({}, f, ko, 2, "engine-a") != lmpanel::matchCacheKey({}, f, ko, 2, "engine-b"), "an engine change must change the cache key");
+    }
+
     std::printf(failures ? "%d check(s) failed\n" : "all engine tests passed\n", failures);
     return failures ? 1 : 0;
 }

@@ -6,6 +6,18 @@ if(NOT EXISTS "${AE_SDK_DIR}/Headers/AE_Effect.h")
   message(FATAL_ERROR "Set AE_SDK_DIR to the After Effects SDK 'Examples' folder (it contains Headers/AE_Effect.h)")
 endif()
 
+# The match cache must miss when the engine changes: hash its sources into the key.
+file(GLOB LM_ENGINE_FILES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/core/*.cpp" "${CMAKE_SOURCE_DIR}/src/core/*.h")
+list(SORT LM_ENGINE_FILES)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${LM_ENGINE_FILES})
+set(LM_ENGINE_TEXT "")
+foreach(f ${LM_ENGINE_FILES})
+  file(SHA256 "${f}" h)
+  string(APPEND LM_ENGINE_TEXT "${h}")
+endforeach()
+string(SHA256 LM_ENGINE_HASH "${LM_ENGINE_TEXT}")
+add_compile_definitions(LM_ENGINE_HASH="${LM_ENGINE_HASH}")
+
 file(GLOB AE_SUITE_HELPER "${AE_SDK_DIR}/Util/AEFX_SuiteHelper.c*")
 set(AE_INCLUDES
   "${AE_SDK_DIR}/Headers"

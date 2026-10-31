@@ -69,6 +69,7 @@ static void usage() {
         "Output\n"
         "  --mix F                0..1 (1)\n"
         "  --deband F             smooth the source's quantisation steps before the grade, 0..1 (0)\n"
+        "  --skin-smooth F        even out colour blotches on skin, with a match, 0..1 (1)\n"
         "  --frame N              frame number for grain / weave / flicker (0)\n"
         "  --sequence N           render N frames as OUT_0000.png ... (shows grain, weave, flicker)\n"
         "  --export-lut PATH      also write the colour part as a .cube for Lumetri\n"
@@ -125,6 +126,7 @@ int main(int argc, char** argv) {
     p.softness = F("softness", 0); p.vignette = F("vignette", 0); p.weave = F("weave", 0); p.flicker = F("flicker", 0);
     p.mix = F("mix", 1);
     p.deband = F("deband", 0);
+    p.skinSmooth = F("skin-smooth", 1);
 
     Frame src;
     if (!load(a["in"], src)) return 1;

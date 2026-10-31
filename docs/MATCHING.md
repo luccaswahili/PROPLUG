@@ -430,3 +430,18 @@ still miss the target:
   right curve from metadata, or with **Source Format**, removes it: with the true curve, every log encoding is
   ≤ 0.2 / 0.7.
 - **Clipped extremes** (+2 stops, 3200 K): information is gone.
+
+## Skin colour smoothing
+
+Colour blotches in skin (pink and grey patches a few pores wide) are in the clip, and a lift makes them easier to see.
+With a match on, the effect evens them out in the source code values, before the grade, on the CPU and the GPU alike:
+
+- Each skin pixel's colour (the pixel minus its mean of R, G and B) takes the average of 24 neighbours on a disc of
+  24 px at 8K, scaled with frame height. Brightness doesn't change, so pores and texture stay.
+- A neighbour counts only if it is skin, close in brightness and close in colour, so lips, eyes, lashes, hair and a
+  different backdrop don't mix in. The mask is warm, between lips' red and wood's yellow, with a little colour.
+- On portrait 6439240, patch-sized colour variation on the cheek goes from 3.8 % to 2.8 % (plain decode 3.0 %), and
+  fine brightness detail stays within 0.3 %.
+- Where the white balance backed off (`skinLike`), skin takes 13 % less saturation, because the tone lifts it.
+
+The match cache key includes a hash of `src/core`, so an engine change misses the cache.

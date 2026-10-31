@@ -2,6 +2,7 @@
 #import <Metal/Metal.h>
 #include <chrono>
 #include <cstdio>
+#include <memory>
 #include <vector>
 #include "engine.h"
 #include "../src/premiere/LookMatchKernel.h"
@@ -14,10 +15,14 @@ int main() {
         id<MTLComputePipelineState> pso = [dev newComputePipelineStateWithFunction:[lib newFunctionWithName:@"lookmatch_f32"] error:&err];
         id<MTLCommandQueue> q = [dev newCommandQueue];
         printf("GPU: %s\n", dev.name.UTF8String);
-        for (auto [w, h] : {std::pair{1920, 1080}, std::pair{3840, 2160}}) {
+        for (auto [w, h] : {std::pair{1920, 1080}, std::pair{3840, 2160}, std::pair{8192, 4320}}) {
             Params p; p.filmStrength = 0.9f; p.grain = 0.3f; p.vignette = 0.2f;
             Engine e; e.setParams(p);
-            std::vector<float> src(size_t(w) * h * 4, 0.5f), dst(src.size());
+            auto lutM = std::make_shared<Lut3D>(33);
+            lutM->fill([](Vec3 c) { return c; });
+            e.setMatchLut(lutM);  // a match on: skin smoothing runs
+            std::vector<float> src(size_t(w) * h * 4), dst(src.size());
+            for (size_t i = 0; i < src.size(); i += 4) { src[i] = 0.45f; src[i + 1] = 0.38f; src[i + 2] = 0.34f; src[i + 3] = 1; }  // all skin: the worst case
             e.render({src.data(), w, h, w * 4}, {dst.data(), w, h, w * 4}, 0);
             auto t0 = std::chrono::steady_clock::now();
             for (int f = 1; f <= 20; ++f) e.render({src.data(), w, h, w * 4}, {dst.data(), w, h, w * 4}, f);

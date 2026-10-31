@@ -264,9 +264,68 @@ Vec3 debandAt(const float* data, int width, int height, int stride, int x, int y
     return {o.r + back + dith, o.g + back + dith, o.b + back + dith};
 }
 
+SkinSmoothParams skinSmoothParams(float amount, int height) {
+    SkinSmoothParams s;
+    if (amount > 0) s.radius = std::max(2, int(24.0f * height / 4320.0f + 0.5f));  // 24 px at 8K, 12 at 4K, 6 at 1080p
+    return s;
+}
+
+namespace {
+const float kSkinDisc[kSkinSamples][2] = {
+    {0.1443f, 0.0000f}, {-0.1843f, 0.1689f}, {0.0282f, -0.3215f}, {0.2324f, 0.3031f},
+    {-0.4264f, -0.0754f}, {0.4039f, -0.2569f}, {-0.1351f, 0.5026f}, {-0.2577f, -0.4961f},
+    {0.5590f, 0.2041f}, {-0.5816f, 0.2401f}, {0.2803f, -0.5991f}, {0.2072f, 0.6605f},
+    {-0.6244f, -0.3619f}, {0.7325f, -0.1610f}, {-0.4470f, 0.6359f}, {-0.1033f, -0.7970f},
+    {0.6340f, 0.5343f}, {-0.8532f, 0.0353f}, {0.6223f, -0.6193f}, {-0.0416f, 0.9004f},
+    {-0.5922f, -0.7096f}, {0.9380f, 0.1262f}, {-0.7948f, 0.5530f}, {0.2172f, -0.9654f},
+};
+float step01(float a, float b, float v) { const float t = clamp01((v - a) / (b - a)); return t * t * (3 - 2 * t); }
+// how much a code value looks like skin: warm, between the red of lips and the yellow of wood, a little colour
+float skinMask(Vec3 c) {
+    const float d1 = c.r - c.g, d2 = c.g - c.b, sat = c.r - c.b;
+    if (d1 <= 0 || d2 <= 0) return 0;
+    const float hue = d2 / (d1 + d2), y = (c.r + c.g + c.b) / 3;
+    return step01(0.22f, 0.29f, hue) * (1 - step01(0.50f, 0.58f, hue)) * step01(0.012f, 0.03f, sat) * (1 - step01(0.16f, 0.22f, sat)) *
+           step01(0.10f, 0.18f, y) * (1 - step01(0.90f, 0.97f, y));
+}
+}  // namespace
+
+// Keep in step with skinSmooth() in LookMatchKernel.h: same mask, same samples.
+Vec3 skinSmoothAt(const float* data, int width, int height, int stride, int x, int y, Vec3 base, const SkinSmoothParams& s) {
+    if (s.radius <= 0) return {0, 0, 0};
+    auto at = [&](int xx, int yy) {
+        const float* p = data + size_t(yy) * stride + size_t(xx) * 4;
+        return Vec3(p[0], p[1], p[2]);
+    };
+    const Vec3 c = at(x, y);
+    const float m = skinMask(c);
+    if (m <= 0) return {0, 0, 0};
+    const float yc = (c.r + c.g + c.b) / 3;
+    const Vec3 vc(c.r - yc, c.g - yc, c.b - yc);
+    Vec3 sum = vc;
+    float wsum = 1;
+    for (int k = 0; k < kSkinSamples; ++k) {
+        const int xx = std::clamp(x + int(std::floor(kSkinDisc[k][0] * s.radius + 0.5f)), 0, width - 1);
+        const int yy = std::clamp(y + int(std::floor(kSkinDisc[k][1] * s.radius + 0.5f)), 0, height - 1);
+        const Vec3 q = at(xx, yy);
+        const float yq = (q.r + q.g + q.b) / 3;
+        const Vec3 vq(q.r - yq, q.g - yq, q.b - yq);
+        const float dc = std::max({std::abs(vq.r - vc.r), std::abs(vq.g - vc.g), std::abs(vq.b - vc.b)});
+        const float w = skinMask(q) * (1 - step01(0.03f, 0.08f, std::abs(yq - yc))) * (1 - step01(0.012f, 0.03f, dc));
+        sum = sum + vq * w;
+        wsum += w;
+    }
+    const float yb = (base.r + base.g + base.b) / 3, t = 1 / wsum;
+    return Vec3(sum.r * t - (base.r - yb), sum.g * t - (base.g - yb), sum.b * t - (base.b - yb)) * m;
+}
+
 void Engine::render(const ImageView& in, const ImageView& out, long frame) {
     const DebandParams db = debandParams(grades() ? p_.deband : 0, in.height);
-    auto source = [&](int x, int y) { return debandAt(in.data, in.width, in.height, in.stride, x, y, db); };
+    const SkinSmoothParams ss = skinSmoothParams(match_ && p_.matchStrength > 0 ? p_.skinSmooth : 0, in.height);
+    auto source = [&](int x, int y) {
+        const Vec3 c = debandAt(in.data, in.width, in.height, in.stride, x, y, db);
+        return c + skinSmoothAt(in.data, in.width, in.height, in.stride, x, y, c, ss);
+    };
     const int w = in.width, h = in.height;
     // Fast path: with no weave, flicker or light spreading, the whole colour chain (decode, gain,
     // match, film, fade) is one function of the input pixel, baked into a single 3D LUT.
@@ -388,6 +447,7 @@ bool Engine::prepareDirect(int w, int h, long frame, FinishParams& fp) {
     fp.invDiag = 1.0f / std::sqrt(fp.cx * fp.cx + fp.cy * fp.cy);
     fp.frame = int(frame);
     fp.deband = debandParams(grades() ? p_.deband : 0, h);
+    fp.skin = skinSmoothParams(match_ && p_.matchStrength > 0 ? p_.skinSmooth : 0, h);
     return true;
 }
 

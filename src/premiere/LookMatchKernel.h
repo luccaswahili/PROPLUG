@@ -21,6 +21,7 @@ struct LookMatchGPUParams {
     float debandThreshold, debandDither;
     int debandNearRadius;
     float debandCoring;
+    int skinRadius;  // lm::SkinSmoothParams
 };
 
 // Kernel parameters for one frame from the engine's fast-path constants and the split settings
@@ -54,6 +55,7 @@ inline LookMatchGPUParams makeGPUParams(const lm::FinishParams& f, int pitch, in
     p.debandDither = f.deband.dither;
     p.debandNearRadius = f.deband.nearRadius;
     p.debandCoring = f.deband.coring;
+    p.skinRadius = f.skin.radius;
     return p;
 }
 
@@ -76,6 +78,7 @@ struct Params {
     float debandThreshold, debandDither;
     int debandNearRadius;
     float debandCoring;
+    int skinRadius;  // lm::SkinSmoothParams
 };
 
 // --- same hash and noise as the CPU engine ---
@@ -129,6 +132,52 @@ static float3 deband(device const T* src, constant Params& p, int x, int y) {
     uint h = hash4(x, y, 0x5EED, 64);
     float dith = (float((h & 0xFFFFu) + (h >> 16)) * (1.0f / 65535.0f) - 1.0f) * p.debandDither * amount;
     return o + float3(back + dith);
+}
+
+// --- skin colour smoothing, as lm::skinSmoothAt (same mask, same samples) ---
+constant int kSkinSamples = 24;  // = lm::kSkinSamples
+constant float2 kSkinDisc[kSkinSamples] = {
+    {0.1443f, 0.0000f}, {-0.1843f, 0.1689f}, {0.0282f, -0.3215f}, {0.2324f, 0.3031f},
+    {-0.4264f, -0.0754f}, {0.4039f, -0.2569f}, {-0.1351f, 0.5026f}, {-0.2577f, -0.4961f},
+    {0.5590f, 0.2041f}, {-0.5816f, 0.2401f}, {0.2803f, -0.5991f}, {0.2072f, 0.6605f},
+    {-0.6244f, -0.3619f}, {0.7325f, -0.1610f}, {-0.4470f, 0.6359f}, {-0.1033f, -0.7970f},
+    {0.6340f, 0.5343f}, {-0.8532f, 0.0353f}, {0.6223f, -0.6193f}, {-0.0416f, 0.9004f},
+    {-0.5922f, -0.7096f}, {0.9380f, 0.1262f}, {-0.7948f, 0.5530f}, {0.2172f, -0.9654f},
+};
+static float step01(float a, float b, float v) { float t = clamp((v - a) / (b - a), 0.0f, 1.0f); return t * t * (3 - 2 * t); }
+static float skinMask(float3 c) {
+    float d1 = c.x - c.y, d2 = c.y - c.z, sat = c.x - c.z;
+    if (d1 <= 0 || d2 <= 0) return 0;
+    float hue = d2 / (d1 + d2), y = (c.x + c.y + c.z) / 3;
+    return step01(0.22f, 0.29f, hue) * (1 - step01(0.50f, 0.58f, hue)) * step01(0.012f, 0.03f, sat) * (1 - step01(0.16f, 0.22f, sat)) *
+           step01(0.10f, 0.18f, y) * (1 - step01(0.90f, 0.97f, y));
+}
+template <typename T>
+static float3 skinSmooth(device const T* src, constant Params& p, int x, int y, float3 base) {
+    if (p.skinRadius <= 0) return float3(0);
+    float3 c = rgbAt(src, p, x, y);
+    float m = skinMask(c);
+    if (m <= 0) return float3(0);
+    float yc = (c.x + c.y + c.z) / 3;
+    float3 vc = c - float3(yc), sum = vc;
+    float wsum = 1;
+    for (int k = 0; k < kSkinSamples; ++k) {
+        int xx = clamp(x + int(floor(kSkinDisc[k].x * p.skinRadius + 0.5f)), 0, p.width - 1);
+        int yy = clamp(y + int(floor(kSkinDisc[k].y * p.skinRadius + 0.5f)), 0, p.height - 1);
+        float3 q = rgbAt(src, p, xx, yy);
+        float yq = (q.x + q.y + q.z) / 3;
+        float3 vq = q - float3(yq), dv = abs(vq - vc);
+        float w = skinMask(q) * (1 - step01(0.03f, 0.08f, fabs(yq - yc))) * (1 - step01(0.012f, 0.03f, max(dv.x, max(dv.y, dv.z))));
+        sum += vq * w;
+        wsum += w;
+    }
+    return (sum * (1.0f / wsum) - (base - float3((base.x + base.y + base.z) / 3))) * m;
+}
+
+template <typename T>
+static float3 sourceAt(device const T* src, constant Params& p, int x, int y) {
+    float3 c = deband(src, p, x, y);
+    return c + skinSmooth(src, p, x, y, c);
 }
 
 // --- tetrahedral 3D LUT, red fastest, 3 floats per entry ---
@@ -212,7 +261,7 @@ kernel void lookmatch_f32(device float4* io [[buffer(0)]], constant Params& p [[
     if (int(xy.x) >= p.width || int(xy.y) >= p.height) return;
     uint i = xy.y * uint(p.pitch) + xy.x;
     float4 px = src[i];                      // BGRA
-    float3 rgb = shade(float3(px.z, px.y, px.x), deband(src, p, int(xy.x), int(xy.y)), xy, p, lut);
+    float3 rgb = shade(float3(px.z, px.y, px.x), sourceAt(src, p, int(xy.x), int(xy.y)), xy, p, lut);
     io[i] = float4(rgb.z, rgb.y, rgb.x, px.w);
 }
 
@@ -222,7 +271,7 @@ kernel void lookmatch_f16(device half4* io [[buffer(0)]], constant Params& p [[b
     if (int(xy.x) >= p.width || int(xy.y) >= p.height) return;
     uint i = xy.y * uint(p.pitch) + xy.x;
     float4 px = float4(src[i]);
-    float3 rgb = shade(float3(px.z, px.y, px.x), deband(src, p, int(xy.x), int(xy.y)), xy, p, lut);
+    float3 rgb = shade(float3(px.z, px.y, px.x), sourceAt(src, p, int(xy.x), int(xy.y)), xy, p, lut);
     io[i] = half4(half(rgb.z), half(rgb.y), half(rgb.x), half(px.w));
 }
 )METAL";

@@ -42,6 +42,10 @@ int main() {
             for (int x = 0; x < w; ++x) {
                 float* p = &src[(size_t(y) * w + x) * 4];
                 p[0] = float(x) / (w - 1); p[1] = float(y) / (h - 1); p[2] = 0.5f + 0.5f * std::sin(x * 0.05f + y * 0.03f); p[3] = 1;
+                if (x < w / 2 && y < h / 2) {  // a patch of skin with blotches, for the skin smoothing
+                    const float n = 0.01f * std::sin(x * 0.4f) * std::sin(y * 0.3f), l = 0.1f * float(x) / w;
+                    p[0] = 0.42f + l + n; p[1] = 0.36f + l - n; p[2] = 0.33f + l - n;
+                }
             }
 
         // a source-aware match (shaped LUT), built from the test image against a warm, contrasty variant of it
@@ -64,6 +68,7 @@ int main() {
             {"A/B: original (split at 100%)", [] { Params p; p.filmStrength = 1; return p; }(), true, false, 1.0f, 0.0f},
             {"A/B: matched (split at 0%)", [] { Params p; p.filmStrength = 1; return p; }(), true, false, 0.0f, 0.0f},
             {"source-aware match (shaped LUT)", [] { Params p; p.grain = 0.2f; return p; }(), false, true},
+            {"source-aware match, deband on skin", [] { Params p; p.deband = 1; return p; }(), false, true},
             {"source-aware match, strength 60%", [] { Params p; p.matchStrength = 0.6f; p.vignette = 0.3f; return p; }(), false, true},
         };
         for (auto& tc : cases) {

@@ -683,7 +683,7 @@ bool buildMatch(const char* refPath, const std::vector<float>& buf, int width, i
     mo.lookStrength = F(params, P_LOOK_STRENGTH) / 100.0f;
     mo.matchContrast = F(params, P_MATCH_CONTRAST) / 100.0f;
     const std::string cacheDir = refsDir().empty() ? "" : refsDir() + "cache/";
-    const std::string key = cacheDir.empty() ? "" : lmpanel::matchCacheKey(refPaths, src, mo, kMatchVersion, LM_DESCRIPTION);
+    const std::string key = cacheDir.empty() ? "" : lmpanel::matchCacheKey(refPaths, src, mo, kMatchVersion, LM_ENGINE_HASH);
     if (!key.empty()) {
         if (std::shared_ptr<const lm::Lut3D> hit = readSlotLut(cacheDir + key + ".lut")) {
             lutOut = *hit;

@@ -895,6 +895,8 @@ public:
         }
     }
 
+    void scaleSkin(float k) { skinCr_ *= k; }
+
     // sk: how much this colour is skin (skinPrior of the decoded source colour)
     Vec3 apply(Vec3 lab, float sk = -1) const {
         if (sk < 0) sk = skinWeight(lab);
@@ -1119,14 +1121,14 @@ SceneMatch matchSceneLook(const RefLook& rl, const Image& srcIn, const SceneMatc
     // (Bradford, from the analysis' near-neutral estimate). How far depends on how neutral those
     // pixels really are: a scene with nothing grey in it (a blue-hour sky, a red-lit stage) keeps its
     // colour instead of having it taken for a cast. The measure doesn't change with a cast. ----
-    float wbConfidence = clamp01(res.source.neutralShare / 0.2f);
+    float wbConfidence = clamp01(res.source.neutralShare / 0.2f), skinLike = 0;
     {
         // An estimate that is warm AND magenta sits where skin and beige do, not where light sources do
         // (they lie along the Planckian locus): in a close-up against a warm backdrop the "most neutral"
         // pixels are skin and backdrop, and neutralising them turns a face grey and its lashes cyan, and the
         // skin's own colour variation shows as grey flecks. Hardly anything of such a cast is taken out.
         auto ramp = [](float a, float b, float x) { return clamp01((x - a) / (b - a)); };
-        const float skinLike = ramp(3.0f, 10.0f, res.source.tint) * ramp(5600.0f, 4600.0f, res.source.cct);
+        skinLike = ramp(3.0f, 10.0f, res.source.tint) * ramp(5600.0f, 4600.0f, res.source.cct);
         wbConfidence *= 1 - 0.95f * skinLike;
     }
     const float cwe = cw * wbConfidence;
@@ -1353,6 +1355,9 @@ SceneMatch matchSceneLook(const RefLook& rl, const Image& srcIn, const SceneMatc
         }
         return oklabToRgbCompressed(lab, true);
     };
+    // Skin the white balance left alone keeps all its colour, and the tone lifts it, which shows up as a
+    // peachy, blotchy cheek: where the balance backed off, skin gives a little saturation back.
+    grade->scaleSkin(1 - 0.13f * skinLike);
     res.lut = Lut3D(o.look.lutSize);
     res.lut.setShaper(frameShaper(src));
     res.lut.fill(full);
