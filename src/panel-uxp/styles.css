@@ -42,7 +42,7 @@ section[hidden] { display: none; }
 .card { background-color: #0d0a16; border: 1px solid #3b2a66; border-radius: 12px; padding: 10px; }
 .hint { color: #6e6884; font-size: 10.5px; margin-top: 6px; }
 .dim { color: #6e6884; font-weight: 500; font-size: 10.5px; }
-.stack { display: flex; flex-direction: column; gap: 8px; }
+.stack { display: flex; flex-direction: column; gap: 6px; }
 .row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .grow { flex: 1 1 auto; min-width: 120px; }
 
@@ -72,22 +72,25 @@ section[hidden] { display: none; }
 .sw.on { background-color: #7c3aed; border-color: #7c3aed; }
 .sw.on .k { left: 16px; background-color: #ffffff; }
 
-/* control tile: icon, bold title, value, one line, slider */
-.ctl { display: flex; gap: 10px; padding: 9px 10px; border-radius: 12px; border: 1px solid #241a3d; background-color: #0d0a16; }
+/* control row: icon, bold title, ⓘ, slider, value; the ⓘ opens the explanation underneath */
+.ctl { padding: 0 10px; border-radius: 10px; border: 1px solid #241a3d; background-color: #0d0a16; }
 .ctl:hover { border-color: #3b2a66; }
-.ico { width: 34px; height: 34px; border-radius: 9px; background-color: #160f27; border: 1px solid #2c2245; flex: 0 0 auto;
-       display: flex; align-items: center; justify-content: center; }
-.ico img { width: 20px; height: 20px; }
-.ctl-main { flex: 1 1 auto; min-width: 0; }
-.ctl-top { display: flex; justify-content: space-between; align-items: baseline; }
-.ctl-title { font-weight: 700; font-size: 13px; color: #ffffff; }
-.ctl-val { font-weight: 700; font-size: 12px; color: #a78bfa; }
-.ctl-desc { color: #a5a0b8; font-size: 10.5px; margin-top: 1px; }
-.mini .ctl-top { font-size: 11.5px; font-weight: 600; color: #e9e5f5; }
-.mini .ctl-title { font-size: 11.5px; font-weight: 600; color: #e9e5f5; }
+.ctl-line { display: flex; align-items: center; gap: 8px; height: 34px; }
+.ctl .ico { width: 16px; height: 16px; flex: 0 0 auto; }
+.ctl-title { font-weight: 700; font-size: 12.5px; color: #ffffff; width: 104px; flex: 0 0 auto; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.info { width: 13px; height: 13px; border-radius: 7px; border: 1px solid #5b3fa0; color: #a78bfa; font-size: 9px; font-weight: 700;
+        text-align: center; line-height: 13px; cursor: pointer; flex: 0 0 auto; margin-left: -4px; }
+.info:hover, .show-info .info { background-color: #7c3aed; border-color: #7c3aed; color: #ffffff; }
+.ctl-val { font-weight: 700; font-size: 11.5px; color: #a78bfa; width: 38px; text-align: right; flex: 0 0 auto; }
+.ctl-desc { display: none; color: #a5a0b8; font-size: 10.5px; padding: 0 0 8px; }
+.show-info .ctl-desc { display: block; }
+/* rows inside a fold: no card, no icon */
+.ctl.mini { border: 0; padding: 0; background-color: transparent; border-radius: 0; }
+.ctl.mini .ctl-line { height: 26px; }
+.ctl.mini .ctl-title { font-size: 11.5px; font-weight: 600; color: #e9e5f5; width: 124px; }
 
 /* slider (drawn here so it can be violet; double-click resets it) */
-.slider { position: relative; height: 18px; margin-top: 4px; cursor: pointer; }
+.slider { position: relative; flex: 1 1 auto; height: 18px; cursor: pointer; }
 .slider .track { position: absolute; left: 0; right: 0; top: 7px; height: 4px; border-radius: 2px; background-color: #2a2140; }
 .slider .fill { position: absolute; left: 0; top: 7px; height: 4px; border-radius: 2px; background-color: #8b5cf6; }
 .slider .thumb { position: absolute; top: 2px; width: 14px; height: 14px; margin-left: -7px; border-radius: 7px;

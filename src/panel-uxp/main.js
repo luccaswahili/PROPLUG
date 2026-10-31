@@ -101,17 +101,21 @@ function fmt(v, unit) {
   return unit === "%" ? `${Math.round(v)}%` : (Math.round(v * 100) / 100).toString();
 }
 
-// A control tile (icon, bold title, value, one line, slider), or a compact row with `mini`.
+// A control row: icon, bold title, an ⓘ button (shows the explanation), slider, value. `mini` rows (inside
+// the folds) have no icon. The explanation is also the row's hover text.
 function makeSlider({ param, title, desc, icon, min = 0, max = 100, step = 1, unit = "%", def, mini, onChange }) {
   const el = document.createElement("div");
-  el.className = mini ? "mini" : "ctl";
-  if (mini && desc) el.title = desc;
-  el.innerHTML = (mini ? "" : `<div class="ico"><img src="icons/${icon}.svg" alt=""></div>`) +
-    `<div class="ctl-main"><div class="ctl-top"><span class="ctl-title"></span><span class="ctl-val"></span></div>` +
-    (desc && !mini ? `<div class="ctl-desc"></div>` : "") +
-    `<div class="slider"><div class="track"></div><div class="fill"></div><div class="thumb"></div></div></div>`;
+  el.className = mini ? "ctl mini" : "ctl";
+  el.innerHTML = `<div class="ctl-line">` + (mini ? "" : `<img class="ico" src="icons/${icon}.svg" alt="">`) +
+    `<span class="ctl-title"></span>` + (desc ? `<span class="info" title="What does this do?">i</span>` : "") +
+    `<div class="slider"><div class="track"></div><div class="fill"></div><div class="thumb"></div></div>` +
+    `<span class="ctl-val"></span></div>` + (desc ? `<div class="ctl-desc"></div>` : "");
   el.querySelector(".ctl-title").textContent = title;
-  if (desc && !mini) el.querySelector(".ctl-desc").textContent = desc;
+  if (desc) {
+    el.title = desc;
+    el.querySelector(".ctl-desc").textContent = desc;
+    el.querySelector(".info").addEventListener("click", (ev) => { ev.stopPropagation(); el.classList.toggle("show-info"); });
+  }
   const bar = el.querySelector(".slider"), fill = el.querySelector(".fill"), thumb = el.querySelector(".thumb");
   const val = el.querySelector(".ctl-val");
   let value = def;
