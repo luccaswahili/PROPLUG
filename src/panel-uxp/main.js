@@ -152,9 +152,7 @@ function makeSlider({ param, title, desc, icon, min = 0, max = 100, step = 1, un
 
 const GRADE = [
   { param: P.lookStrength, title: "Look Strength", icon: "look", def: 100, desc: "How much of the reference's look goes on." },
-  { param: P.matchContrast, title: "Match Contrast", icon: "contrast", def: 100,
-    desc: "Brings blacks, mids and whites to the reference's levels. Skin is kept from crushing." },
-  { param: P.finish, title: "Finish", icon: "finish", def: 100, desc: "Lands the match at the levels of a finished grade: open highlights, firm blacks." },
+  { param: P.finish, title: "Finish Band", icon: "finish", def: 100, desc: "Lands the match at the levels of a finished grade: open highlights, firm blacks." },
   { param: P.skinEvening, title: "Skin Evening", icon: "skin", def: 50, desc: "Evens patchy skin tone toward the skin around it. No smoothing." },
 ];
 const updateAdvSub = () => {
@@ -452,7 +450,7 @@ function renderSaved() {
     row.querySelector(".nm").textContent = look.name;
     const p = look.params || {};
     row.querySelector(".meta").textContent = [look.reference ? baseName(look.reference) : "no reference",
-      p[P.finish] !== undefined ? `Finish ${Math.round(p[P.finish])}` : "", p[P.grain] ? `Grain ${Math.round(p[P.grain])}` : ""].filter(Boolean).join(" · ");
+      p[P.finish] !== undefined ? `Finish Band ${Math.round(p[P.finish])}` : "", p[P.grain] ? `Grain ${Math.round(p[P.grain])}` : ""].filter(Boolean).join(" · ");
     if (look.reference) thumb(look.reference).then((url) => { if (url) row.querySelector("img").src = url; });
     row.addEventListener("click", (ev) => {
       const a = ev.target.dataset && ev.target.dataset.a;
