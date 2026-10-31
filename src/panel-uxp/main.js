@@ -217,11 +217,7 @@ SOURCE_FORMATS.forEach((name, i) => {
 });
 $("sourceFormat").selectedIndex = 0;
 const sourceFormat = () => Math.max(1, ($("sourceFormat").selectedIndex | 0) + 1);
-const shortFormat = (i) => (i <= 1 ? "Auto" : SOURCE_FORMATS[i - 1].split(" / ")[0]);
-$("sourceFormat").addEventListener("change", () => {
-  $("srcSub").textContent = sourceFormat() === 1 ? "Auto" : `${shortFormat(sourceFormat())} (manual)`;
-  live.set(P.sourceFormat, sourceFormat());
-});
+$("sourceFormat").addEventListener("change", () => live.set(P.sourceFormat, sourceFormat()));
 
 // ---------- reference strip ----------
 
@@ -365,9 +361,8 @@ function showClipAnalysis(entries) {
   $("anSub").textContent = entries.length ? (entries.length > 1 ? `${entries.length} clips` : entries[0].name) : "";
   const first = entries.find((e) => e.analysis && e.analysis.source);
   if (first && sourceFormat() === 1) {
-    $("detected").textContent = `Detected ${first.analysis.source.guess || first.analysis.source.transfer}` +
-      (entries[0].how ? ` · ${entries[0].how}` : "");
-    $("srcSub").textContent = `Auto · ${first.analysis.source.transfer}`;
+    $("sourceFormat").title = `Auto detected ${first.analysis.source.guess || first.analysis.source.transfer}` +
+      (entries[0].how ? ` (${entries[0].how})` : "");
   }
 }
 
@@ -452,7 +447,6 @@ function showParams(params) {
   if (params[P.split] !== undefined) setOn("baSw", params[P.split] && params[P.splitPos] > 0 && params[P.splitPos] < 100);
   if (params[P.sourceFormat] !== undefined) {
     $("sourceFormat").selectedIndex = Math.max(0, params[P.sourceFormat] - 1);
-    $("srcSub").textContent = params[P.sourceFormat] === 1 ? "Auto" : `${shortFormat(params[P.sourceFormat])} (manual)`;
   }
   updateAdvSub();
 }

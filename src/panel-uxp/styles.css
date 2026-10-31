@@ -59,7 +59,10 @@ section[hidden] { display: none; }
            color: #a78bfa; font-size: 22px; background-color: transparent; }
 #drop.over { border-color: #a78bfa; background-color: #1a1230; }
 
-.matchbtn { text-align: center; padding: 12px 0; border-radius: 12px; font-weight: 800; font-size: 14px; color: #ffffff;
+.matchrow { display: flex; align-items: center; gap: 8px; }
+.matchrow .source { flex: 1 1 0; min-width: 0; }
+.matchrow .matchbtn { flex: 1 1 0; }
+.matchbtn { text-align: center; padding: 9px 0; border-radius: 12px; font-weight: 800; font-size: 14px; color: #ffffff;
             background-color: #7c3aed; cursor: pointer; letter-spacing: 0.5px; }
 .matchbtn:hover { background-color: #8b5cf6; }
 .matchbtn.busy { background-color: #4c1d95; color: #c4b5fd; }

@@ -34,7 +34,10 @@
       <div class="hint">Drop a still anywhere on the panel. ⌘-click to combine 2 to 5 stills of one look.</div>
     </div>
 
-    <div class="matchbtn" id="matchBtn">Match</div>
+    <div class="matchrow">
+      <sp-picker id="sourceFormat" size="m" class="source" title="Source format. Auto reads the clip's colour metadata, then the picture itself."><sp-menu id="sourceMenu" slot="options"></sp-menu></sp-picker>
+      <div class="matchbtn" id="matchBtn">Match</div>
+    </div>
 
     <div class="card toggle-row" id="beforeAfter">
       <span>Before / after <span class="dim">· split in the monitor</span></span>
@@ -44,13 +47,6 @@
     <div class="sec-label">GRADE</div>
     <div id="gradeControls" class="stack"></div>
 
-    <div class="fold" id="foldSource">
-      <div class="fold-head"><span class="chev">›</span><span class="fold-title">Source</span><span class="sub" id="srcSub">Auto</span></div>
-      <div class="fold-body">
-        <sp-picker id="sourceFormat" size="s"><sp-menu id="sourceMenu" slot="options"></sp-menu></sp-picker>
-        <div class="detected" id="detected">Auto reads the clip's colour metadata, then the picture itself.</div>
-      </div>
-    </div>
     <div class="fold" id="foldAdvanced">
       <div class="fold-head"><span class="chev">›</span><span class="fold-title">Advanced</span><span class="sub" id="advSub"></span></div>
       <div class="fold-body">
