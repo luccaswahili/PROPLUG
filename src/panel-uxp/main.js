@@ -181,10 +181,9 @@ const ADJUST = [
     desc: "Warmer (right) or cooler (left), keeping brightness the same." },
 ];
 const updateAdvSub = () => {
-  $("advSub").textContent = `Match ${Math.round(sliders.get(P.matchStrength).get())}% · Regions ${Math.round(sliders.get(P.regionMatching).get())}%`;
+  $("advSub").textContent = `Regions ${Math.round(sliders.get(P.regionMatching).get())}%`;
 };
 const ADVANCED = [
-  { param: P.matchStrength, title: "Match strength", def: 100, onChange: updateAdvSub },
   { param: P.regionMatching, title: "Region matching", def: 100, onChange: updateAdvSub },
 ];
 const TEXTURE = [

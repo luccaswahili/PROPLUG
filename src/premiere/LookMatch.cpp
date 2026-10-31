@@ -460,6 +460,7 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     AEFX_CLR_STRUCT(def);
     PF_ADD_BUTTON("Footage frame", "Match to This Frame", 0, PF_ParamFlag_SUPERVISE, D_REMATCH);
     AEFX_CLR_STRUCT(def);
+    def.ui_flags = PF_PUI_INVISIBLE;  // removed from the UI (Look Strength does this job); stays at 100%
     PF_ADD_FLOAT_SLIDERX("Match Strength", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_MATCH_STRENGTH);
     AEFX_CLR_STRUCT(def);
     PF_ADD_FLOAT_SLIDERX("Region Matching", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, D_REGION_STRENGTH);
