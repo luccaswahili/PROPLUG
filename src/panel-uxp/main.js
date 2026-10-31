@@ -329,40 +329,15 @@ function resetMatchSliders() {
   updateAdvSub();
 }
 
-const fmtStops = (v) => (v >= 0 ? "+" : "") + v.toFixed(2);
-const fmtTint = (v) => (v >= 0 ? "+" : "") + v.toFixed(1);
-function analysisTable(a) {
-  const col = (x) => x ? [(x.guess || x.transfer) + (x.log ? " (log)" : ""), fmtStops(x.exposure), `${Math.round(x.cct)} K`, fmtTint(x.tint),
-                          `${x.contrast.toFixed(1)} st`] : ["", "", "", "", ""];
-  const rows = ["Format", "Exposure", "Temperature", "Tint", "Contrast"];
-  const s = col(a.source), r = col(a.result), f = col(a.reference);
-  let html = "<table><tr><th></th><th>Before</th><th>After</th><th>Ref</th></tr>";
-  rows.forEach((name, i) => { html += `<tr><td>${name}</td><td>${s[i]}</td><td>${r[i]}</td><td>${i ? f[i] : ""}</td></tr>`; });
-  return html + "</table>";
-}
-
+// After a match: Auto's detection goes in the format picker's hover text; a clip that couldn't be
+// matched is reported in the status line. (The full analysis is kept in the Tools log.)
 function showClipAnalysis(entries) {
-  const box = $("analysis");
-  box.innerHTML = "";
-  for (const e of entries) {
-    const div = document.createElement("div");
-    div.className = "clip";
-    const title = document.createElement("div");
-    title.className = "title";
-    title.textContent = e.name + (e.how ? `  ·  ${e.how}` : "");
-    div.appendChild(title);
-    const body = document.createElement("div");
-    if (!e.analysis) body.innerHTML = '<span class="pending">Measuring… (Premiere builds the match the first time it draws the clip: park the playhead on it)</span>';
-    else if (e.analysis.error) { body.className = "err"; body.textContent = e.analysis.error; }
-    else body.innerHTML = analysisTable(e.analysis);
-    div.appendChild(body);
-    box.appendChild(div);
-  }
-  $("anSub").textContent = entries.length ? (entries.length > 1 ? `${entries.length} clips` : entries[0].name) : "";
+  const failed = entries.find((e) => e.analysis && e.analysis.error);
+  if (failed) status(`${failed.name}: ${failed.analysis.error}`, "err");
   const first = entries.find((e) => e.analysis && e.analysis.source);
   if (first && sourceFormat() === 1) {
     $("sourceFormat").title = `Auto detected ${first.analysis.source.guess || first.analysis.source.transfer}` +
-      (entries[0].how ? ` (${entries[0].how})` : "");
+      (first.how ? ` (${first.how})` : "");
   }
 }
 
@@ -558,7 +533,6 @@ $("selfTest").addEventListener("click", () => run("Self-test", async () => {
       status: () => ({ text: $("statusText").textContent, kind: $("status").className }),
       savedLooks: () => library.looks.map((l) => l.name),
       element: (id) => document.getElementById(id),
-      analysis: () => $("analysis").textContent,
       setSlider: (name, v) => { const s = sliders.get(name); if (!s) throw new Error(`no slider ${name}`); s.set(v); live.set(name, s.get()); return s.get(); },
     });
   } catch (e) { /* release build */ }
