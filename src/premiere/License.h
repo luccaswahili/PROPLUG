@@ -16,7 +16,9 @@
 #include <mutex>
 #include <string>
 #include <vector>
+extern "C" {
 #include "tweetnacl.h"
+}
 
 namespace lmlic {
 
