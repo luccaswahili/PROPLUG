@@ -29,11 +29,17 @@ done
 if [ "$RELEASE" = 1 ]; then
   for f in "$STAGE/main.js" "$STAGE"/lib/*.js; do
     [ -f "$f" ] || continue
-    if npx --yes terser "$f" -c -m -o "$f.min" >/dev/null 2>&1 && node --check "$f.min" >/dev/null 2>&1; then
-      mv "$f.min" "$f"
+    tmp="$f.min.js"   # node --check only accepts a .js extension, so don't name it .min
+    if npx --yes terser "$f" -c -m -o "$tmp" >/dev/null 2>&1; then
+      if node --check "$tmp" >/dev/null 2>&1; then
+        mv "$tmp" "$f"
+      else
+        rm -f "$tmp"
+        echo "ERROR: minified $(basename "$f") failed to parse — not shipping readable code"; exit 1
+      fi
     else
-      rm -f "$f.min"
-      echo "note: left $(basename "$f") unminified"
+      rm -f "$tmp"
+      echo "WARNING: terser unavailable; shipping $(basename "$f") UNMINIFIED"
     fi
   done
 fi
