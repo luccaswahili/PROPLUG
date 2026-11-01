@@ -27,6 +27,13 @@ if(MSVC)
 else()
   target_compile_options(lookmatch_core PRIVATE -Wall -Wextra -O3)
 endif()
+# Release hardening: hide the engine's symbols so they don't export from the plugin that links this in
+# (the plugin's own CMake dead-strips and strips too). Harmless to the CLI/test executables.
+if(APPLE)
+  target_compile_options(lookmatch_core PRIVATE
+    $<$<CONFIG:Release>:-fvisibility=hidden>
+    $<$<CONFIG:Release>:-fvisibility-inlines-hidden>)
+endif()
 
 add_executable(lookmatch-render src/cli/main.cpp)
 target_include_directories(lookmatch-render PRIVATE third_party)

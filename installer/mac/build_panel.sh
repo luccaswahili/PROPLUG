@@ -23,6 +23,21 @@ for f in "$SRC"/lib/*.js; do
   [ "$RELEASE" = 1 ] && case "$(basename "$f")" in agent.js|selftest.js) continue ;; esac
   cp "$f" "$STAGE/lib/"
 done
+# Release hardening: minify the panel JS so the shipped .ccx isn't plain readable source. Best-effort —
+# if terser is unavailable or a file fails to parse after minifying, keep the original so the panel never
+# ships broken. The licence check is native anyway; this only raises the bar on reading the panel.
+if [ "$RELEASE" = 1 ]; then
+  for f in "$STAGE/main.js" "$STAGE"/lib/*.js; do
+    [ -f "$f" ] || continue
+    if npx --yes terser "$f" -c -m -o "$f.min" >/dev/null 2>&1 && node --check "$f.min" >/dev/null 2>&1; then
+      mv "$f.min" "$f"
+    else
+      rm -f "$f.min"
+      echo "note: left $(basename "$f") unminified"
+    fi
+  done
+fi
+
 NAME="KomodoPanel-$VERSION$([ "$RELEASE" = 1 ] && echo "" || echo "-dev").ccx"
 rm -f "$OUT/$NAME"
 (cd "$STAGE" && zip -q -r "$OUT/$NAME" .)
