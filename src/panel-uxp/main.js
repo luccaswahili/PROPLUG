@@ -78,6 +78,13 @@ async function refreshLicense() {
     chip.textContent = `Licensed · ${expiryDate(st.exp)}`;
     chip.className = "licchip ok";
     $("licGate").hidden = true;
+  } else if (st.present && !st.formatOk) {
+    // A key file exists but the panel couldn't read it. The plugin, not the panel, enforces the licence,
+    // so never block a paying user over a panel-side decode issue — trust the effect and just note it.
+    log(`license: key present but panel couldn't parse it (${st.error}); trusting the plugin's own check`);
+    chip.textContent = "License present";
+    chip.className = "licchip";
+    $("licGate").hidden = true;
   } else {
     chip.textContent = st.expired ? "License expired" : "Not activated";
     chip.className = "licchip " + (st.expired ? "warn" : "err");
@@ -105,7 +112,10 @@ async function activateLicense() {
   const msg = $("licMsg");
   if (!key) { msg.textContent = "Paste your license key first."; msg.className = "licmsg err"; return; }
   const st = keyStatus(key);
-  if (!st.formatOk) { msg.textContent = "That doesn't look like a valid key. Copy the whole key from your email."; msg.className = "licmsg err"; return; }
+  if (!st.formatOk) {
+    log(`license: pasted key rejected (${st.error}); ${key.length} chars`);
+    msg.textContent = "That doesn't look like a valid key. Copy the whole key from your email."; msg.className = "licmsg err"; return;
+  }
   if (st.expired) { msg.textContent = `That key expired on ${expiryDate(st.exp)}. Please use a current key.`; msg.className = "licmsg err"; return; }
   try {
     await fs.mkdir(DATA_DIR, { recursive: true });
