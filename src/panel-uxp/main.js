@@ -10,6 +10,7 @@ const { P, SOURCE_FORMATS, TEXTURE_DEFAULTS, MATCH_DEFAULTS, guessSourceFormat, 
 const { Library, joinPath, baseName } = require("./lib/library.js");
 const { Bridge } = require("./lib/bridge.js");
 const { Live } = require("./lib/live.js");
+const { keyStatus, expiryDate } = require("./lib/license.js");
 
 const VERSION = "1.0.0";  // kept equal to manifest.json by build_panel.sh
 // The data folder keeps its LookMatch name: references, looks and matches made before the rename stay.
@@ -17,6 +18,7 @@ const DATA_DIR = os.platform() === "win32"
   ? joinPath(process.env.APPDATA || "", "PRO PLUGS\\LookMatch")
   : joinPath(os.homedir(), "Library/Application Support/PRO PLUGS/LookMatch");
 const NO_CLIPS = "No clips selected. Select a clip on the timeline, then click Match.";
+const LICENSE_FILE = joinPath(DATA_DIR, "license.key");
 
 const $ = (id) => document.getElementById(id);
 const library = new Library(fs, DATA_DIR);
@@ -60,6 +62,63 @@ async function run(label, fn) {
 }
 
 // ---------- tabs, folds, switches ----------
+
+// ---------- licensing ----------
+// The panel decodes the key to show status and writes it to disk; the plugin verifies the signature and
+// enforces the lock. When there's no valid key the gate covers the panel and the effect defaces the frame.
+
+async function readLicenseKey() {
+  try { return String(await fs.readFile(LICENSE_FILE, { encoding: "utf-8" })); } catch (e) { return ""; }
+}
+
+async function refreshLicense() {
+  const st = keyStatus(await readLicenseKey());
+  const chip = $("licChip");
+  if (st.activated) {
+    chip.textContent = `Licensed · ${expiryDate(st.exp)}`;
+    chip.className = "licchip ok";
+    $("licGate").hidden = true;
+  } else {
+    chip.textContent = st.expired ? "License expired" : "Not activated";
+    chip.className = "licchip " + (st.expired ? "warn" : "err");
+    openLicenseGate(st);
+  }
+  return st;
+}
+
+function openLicenseGate(st) {
+  const gate = $("licGate"), msg = $("licMsg");
+  if (st && st.expired) {
+    msg.textContent = `Your license expired on ${expiryDate(st.exp)}. Enter a new key to keep using Komodo.`;
+  } else if (st && st.present && !st.formatOk) {
+    msg.textContent = "That key wasn't recognised. Paste the full key from your purchase email.";
+  } else {
+    msg.textContent = "Enter the license key from your purchase email to use Komodo.";
+  }
+  msg.className = "licmsg";
+  gate.hidden = false;
+  try { $("licInput").focus(); } catch (e) { /* ignore */ }
+}
+
+async function activateLicense() {
+  const key = String($("licInput").value || "").trim();
+  const msg = $("licMsg");
+  if (!key) { msg.textContent = "Paste your license key first."; msg.className = "licmsg err"; return; }
+  const st = keyStatus(key);
+  if (!st.formatOk) { msg.textContent = "That doesn't look like a valid key. Copy the whole key from your email."; msg.className = "licmsg err"; return; }
+  if (st.expired) { msg.textContent = `That key expired on ${expiryDate(st.exp)}. Please use a current key.`; msg.className = "licmsg err"; return; }
+  try {
+    await fs.mkdir(DATA_DIR, { recursive: true });
+  } catch (e) { /* exists */ }
+  await fs.writeFile(LICENSE_FILE, key, { encoding: "utf-8" });
+  log(`License activated (until ${expiryDate(st.exp)})`);
+  $("licInput").value = "";
+  await refreshLicense();
+  status(`Komodo activated — licensed until ${expiryDate(st.exp)}.`);
+}
+
+$("licActivate").addEventListener("click", () => { activateLicense().catch((e) => log(`activate failed: ${e.message}`)); });
+$("licChip").addEventListener("click", () => refreshLicense().then((st) => { if (!st.activated) openLicenseGate(st); }));
 
 function showTab(name) {
   for (const t of document.querySelectorAll("[data-tab]")) t.classList.toggle("on", t.dataset.tab === name);
@@ -580,7 +639,9 @@ $("probe").addEventListener("click", () => run("Probe", async () => {
   await renderRefs();
   renderSaved();
   log(`Komodo panel ${VERSION} ready (data in ${DATA_DIR})`);
+  await refreshLicense().catch((e) => log(`license check failed: ${e.message}`));
   setInterval(() => { readSelection().catch(() => {}); }, 1000);
+  setInterval(() => { refreshLicense().catch(() => {}); }, 60000);  // catch expiry while the panel is open
   try {
     // dev builds only: lib/agent.js is left out of release packages
     require("./lib/agent.js").startAgent(fs, DATA_DIR, bridge, log, {

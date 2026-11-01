@@ -17,7 +17,20 @@
       <div class="tab" data-tab="library">Library</div>
     </div>
     <div id="status" class="status"><div class="dot"></div><span id="statusText">Select a clip on the timeline</span></div>
+    <div id="licChip" class="licchip" title="License">Checking license…</div>
   </header>
+
+  <!-- License gate: covers the panel until a valid key is entered -->
+  <div id="licGate" class="licgate" hidden>
+    <div class="licbox">
+      <div class="liclogo"><img src="icons/logo.svg" alt=""></div>
+      <div class="lictitle">Activate Komodo</div>
+      <div class="licmsg" id="licMsg">Enter the license key from your purchase email to use Komodo.</div>
+      <sp-textfield id="licInput" placeholder="Paste your license key"></sp-textfield>
+      <div class="matchbtn licbtn" id="licActivate">Activate</div>
+      <div class="lichint" id="licHint">Your key is stored on this computer. It unlocks the effect and the panel.</div>
+    </div>
+  </div>
 
   <main id="content">
   <!-- MATCH -->

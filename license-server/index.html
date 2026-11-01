@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Komodo · License keys</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: #232323; color: #e6e6e6;
+         font-family: -apple-system, "SF Pro Text", "Segoe UI", Arial, sans-serif; font-size: 14px;
+         display: flex; align-items: flex-start; justify-content: center; padding: 48px 16px; }
+  .card { width: 100%; max-width: 460px; background: #2a2a2a; border: 1px solid #3e3e3e; border-radius: 16px; padding: 24px; }
+  .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+  .logo { width: 40px; height: 40px; border-radius: 11px; background: #4a4a4a; display: flex; align-items: center; justify-content: center; }
+  .logo svg { width: 24px; height: 24px; }
+  .name { font-size: 20px; font-weight: 800; color: #fff; }
+  .sub { color: #7a7a7a; font-size: 11px; font-weight: 600; letter-spacing: 1px; }
+  h2 { font-size: 11px; letter-spacing: 2.5px; color: #c8c8c8; font-weight: 700; margin: 22px 0 10px; }
+  label { display: block; color: #a8a8a8; font-size: 11px; margin: 12px 0 5px; }
+  input, select { width: 100%; padding: 10px 12px; background: #202020; color: #e6e6e6; border: 1px solid #3e3e3e;
+                  border-radius: 10px; font-size: 14px; }
+  input:focus, select:focus { outline: none; border-color: #2d6fdb; }
+  button { width: 100%; margin-top: 18px; padding: 12px 0; border: 0; border-radius: 12px; background: #2d6fdb; color: #fff;
+           font-weight: 800; font-size: 15px; cursor: pointer; }
+  button:hover { background: #3b7fe8; }
+  button:disabled { background: #39414d; color: #8a93a0; cursor: default; }
+  .out { margin-top: 18px; display: none; }
+  .out.show { display: block; }
+  .keyrow { display: flex; gap: 8px; }
+  textarea { width: 100%; height: 86px; resize: vertical; background: #202020; color: #cbe0ff; border: 1px solid #2d6fdb;
+             border-radius: 10px; padding: 10px 12px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+  .copy { width: auto; margin: 0; padding: 0 14px; background: #3a3a3a; }
+  .copy:hover { background: #4a4a4a; }
+  .meta { color: #9a9a9a; font-size: 12px; margin-top: 8px; }
+  .err { color: #f87171; font-size: 12.5px; margin-top: 12px; min-height: 16px; }
+  .foot { color: #6a6a6a; font-size: 10.5px; margin-top: 20px; line-height: 1.5; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">
+      <div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="#e6e6e6" stroke-width="1.6"><circle cx="9" cy="12" r="5.2"/><circle cx="15" cy="12" r="5.2"/></svg></div>
+      <div><div class="name">Komodo</div><div class="sub">LICENSE KEYS · PRO PLUGS</div></div>
+    </div>
+
+    <h2>CREATE A KEY</h2>
+    <label>Admin password</label>
+    <input id="password" type="password" autocomplete="current-password" placeholder="Admin password">
+    <label>Customer email (optional, stored inside the key)</label>
+    <input id="email" type="email" placeholder="buyer@example.com">
+    <label>Length</label>
+    <select id="months">
+      <option value="1" selected>1 month</option>
+      <option value="2">2 months</option>
+      <option value="3">3 months</option>
+      <option value="6">6 months</option>
+      <option value="12">12 months</option>
+    </select>
+    <button id="go">Generate key</button>
+    <div class="err" id="err"></div>
+
+    <div class="out" id="out">
+      <h2>KEY</h2>
+      <div class="keyrow">
+        <textarea id="key" readonly></textarea>
+        <button class="copy" id="copy">Copy</button>
+      </div>
+      <div class="meta" id="meta"></div>
+    </div>
+
+    <div class="foot">Send the key to the customer. They paste it into Komodo (Premiere &gt; Window &gt; UXP Plugins &gt; Komodo) to activate. Keys are signed and expire on their own; the plugin checks them offline.</div>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  $("password").value = sessionStorage.getItem("komodo_admin") || "";
+  async function generate() {
+    $("err").textContent = ""; $("go").disabled = true; $("go").textContent = "Generating…";
+    try {
+      const password = $("password").value;
+      sessionStorage.setItem("komodo_admin", password);
+      const res = await fetch("/api/generate", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password, email: $("email").value, months: $("months").value }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+      $("key").value = data.key;
+      const d = new Date(data.exp * 1000);
+      $("meta").textContent = `${data.months} month(s) · expires ${d.toLocaleDateString(undefined,{year:"numeric",month:"long",day:"numeric"})}` + (data.email ? ` · ${data.email}` : "");
+      $("out").classList.add("show");
+    } catch (e) {
+      $("err").textContent = e.message;
+    } finally {
+      $("go").disabled = false; $("go").textContent = "Generate key";
+    }
+  }
+  $("go").addEventListener("click", generate);
+  $("password").addEventListener("keydown", (e) => { if (e.key === "Enter") generate(); });
+  $("copy").addEventListener("click", async () => {
+    $("key").select();
+    try { await navigator.clipboard.writeText($("key").value); $("copy").textContent = "Copied"; setTimeout(()=>$("copy").textContent="Copy",1200); }
+    catch (e) { document.execCommand("copy"); }
+  });
+</script>
+</body>
+</html>

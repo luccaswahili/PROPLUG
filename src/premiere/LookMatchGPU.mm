@@ -30,6 +30,7 @@
 #include "MatchData.h"
 #include "PanelFiles.h"
 #include "SlotSource.h"
+#include "License.h"
 #include "engine.h"
 
 namespace {
@@ -331,6 +332,13 @@ prSuiteError Render(PrGPUFilterInstance* io, const PrGPUFilterRenderParams* rp, 
     if (inst->framesRendered < 400 || inst->framesRendered % 50 == 0)
         gpuLog("node %d Render called: clip time %lld, ticks/frame %lld", int(inst->nodeID), (long long)rp->inClipTime,
                (long long)rp->inRenderTicksPerFrame);
+    // Komodo is paid: with no valid key, fail the GPU render so Premiere falls back to the CPU path
+    // (LookMatch.cpp Render), which withholds the grade and defaces the frame. One lock path, both engines.
+    if (!lmlic::status().licensed) {
+        if (inst->framesRendered < 3) gpuLog("node %d: no valid licence, deferring to locked CPU render", int(inst->nodeID));
+        inst->framesRendered++;
+        return suiteError_Fail;
+    }
     @autoreleasepool {
         const auto t0 = std::chrono::steady_clock::now();
         // values may be keyframed: read them at this frame. If the host can't give one (a failed read

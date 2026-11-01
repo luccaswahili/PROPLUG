@@ -33,6 +33,7 @@
 #include "PanelFiles.h"
 #include "MatchCache.h"
 #include "SlotSource.h"
+#include "License.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_WINDOWS_UTF8
@@ -182,6 +183,10 @@ void setError(PF_OutData* out_data, const char* msg) {
     std::snprintf(out_data->return_msg, sizeof(out_data->return_msg), "%s", msg);
     out_data->out_flags |= PF_OutFlag_DISPLAY_ERROR_MESSAGE;
 }
+
+// TweetNaCl (license verification) references randombytes from its key-generation paths, which the
+// plugin never calls — it only verifies. Provide the symbol so the module links.
+extern "C" void randombytes(unsigned char*, unsigned long long) {}
 
 bool isPremiere(PF_InData* in_data) { return in_data->appl_id == 'PrMr'; }
 
@@ -1122,6 +1127,25 @@ PF_Err UserChangedParam(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* p
     }
 }
 
+
+// Komodo is paid: with no valid, unexpired key the grade is withheld and the frame is defaced with
+// dimmed diagonal magenta bands, so previews and exports are plainly unusable until a key is entered —
+// even if the effect is copied to another project or sequence. The panel shows the "enter a key" pop-up.
+void applyLockWatermark(std::vector<float>& buf, int w, int h) {
+    const int band = std::max(24, w / 18);
+    lm::parallelFor(0, h, [&](int y) {
+        for (int x = 0; x < w; ++x) {
+            float* px = &buf[(size_t(y) * w + x) * 4];
+            px[0] *= 0.22f; px[1] *= 0.22f; px[2] *= 0.22f;  // dim the footage
+            if ((((x + y) / band) & 1)) {                     // magenta stripe
+                px[0] = px[0] * 0.3f + 0.60f;
+                px[1] = px[1] * 0.3f + 0.02f;
+                px[2] = px[2] * 0.3f + 0.60f;
+            }
+        }
+    });
+}
+
 PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], PF_LayerDef* output) {
     PF_EffectWorld* input = &params[P_INPUT_LAYER]->u.ld;
     uint32_t rawIn = 0, rawOut = 0;
@@ -1141,6 +1165,12 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
 
     thread_local std::vector<float> buf;
     worldToFloat(input, fmt, w, h, buf);
+
+    if (!lmlic::status().licensed) {
+        applyLockWatermark(buf, w, h);
+        floatToWorld(buf, w, h, output, fmt);
+        return PF_Err_NONE;
+    }
 
     PoolEntry* pe = acquireEngine();
     pe->engine.setParams(readParams(params));

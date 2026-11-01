@@ -72,6 +72,10 @@ add_executable(adjust_tests tests/adjust_tests.cpp)
 target_include_directories(adjust_tests PRIVATE src/core)
 add_test(NAME adjust_tests COMMAND adjust_tests)
 
+add_executable(license_tests tests/license_tests.cpp third_party/tweetnacl/tweetnacl.c)
+target_include_directories(license_tests PRIVATE src/premiere third_party/tweetnacl)
+add_test(NAME license_tests COMMAND license_tests)
+
 # GPU kernel (Premiere GPU render) vs CPU engine, and a timing benchmark. macOS / Metal only.
 if(APPLE)
   enable_language(OBJCXX)

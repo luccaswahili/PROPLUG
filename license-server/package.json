@@ -1,0 +1,7 @@
+{
+  "name": "komodo-license-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Komodo paid-plugin license key generator (Ed25519-signed, monthly expiry).",
+  "license": "UNLICENSED"
+}

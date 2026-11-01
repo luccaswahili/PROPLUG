@@ -8,7 +8,16 @@ const { Library } = require("../lib/library.js");
 const { Bridge, isLookMatch } = require("../lib/bridge.js");
 const { COMMANDS } = require("../lib/agent.js");
 const { Live } = require("../lib/live.js");
+const { keyStatus, parseKey } = require("../lib/license.js");
 const { GRADE_DEFAULTS, MATCH_DEFAULTS } = require("../lib/params.js");
+
+// Build a Komodo-format key with a given exp (seconds). Signature bytes are arbitrary here: the panel
+// only decodes the payload; the plugin verifies the signature.
+function makeKey(exp, email) {
+  const payload = Buffer.from(JSON.stringify({ v: 1, id: "T", email: email || "a@b", iat: 1, exp })).toString("base64url");
+  const sig = Buffer.alloc(64, 7).toString("base64url");
+  return payload + "." + sig;
+}
 const { makePremiere, makeItem } = require("./mock-premiere.js");
 
 const tests = [];
@@ -273,6 +282,28 @@ test("agent: whitelist only, values sanitised", async () => {
   assert.strictEqual(params[P.mix], 100, "non-numeric value dropped");
   await COMMANDS.saveProject(b);
   assert.strictEqual(ppro.project.saved, 1);
+});
+
+test("license: decode and status", () => {
+  const now = 1_000_000;
+  const future = keyStatus(makeKey(now + 86400, "buyer@x.com"), now);
+  assert.strictEqual(future.formatOk, true);
+  assert.strictEqual(future.activated, true);
+  assert.strictEqual(future.expired, false);
+  assert.strictEqual(future.email, "buyer@x.com");
+
+  const past = keyStatus(makeKey(now - 10), now);
+  assert.strictEqual(past.formatOk, true);
+  assert.strictEqual(past.activated, false);
+  assert.strictEqual(past.expired, true);
+
+  assert.strictEqual(keyStatus("", now).present, false);
+  assert.strictEqual(keyStatus("garbage", now).formatOk, false);
+  assert.strictEqual(keyStatus("only.onepart", now).formatOk, false, "sig must be 64 bytes");
+
+  // a short signature is rejected as malformed
+  const badSig = Buffer.from(JSON.stringify({ exp: now + 10 })).toString("base64url") + "." + Buffer.alloc(10).toString("base64url");
+  assert.strictEqual(parseKey(badSig).formatOk, false);
 });
 
 (async () => {

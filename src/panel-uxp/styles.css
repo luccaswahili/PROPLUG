@@ -160,3 +160,25 @@ section > * { margin-bottom: 10px; }
 .list .item > * { margin-right: 10px; }
 .ctl-line > .ctl-val, .brand > .brand-text, .tabs > .tab:last-child, .matchrow > .matchbtn { margin-right: 0; }
 section > *:last-child, .fold-body > *:last-child, .stack > *:last-child { margin-bottom: 0; }
+
+/* ---------- licensing ---------- */
+.licchip { position: absolute; top: 0; right: 0; font-size: 10px; font-weight: 700; color: #a8a8a8;
+           border: 1px solid #3a3a3a; background-color: #2c2c2c; border-radius: 8px; padding: 3px 8px; cursor: pointer; }
+.licchip.ok { color: #cbe0ff; border-color: #2d6fdb; }
+.licchip.warn { color: #fbbf24; border-color: #5a4710; }
+.licchip.err { color: #f87171; border-color: #7f1d1d; }
+
+.licgate { position: absolute; left: 0; top: 0; right: 0; bottom: 0; z-index: 50;
+           background-color: #232323; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.licgate[hidden] { display: none; }
+.licbox { width: 100%; max-width: 320px; background-color: #2a2a2a; border: 1px solid #3e3e3e; border-radius: 14px;
+          padding: 18px; display: flex; flex-direction: column; align-items: center; }
+.liclogo { width: 44px; height: 44px; border-radius: 12px; background-color: #4a4a4a; display: flex;
+           align-items: center; justify-content: center; }
+.liclogo img { width: 26px; height: 26px; }
+.lictitle { font-size: 17px; font-weight: 800; color: #ffffff; margin-top: 10px; }
+.licmsg { color: #c8c8c8; font-size: 11.5px; text-align: center; margin: 8px 0 12px; line-height: 1.45; }
+.licmsg.err { color: #f87171; }
+.licbox sp-textfield { width: 100%; }
+.licbtn { width: 100%; margin-top: 10px; }
+.lichint { color: #7a7a7a; font-size: 10px; text-align: center; margin-top: 10px; line-height: 1.4; }

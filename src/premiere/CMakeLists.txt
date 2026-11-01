@@ -25,7 +25,7 @@ set(AE_INCLUDES
   "${AE_SDK_DIR}/Util"
   "${AE_SDK_DIR}/Resources")
 
-set(SOURCES LookMatch.cpp ${AE_SUITE_HELPER})
+set(SOURCES LookMatch.cpp ${AE_SUITE_HELPER} "${CMAKE_SOURCE_DIR}/third_party/tweetnacl/tweetnacl.c")
 
 if(WIN32)
   # PiPL: preprocess .r -> PiPLTool -> .rc, as in the SDK's Visual Studio projects
@@ -100,5 +100,21 @@ else()
   message(FATAL_ERROR "The Premiere effect builds on Windows and macOS only")
 endif()
 
-target_include_directories(LookMatch PRIVATE ${AE_INCLUDES} "${CMAKE_SOURCE_DIR}/third_party" "${CMAKE_SOURCE_DIR}/src/core")
+target_include_directories(LookMatch PRIVATE ${AE_INCLUDES} "${CMAKE_SOURCE_DIR}/third_party" "${CMAKE_SOURCE_DIR}/third_party/tweetnacl" "${CMAKE_SOURCE_DIR}/src/core")
 target_link_libraries(LookMatch PRIVATE lookmatch_core)
+
+# Release hardening (makes the shared build harder to read / reverse-engineer):
+#   - hide every symbol except the SDK entry points (EffectMain, xGPUFilterEntry: visibility("default"))
+#   - dead-strip unreferenced code, drop local symbols at link, then strip the binary
+# Entry points keep default visibility via the SDK's DllExport macro, so the plugin still loads.
+if(APPLE)
+  target_compile_options(LookMatch PRIVATE
+    $<$<CONFIG:Release>:-fvisibility=hidden>
+    $<$<CONFIG:Release>:-fvisibility-inlines-hidden>)
+  target_link_options(LookMatch PRIVATE
+    $<$<CONFIG:Release>:-Wl,-dead_strip>
+    $<$<CONFIG:Release>:-Wl,-x>)
+  add_custom_command(TARGET LookMatch POST_BUILD
+    COMMAND strip -x "$<TARGET_FILE:LookMatch>"
+    COMMENT "LookMatch: stripping local symbols (release hardening)")
+endif()

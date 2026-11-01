@@ -19,7 +19,8 @@ rm -rf "$STAGE" && mkdir -p "$STAGE/lib" "$STAGE/icons" "$OUT"
 cp "$SRC/manifest.json" "$SRC/index.html" "$SRC/main.js" "$SRC/styles.css" "$STAGE/"
 cp "$SRC"/icons/*.svg "$STAGE/icons/"
 for f in "$SRC"/lib/*.js; do
-  [ "$RELEASE" = 1 ] && [ "$(basename "$f")" = agent.js ] && continue
+  # dev-only, left out of release: the test agent and the self-test it runs
+  [ "$RELEASE" = 1 ] && case "$(basename "$f")" in agent.js|selftest.js) continue ;; esac
   cp "$f" "$STAGE/lib/"
 done
 NAME="KomodoPanel-$VERSION$([ "$RELEASE" = 1 ] && echo "" || echo "-dev").ccx"
