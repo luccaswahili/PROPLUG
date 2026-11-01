@@ -34,14 +34,17 @@ async function readBody(req) {
 }
 
 // Signs a license token: "<payloadB64url>.<sigB64url>", signature over the payload's base64url text.
-function signLicense({ email, months }) {
-  const m = Math.max(1, Math.min(60, parseInt(months, 10) || 1));
+function signLicense({ email, months, minutes }) {
   const now = Math.floor(Date.now() / 1000);
-  const exp = now + m * 30 * 24 * 3600;             // "monthly" = 30-day periods
+  // `minutes` (admin test keys, 1..1440) wins over months, so expiry can be watched quickly.
+  const mins = parseInt(minutes, 10);
+  const m = Math.max(1, Math.min(60, parseInt(months, 10) || 1));
+  const useMins = Number.isFinite(mins) && mins >= 1 && mins <= 1440;
+  const exp = useMins ? now + mins * 60 : now + m * 30 * 24 * 3600;  // "monthly" = 30-day periods
   const payload = { v: 1, id: crypto.randomUUID(), email: String(email || "").slice(0, 120), iat: now, exp };
   const payloadB64 = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const sig = crypto.sign(null, Buffer.from(payloadB64, "ascii"), loadPrivateKey()).toString("base64url");
-  return { key: payloadB64 + "." + sig, exp, months: m, email: payload.email, id: payload.id };
+  return { key: payloadB64 + "." + sig, exp, months: useMins ? 0 : m, minutes: useMins ? mins : 0, email: payload.email, id: payload.id };
 }
 
 module.exports = { loadPrivateKey, publicKeyHex, constantTimeEqual, readBody, signLicense };

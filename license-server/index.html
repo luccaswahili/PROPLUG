@@ -57,6 +57,7 @@
       <option value="3">3 months</option>
       <option value="6">6 months</option>
       <option value="12">12 months</option>
+      <option value="test-3">Test key — 3 minutes</option>
     </select>
     <button id="go">Generate key</button>
     <div class="err" id="err"></div>
@@ -89,7 +90,10 @@
       if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
       $("key").value = data.key;
       const d = new Date(data.exp * 1000);
-      $("meta").textContent = `${data.months} month(s) · expires ${d.toLocaleDateString(undefined,{year:"numeric",month:"long",day:"numeric"})}` + (data.email ? ` · ${data.email}` : "");
+      const when = data.minutes
+        ? `test key · ${data.minutes} min · expires ${d.toLocaleTimeString()}`
+        : `${data.months} month(s) · expires ${d.toLocaleDateString(undefined,{year:"numeric",month:"long",day:"numeric"})}`;
+      $("meta").textContent = when + (data.email ? ` · ${data.email}` : "");
       $("out").classList.add("show");
     } catch (e) {
       $("err").textContent = e.message;

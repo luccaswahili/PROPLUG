@@ -12,7 +12,7 @@ module.exports = async (req, res) => {
   const body = await readBody(req);
   if (!body.password || !constantTimeEqual(body.password, admin)) { res.status(401).json({ error: "Wrong password." }); return; }
   try {
-    const r = signLicense({ email: body.email, months: body.months });
+    const r = signLicense({ email: body.email, months: body.months, minutes: body.minutes });
     res.status(200).json({ ...r, expiresOn: new Date(r.exp * 1000).toISOString() });
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });
